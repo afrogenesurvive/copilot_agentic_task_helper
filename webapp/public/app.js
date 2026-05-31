@@ -137,6 +137,9 @@ let currentUser = null;
    ================================================================== */
 
 document.getElementById("login-btn").addEventListener("click", async () => {
+  // Wait for config to load (Netlify env vars → USERS)
+  await configReady;
+
   const username = document.getElementById("username").value.trim();
   const password = document.getElementById("password").value;
   const errEl = document.getElementById("login-error");
@@ -405,16 +408,18 @@ function escapeHtml(str) {
 }
 
 /* ==================================================================
-   Init — Fetch env config, then poll for messages
+   Init — Load config on page load, then chat polling after login
    ================================================================== */
 
 let pollTimer = null;
 
-async function initApp() {
-  // Try to load config from Netlify env vars first (overrides hardcoded values)
-  await loadConfig();
+// Fetch config from Netlify env vars as soon as the page loads.
+// The login handler awaits this promise before checking credentials.
+const configReady = loadConfig();
+
+function initApp() {
   validateConfig();
-  await loadMessages();
+  loadMessages();
   if (pollTimer) clearInterval(pollTimer);
   pollTimer = setInterval(loadMessages, CONFIG.POLL_INTERVAL);
 }
