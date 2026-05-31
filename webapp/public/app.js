@@ -54,43 +54,56 @@ const CONFIG = {
 
 const USERS = {};
 
-/** Fetch config from Netlify Function /api/config and merge into CONFIG + USERS */
+/** Try to fetch config from the Netlify Function, falling back to direct path */
+async function fetchConfig(url) {
+  const resp = await fetch(url);
+  if (!resp.ok) throw new Error(`HTTP ${resp.status}`);
+  return resp.json();
+}
+
+/** Fetch config from Netlify Function and merge into CONFIG + USERS */
 async function loadConfig() {
+  let env;
   try {
-    const resp = await fetch("/api/config");
-    if (!resp.ok) throw new Error(`HTTP ${resp.status}`);
-    const env = await resp.json();
-
-    if (env.TRELLO_API_KEY) {
-      // Re-split into thirds for backward compatibility
-      const k = env.TRELLO_API_KEY;
-      const t = env.TRELLO_API_TOKEN;
-      const thirdK = Math.ceil(k.length / 3);
-      const thirdT = Math.ceil(t.length / 3);
-      CONFIG.TRELLO_KEY_PART1 = k.slice(0, thirdK);
-      CONFIG.TRELLO_KEY_PART2 = k.slice(thirdK, thirdK * 2);
-      CONFIG.TRELLO_KEY_PART3 = k.slice(thirdK * 2);
-      CONFIG.TRELLO_TOKEN_PART1 = t.slice(0, thirdT);
-      CONFIG.TRELLO_TOKEN_PART2 = t.slice(thirdT, thirdT * 2);
-      CONFIG.TRELLO_TOKEN_PART3 = t.slice(thirdT * 2);
+    // Try /api/config first (requires redirect rule in netlify.toml)
+    env = await fetchConfig("/api/config");
+  } catch {
+    try {
+      // Fallback: direct Netlify Functions path
+      env = await fetchConfig("/.netlify/functions/config");
+    } catch {
+      console.warn("[config] Not available. Deploy to Netlify with env vars (see .env).");
+      return;
     }
-    if (env.TRELLO_LIST_FRONTEDESK_INPUT) CONFIG.LIST_ID_INPUT = env.TRELLO_LIST_FRONTEDESK_INPUT;
-    if (env.TRELLO_LIST_FRONTEDESK_OUTPUT) CONFIG.LIST_ID_OUTPUT = env.TRELLO_LIST_FRONTEDESK_OUTPUT;
-    if (env.TRELLO_BOARD_ID) CONFIG.BOARD_ID = env.TRELLO_BOARD_ID;
-
-    // Dynamically populate USERS from any USER_<name>_HASH env var
-    for (const [key, value] of Object.entries(env)) {
-      const match = key.match(/^USER_(.+)_HASH$/);
-      if (match && value) {
-        const username = match[1].toLowerCase();
-        USERS[username] = value;
-      }
-    }
-
-    console.log("[config] Loaded from /api/config");
-  } catch (err) {
-    console.warn("[config] /api/config not available. Set up Netlify env vars (see .env.example).", err.message);
   }
+
+  if (env.TRELLO_API_KEY) {
+    // Re-split into thirds for backward compatibility
+    const k = env.TRELLO_API_KEY;
+    const t = env.TRELLO_API_TOKEN;
+    const thirdK = Math.ceil(k.length / 3);
+    const thirdT = Math.ceil(t.length / 3);
+    CONFIG.TRELLO_KEY_PART1 = k.slice(0, thirdK);
+    CONFIG.TRELLO_KEY_PART2 = k.slice(thirdK, thirdK * 2);
+    CONFIG.TRELLO_KEY_PART3 = k.slice(thirdK * 2);
+    CONFIG.TRELLO_TOKEN_PART1 = t.slice(0, thirdT);
+    CONFIG.TRELLO_TOKEN_PART2 = t.slice(thirdT, thirdT * 2);
+    CONFIG.TRELLO_TOKEN_PART3 = t.slice(thirdT * 2);
+  }
+  if (env.TRELLO_LIST_FRONTEDESK_INPUT) CONFIG.LIST_ID_INPUT = env.TRELLO_LIST_FRONTEDESK_INPUT;
+  if (env.TRELLO_LIST_FRONTEDESK_OUTPUT) CONFIG.LIST_ID_OUTPUT = env.TRELLO_LIST_FRONTEDESK_OUTPUT;
+  if (env.TRELLO_BOARD_ID) CONFIG.BOARD_ID = env.TRELLO_BOARD_ID;
+
+  // Dynamically populate USERS from any USER_<name>_HASH env var
+  for (const [key, value] of Object.entries(env)) {
+    const match = key.match(/^USER_(.+)_HASH$/);
+    if (match && value) {
+      const username = match[1].toLowerCase();
+      USERS[username] = value;
+    }
+  }
+
+  console.log("[config] Loaded from /api/config");
 }
 
 /* ==================================================================
