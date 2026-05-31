@@ -1,0 +1,12 @@
+# Netlify config for Collaborator Chat
+# The admin hash is injected at the CDN edge (see netlify/edge-functions/).
+# No secrets are written to disk during build.
+# The only external HTTP requests are to the Trello API.
+[build]
+  base = "webapp/"
+  publish = "public/"
+
+# Inject USER_ADMIN_HASH into /app.js at the edge (never written to disk)
+[[edge_functions]]
+  function = "inject-hash"
+  path = "/app.js"
