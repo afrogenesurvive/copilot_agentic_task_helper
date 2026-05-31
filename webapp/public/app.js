@@ -49,6 +49,51 @@ const CONFIG = {
 };
 
 /* ==================================================================
+   Users (populated from Netlify env vars via /api/config)
+   ================================================================== */
+
+const USERS = {};
+
+/** Fetch config from Netlify Function /api/config and merge into CONFIG + USERS */
+async function loadConfig() {
+  try {
+    const resp = await fetch("/api/config");
+    if (!resp.ok) throw new Error(`HTTP ${resp.status}`);
+    const env = await resp.json();
+
+    if (env.TRELLO_API_KEY) {
+      // Re-split into thirds for backward compatibility
+      const k = env.TRELLO_API_KEY;
+      const t = env.TRELLO_API_TOKEN;
+      const thirdK = Math.ceil(k.length / 3);
+      const thirdT = Math.ceil(t.length / 3);
+      CONFIG.TRELLO_KEY_PART1 = k.slice(0, thirdK);
+      CONFIG.TRELLO_KEY_PART2 = k.slice(thirdK, thirdK * 2);
+      CONFIG.TRELLO_KEY_PART3 = k.slice(thirdK * 2);
+      CONFIG.TRELLO_TOKEN_PART1 = t.slice(0, thirdT);
+      CONFIG.TRELLO_TOKEN_PART2 = t.slice(thirdT, thirdT * 2);
+      CONFIG.TRELLO_TOKEN_PART3 = t.slice(thirdT * 2);
+    }
+    if (env.TRELLO_LIST_FRONTEDESK_INPUT) CONFIG.LIST_ID_INPUT = env.TRELLO_LIST_FRONTEDESK_INPUT;
+    if (env.TRELLO_LIST_FRONTEDESK_OUTPUT) CONFIG.LIST_ID_OUTPUT = env.TRELLO_LIST_FRONTEDESK_OUTPUT;
+    if (env.TRELLO_BOARD_ID) CONFIG.BOARD_ID = env.TRELLO_BOARD_ID;
+
+    // Dynamically populate USERS from any USER_<name>_HASH env var
+    for (const [key, value] of Object.entries(env)) {
+      const match = key.match(/^USER_(.+)_HASH$/);
+      if (match && value) {
+        const username = match[1].toLowerCase();
+        USERS[username] = value;
+      }
+    }
+
+    console.log("[config] Loaded from /api/config");
+  } catch (err) {
+    console.warn("[config] /api/config not available. Set up Netlify env vars (see .env.example).", err.message);
+  }
+}
+
+/* ==================================================================
    Utilities
    ================================================================== */
 
@@ -360,25 +405,32 @@ function escapeHtml(str) {
 }
 
 /* ==================================================================
-   Init — Poll for new messages
+   Init — Fetch env config, then poll for messages
    ================================================================== */
 
 let pollTimer = null;
 
-function initApp() {
-  loadMessages();
+async function initApp() {
+  // Try to load config from Netlify env vars first (overrides hardcoded values)
+  await loadConfig();
+  validateConfig();
+  await loadMessages();
   if (pollTimer) clearInterval(pollTimer);
   pollTimer = setInterval(loadMessages, CONFIG.POLL_INTERVAL);
 }
 
 /* ==================================================================
-   Validate config on load
+   Validate config
    ================================================================== */
 
-(function validateConfig() {
+function validateConfig() {
   const key = CONFIG.TRELLO_KEY_PART1 + CONFIG.TRELLO_KEY_PART2 + CONFIG.TRELLO_KEY_PART3;
   const token = CONFIG.TRELLO_TOKEN_PART1 + CONFIG.TRELLO_TOKEN_PART2 + CONFIG.TRELLO_TOKEN_PART3;
   if (!key || !token || !CONFIG.LIST_ID_INPUT || !CONFIG.LIST_ID_OUTPUT || !CONFIG.BOARD_ID) {
-    console.warn("⚠️ Collaborator Chat: Trello credentials not configured.\n" + "Open webapp/public/app.js and fill in the CONFIG section.");
+    console.warn(
+      "⚠️ Collaborator Chat: Trello credentials not configured.\n" + "Set Netlify env vars (see .env.example) — the /api/config function reads them.",
+    );
+  } else {
+    console.log("✓ Collaborator Chat: Config validated");
   }
-})();
+}
