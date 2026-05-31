@@ -13,17 +13,28 @@
 #   ./mcp/webhook-server/scripts/tunnel-with-update.sh
 #
 
-set -euo pipefail
+set -uo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
 PROJECT_DIR="$(cd "$SCRIPT_DIR/../../.." && pwd)"
+ENV_FILE="$PROJECT_DIR/.env"
 
-# Load .env
-if [ -f "$PROJECT_DIR/.env" ]; then
-  export $(grep -v '^\s*#' "$PROJECT_DIR/.env" | grep -v '^\s*$' | xargs)
+# Load .env — read line by line to handle special chars safely
+if [ -f "$ENV_FILE" ]; then
+  while IFS='=' read -r key val || [ -n "$key" ]; do
+    [[ "$key" =~ ^#.*$ || -z "$key" ]] && continue
+    export "$key=$val"
+  done < "$ENV_FILE"
 fi
 
 PORT="${WEBHOOK_PORT:-3199}"
+
+# Check cloudflared
+if ! command -v cloudflared &>/dev/null; then
+  echo "❌ cloudflared not found. Install it:"
+  echo "   brew install cloudflared"
+  exit 1
+fi
 
 echo "🚇 Starting Cloudflare Tunnel on port $PORT..."
 echo ""
@@ -37,7 +48,8 @@ TUNNEL_PID=$!
 echo "Waiting for tunnel URL..."
 TUNNEL_URL=""
 for i in $(seq 1 30); do
-  TUNNEL_URL=$(grep -oE 'https://[a-zA-Z0-9.-]+\.trycloudflare\.com' "$tmpfile" | head -1)
+  # Try multiple URL patterns (cloudflared output format varies by version)
+  TUNNEL_URL=$(grep -oE 'https?://[-a-zA-Z0-9.]+(\.[-a-zA-Z0-9.]+)*\.trycloudflare\.com' "$tmpfile" 2>/dev/null | head -1)
   if [ -n "$TUNNEL_URL" ]; then
     break
   fi
@@ -45,7 +57,9 @@ for i in $(seq 1 30); do
 done
 
 if [ -z "$TUNNEL_URL" ]; then
-  echo "❌ Failed to get tunnel URL"
+  echo "❌ Failed to get tunnel URL (waited 60s)"
+  echo "   cloudflared output was:"
+  cat "$tmpfile" 2>/dev/null | head -20
   kill $TUNNEL_PID 2>/dev/null
   rm -f "$tmpfile"
   exit 1
