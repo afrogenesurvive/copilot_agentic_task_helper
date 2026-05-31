@@ -1,0 +1,23 @@
+{
+  "name": "webhook-server",
+  "version": "1.0.0",
+  "private": true,
+  "type": "module",
+  "description": "Webhook notification server — relays Trello and Gmail push events to the agent",
+  "main": "index.js",
+  "scripts": {
+    "start": "node index.js",
+    "setup:trello": "node scripts/setup-trello-webhook.js",
+    "setup:gmail-watch": "node scripts/setup-gmail-watch.js",
+    "update:endpoint": "node scripts/update-push-endpoint.js"
+  },
+  "dependencies": {
+    "express": "^4.21.0",
+    "googleapis": "^144.0.0",
+    "google-auth-library": "^9.0.0",
+    "node-fetch": "^3.3.2",
+    "dotenv": "^16.4.0",
+    "cors": "^2.8.5",
+    "express-rate-limit": "^7.0.0"
+  }
+}

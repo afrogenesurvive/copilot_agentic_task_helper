@@ -51,15 +51,15 @@ Netlify Environment Variables (see `.env`).
 
 Go to **Site settings** → **Environment variables** and add:
 
-| Variable                        | Description                              |
-| ------------------------------- | ---------------------------------------- |
-| `TRELLO_API_KEY`                | Your Trello API key                      |
-| `TRELLO_API_TOKEN`              | Your Trello API token                    |
-| `TRELLO_BOARD_ID`               | Board ID                                 |
-| `TRELLO_LIST_FRONTEDESK_INPUT`  | List ID for `frontdesk_input`            |
-| `TRELLO_LIST_FRONTEDESK_OUTPUT` | List ID for `frontdesk_output`           |
-| `USER_COLLABORATOR_HASH`        | SHA-256 of `"collaborator:password"`     |
-| `USER_ADMIN_HASH`               | SHA-256 of `"admin:password"`            |
+| Variable                        | Description                          |
+| ------------------------------- | ------------------------------------ |
+| `TRELLO_API_KEY`                | Your Trello API key                  |
+| `TRELLO_API_TOKEN`              | Your Trello API token                |
+| `TRELLO_BOARD_ID`               | Board ID                             |
+| `TRELLO_LIST_FRONTEDESK_INPUT`  | List ID for `frontdesk_input`        |
+| `TRELLO_LIST_FRONTEDESK_OUTPUT` | List ID for `frontdesk_output`       |
+| `USER_COLLABORATOR_HASH`        | SHA-256 of `"collaborator:password"` |
+| `USER_ADMIN_HASH`               | SHA-256 of `"admin:password"`        |
 
 ### 2. Configure HTTPS
 
