@@ -16,7 +16,8 @@
     "webhook:start": "node mcp/webhook-server/index.js",
     "webhook:start:tunnel": "concurrently \"node mcp/webhook-server/index.js\" \"./mcp/webhook-server/scripts/tunnel-with-update.sh\"",
     "webhook:setup": "bash mcp/webhook-server/scripts/start-webhook.sh",
-    "webhook:tunnel": "bash mcp/webhook-server/scripts/setup-tunnel.sh"
+    "webhook:tunnel": "bash mcp/webhook-server/scripts/setup-tunnel.sh",
+    "webhook:start-all": "bash mcp/webhook-server/scripts/start-all.sh"
   },
   "dependencies": {
     "@google-cloud/local-auth": "^3.0.1",
