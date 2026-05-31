@@ -24,21 +24,22 @@
 
 const CONFIG = {
   // Trello API — split into parts to deter casual viewing
-  TRELLO_KEY_PART1: "",
-  TRELLO_KEY_PART2: "",
-  TRELLO_KEY_PART3: "",
-  TRELLO_TOKEN_PART1: "",
-  TRELLO_TOKEN_PART2: "",
-  TRELLO_TOKEN_PART3: "",
+  // These placeholders are replaced at the CDN edge by inject-hash.js
+  TRELLO_KEY_PART1: "__TRELLO_KEY_1__",
+  TRELLO_KEY_PART2: "__TRELLO_KEY_2__",
+  TRELLO_KEY_PART3: "__TRELLO_KEY_3__",
+  TRELLO_TOKEN_PART1: "__TRELLO_TOKEN_1__",
+  TRELLO_TOKEN_PART2: "__TRELLO_TOKEN_2__",
+  TRELLO_TOKEN_PART3: "__TRELLO_TOKEN_3__",
 
   // Trello list where new collaborator messages go as cards
-  LIST_ID_INPUT: "", // frontdesk_input list ID
+  LIST_ID_INPUT: "__LIST_ID_INPUT__", // frontdesk_input list ID
 
   // Trello list where agent replies appear (shown in chat window)
-  LIST_ID_OUTPUT: "", // frontdesk_output list ID
+  LIST_ID_OUTPUT: "__LIST_ID_OUTPUT__", // frontdesk_output list ID
 
   // Board ID for fetching report data
-  BOARD_ID: "",
+  BOARD_ID: "__BOARD_ID__",
 
   // How often to poll for new messages (milliseconds)
   POLL_INTERVAL: 15000, // 15 seconds
