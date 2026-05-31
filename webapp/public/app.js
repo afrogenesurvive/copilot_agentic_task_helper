@@ -59,7 +59,7 @@ const CONFIG = {
    ================================================================== */
 
 const USERS = {
-  admin: __ADMIN_HASH_FRAGMENTS__,
+  admin: "__ADMIN_HASH__",
   collaborator: "__COLLABORATOR_HASH__",
 };
 
