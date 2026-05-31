@@ -8,15 +8,14 @@
  *
  * Login credentials are SHA-256 hashed. The Trello API key & token are
  * split into fragments (reconstructed at runtime) to deter casual
- * inspection. NOT cryptographically secure — for production, use a
- * Netlify serverless function reading env vars (see .env.example).
+ * inspection. The only external HTTP requests are to the Trello API.
  *
  * ── Setup ──
  * 1. Get your Trello API key: https://trello.com/app-key
  * 2. Generate a token: https://trello.com/1/authorize?expiration=never&scope=read,write&name=CollaboratorChat&key=YOUR_KEY
  * 3. Create a board with two lists: "frontdesk_input" and "frontdesk_output"
  * 4. Find list IDs (append ".json" to board URL, or use the API)
- * 5. Fill in CONFIG below (or use Netlify env vars)
+ * 5. Fill in CONFIG and USERS below
  */
 
 /* ==================================================================
@@ -49,51 +48,20 @@ const CONFIG = {
 };
 
 /* ==================================================================
-   Users (populated from Netlify env vars via /api/config)
+   Users — SHA-256 hashes of "<username>:<password>"
+
+   Generate a hash from your browser console:
+     crypto.subtle.digest("SHA-256", new TextEncoder().encode("collaborator:mypass"))
+       .then(b => Array.from(new Uint8Array(b)).map(v => v.toString(16).padStart(2,"0")).join(""))
+       .then(console.log)
+
+   Then paste the hex string below for the corresponding username key.
    ================================================================== */
 
-const USERS = {};
-
-/** Fetch config from /config.json (generated at deploy time by build-config.js) */
-async function loadConfig() {
-  let env;
-  try {
-    const resp = await fetch("/config.json");
-    if (!resp.ok) throw new Error(`HTTP ${resp.status}`);
-    env = await resp.json();
-  } catch {
-    console.warn("[config] Not available. Deploy to Netlify with env vars (see .env).");
-    return;
-  }
-
-  if (env.TRELLO_API_KEY) {
-    // Re-split into thirds for backward compatibility
-    const k = env.TRELLO_API_KEY;
-    const t = env.TRELLO_API_TOKEN;
-    const thirdK = Math.ceil(k.length / 3);
-    const thirdT = Math.ceil(t.length / 3);
-    CONFIG.TRELLO_KEY_PART1 = k.slice(0, thirdK);
-    CONFIG.TRELLO_KEY_PART2 = k.slice(thirdK, thirdK * 2);
-    CONFIG.TRELLO_KEY_PART3 = k.slice(thirdK * 2);
-    CONFIG.TRELLO_TOKEN_PART1 = t.slice(0, thirdT);
-    CONFIG.TRELLO_TOKEN_PART2 = t.slice(thirdT, thirdT * 2);
-    CONFIG.TRELLO_TOKEN_PART3 = t.slice(thirdT * 2);
-  }
-  if (env.TRELLO_LIST_FRONTEDESK_INPUT) CONFIG.LIST_ID_INPUT = env.TRELLO_LIST_FRONTEDESK_INPUT;
-  if (env.TRELLO_LIST_FRONTEDESK_OUTPUT) CONFIG.LIST_ID_OUTPUT = env.TRELLO_LIST_FRONTEDESK_OUTPUT;
-  if (env.TRELLO_BOARD_ID) CONFIG.BOARD_ID = env.TRELLO_BOARD_ID;
-
-  // Dynamically populate USERS from any USER_<name>_HASH env var
-  for (const [key, value] of Object.entries(env)) {
-    const match = key.match(/^USER_(.+)_HASH$/);
-    if (match && value) {
-      const username = match[1].toLowerCase();
-      USERS[username] = value;
-    }
-  }
-
-  console.log("[config] Loaded from /config.json");
-}
+const USERS = {
+  // "collaborator": "<paste SHA-256 hex of 'collaborator:YOUR_PASSWORD'>",
+  // "admin":        "<paste SHA-256 hex of 'admin:YOUR_PASSWORD'>",
+};
 
 /* ==================================================================
    Utilities
@@ -139,9 +107,6 @@ let currentUser = null;
    ================================================================== */
 
 document.getElementById("login-btn").addEventListener("click", async () => {
-  // Wait for config to load (Netlify env vars → USERS)
-  await configReady;
-
   const username = document.getElementById("username").value.trim();
   const password = document.getElementById("password").value;
   const errEl = document.getElementById("login-error");
@@ -153,8 +118,16 @@ document.getElementById("login-btn").addEventListener("click", async () => {
   }
 
   const hash = await sha256(`${username}:${password}`);
+  const storedHash = USERS[username];
 
-  if (USERS[username] && USERS[username] === hash) {
+  // Debug logging — check browser console
+  console.log("🔍 [login] USERS (known accounts):", USERS);
+  console.log("🔍 [login] Attempting user:", username);
+  console.log("🔍 [login] Computed SHA-256:", hash);
+  console.log("🔍 [login] Stored hash for '" + username + "':", storedHash || "(not found)");
+  console.log("🔍 [login] Match:", storedHash === hash);
+
+  if (storedHash && storedHash === hash) {
     currentUser = username;
     errEl.classList.add("hidden");
     document.getElementById("login-screen").classList.add("hidden");
@@ -415,10 +388,6 @@ function escapeHtml(str) {
 
 let pollTimer = null;
 
-// Fetch config from Netlify env vars as soon as the page loads.
-// The login handler awaits this promise before checking credentials.
-const configReady = loadConfig();
-
 function initApp() {
   validateConfig();
   loadMessages();
@@ -434,9 +403,7 @@ function validateConfig() {
   const key = CONFIG.TRELLO_KEY_PART1 + CONFIG.TRELLO_KEY_PART2 + CONFIG.TRELLO_KEY_PART3;
   const token = CONFIG.TRELLO_TOKEN_PART1 + CONFIG.TRELLO_TOKEN_PART2 + CONFIG.TRELLO_TOKEN_PART3;
   if (!key || !token || !CONFIG.LIST_ID_INPUT || !CONFIG.LIST_ID_OUTPUT || !CONFIG.BOARD_ID) {
-    console.warn(
-      "⚠️ Collaborator Chat: Trello credentials not configured.\n" + "Set Netlify env vars (see .env.example) — the /api/config function reads them.",
-    );
+    console.warn("⚠️ Collaborator Chat: Trello credentials not configured. Fill in CONFIG in app.js.");
   } else {
     console.log("✓ Collaborator Chat: Config validated");
   }
