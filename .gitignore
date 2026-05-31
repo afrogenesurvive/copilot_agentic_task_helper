@@ -1,0 +1,39 @@
+# ── Node.js ──
+node_modules/
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+
+# ── Environment files ──
+.env
+.env.local
+.env.*.local
+webapp/.env
+
+# ── Logs ──
+logs/
+*.log
+
+# ── Build output & local data ──
+safe/
+dist/
+build/
+.next/
+
+# ── Editor / IDE ──
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+.DS_Store
+
+# ── OS files ──
+Thumbs.db
+Desktop.ini
+
+# ── Personal notes ──
+notes.txt
+
+# ── MCP dependencies (each mcp/* has its own node_modules) ──
+mcp/*/node_modules/
