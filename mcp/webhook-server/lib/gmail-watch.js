@@ -37,7 +37,9 @@ function loadState() {
     if (fs.existsSync(STATE_FILE)) {
       return JSON.parse(fs.readFileSync(STATE_FILE, "utf8"));
     }
-  } catch { /* ignore */ }
+  } catch {
+    /* ignore */
+  }
   return null;
 }
 
@@ -100,7 +102,9 @@ export async function stopWatch() {
 
   try {
     if (fs.existsSync(STATE_FILE)) fs.unlinkSync(STATE_FILE);
-  } catch { /* ignore */ }
+  } catch {
+    /* ignore */
+  }
 
   console.log("[gmail-watch] Watch stopped");
 }

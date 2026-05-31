@@ -38,10 +38,7 @@ async function trelloFetch(url, options = {}) {
 
 /* ── MCP Server ── */
 
-const server = new Server(
-  { name: "trello-mcp-server", version: "1.0.0" },
-  { capabilities: { tools: {} } },
-);
+const server = new Server({ name: "trello-mcp-server", version: "1.0.0" }, { capabilities: { tools: {} } });
 
 /* ── Tool: create card ── */
 
