@@ -59,8 +59,8 @@ const CONFIG = {
    ================================================================== */
 
 const USERS = {
-  // "collaborator": "<paste SHA-256 hex of 'collaborator:YOUR_PASSWORD'>",
-  // "admin":        "<paste SHA-256 hex of 'admin:YOUR_PASSWORD'>",
+  admin: "__ADMIN_HASH__",
+  collaborator: "__COLLABORATOR_HASH__",
 };
 
 /* ==================================================================
