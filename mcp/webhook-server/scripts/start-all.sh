@@ -218,17 +218,10 @@ echo "☁️  [6/6] Updating GCloud Pub/Sub push endpoint..."
 
 SUBSCRIPTION="${GMAIL_PUBSUB_SUBSCRIPTION:-}"
 if [ -n "$SUBSCRIPTION" ]; then
-  PUSH_ENDPOINT="${TUNNEL_URL}/webhooks/gmail/push"
-  if command -v gcloud &>/dev/null; then
-    gcloud pubsub subscriptions update "$SUBSCRIPTION" \
-      --push-endpoint="$PUSH_ENDPOINT" \
-      --push-auth-service-account="" > /dev/null 2>&1 \
-      && echo "   ✅ Pub/Sub push endpoint updated" \
-      || echo "   ⚠️  Pub/Sub update failed (check gcloud auth)"
-  else
-    echo "   ⚠️  gcloud CLI not found — update manually:"
-    echo "   gcloud pubsub subscriptions update $SUBSCRIPTION --push-endpoint=$PUSH_ENDPOINT"
-  fi
+  cd "$WEBHOOK_DIR"
+  node scripts/update-pubsub-endpoint.js 2>&1 || \
+    echo "   ⚠️  Pub/Sub update failed — check GOOGLE_APPLICATION_CREDENTIALS"
+  cd "$PROJECT_DIR"
 else
   echo "   ⚠️  GMAIL_PUBSUB_SUBSCRIPTION not set — skipping"
 fi
