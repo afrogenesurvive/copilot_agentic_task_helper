@@ -31,7 +31,9 @@ function load() {
       for (const line of lines) {
         try {
           queue.push(JSON.parse(line));
-        } catch { /* skip malformed */ }
+        } catch {
+          /* skip malformed */
+        }
       }
     }
   } catch (err) {

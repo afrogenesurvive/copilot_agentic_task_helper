@@ -22,7 +22,10 @@ const TRELLO_KEY = process.env.TRELLO_KEY || "";
 const TRELLO_TOKEN = process.env.TRELLO_TOKEN || "";
 const BASE_URL = process.env.TRELLO_BOARD_ID || "https://api.trello.com/1";
 const WEBHOOK_URL = `${process.env.WEBHOOK_BASE_URL || "http://localhost:3199"}/webhooks/trello`;
-const MODEL_IDS = (process.env.TRELLO_WEBHOOK_MODEL_IDS || "").split(",").map((s) => s.trim()).filter(Boolean);
+const MODEL_IDS = (process.env.TRELLO_WEBHOOK_MODEL_IDS || "")
+  .split(",")
+  .map((s) => s.trim())
+  .filter(Boolean);
 const ACTIONS = process.env.TRELLO_WEBHOOK_ACTIONS || "createCard,updateCard,commentCard,updateCheckItemStateOnCard";
 
 async function registerWebhook(boardId, description) {

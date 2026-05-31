@@ -11,6 +11,7 @@ import fs from "fs";
 import path from "path";
 import { fileURLToPath } from "url";
 import { enqueueEvent } from "../lib/event-queue.js";
+import { dispatch } from "../lib/tool-dispatch.js";
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const LOG_DIR = path.resolve(__dirname, "..", "..", "..", "logs", "webhook");
@@ -25,10 +26,7 @@ function logError(msg) {
 function logVerbose(entry) {
   const ts = new Date().toISOString();
   fs.mkdirSync(LOG_DIR, { recursive: true });
-  fs.appendFileSync(
-    path.join(LOG_DIR, `${ts.slice(0, 10)}_verbose.log`),
-    JSON.stringify({ ts, ...entry }) + "\n",
-  );
+  fs.appendFileSync(path.join(LOG_DIR, `${ts.slice(0, 10)}_verbose.log`), JSON.stringify({ ts, ...entry }) + "\n");
 }
 
 function logNotification(data) {
@@ -73,7 +71,10 @@ export function trelloHandler(req, res) {
 
   // Check if this board is in our watch list
   const boardId = model?.id || action?.data?.board?.id;
-  const watchedIds = (process.env.TRELLO_WEBHOOK_MODEL_IDS || "").split(",").map((s) => s.trim()).filter(Boolean);
+  const watchedIds = (process.env.TRELLO_WEBHOOK_MODEL_IDS || "")
+    .split(",")
+    .map((s) => s.trim())
+    .filter(Boolean);
 
   if (watchedIds.length > 0 && boardId && !watchedIds.includes(boardId)) {
     console.log(`   → Board ${boardId} not in watch list, skipping`);
@@ -92,6 +93,9 @@ export function trelloHandler(req, res) {
   };
 
   enqueueEvent(event);
+
+  // Check if any tool dispatch rules match
+  dispatch(event);
 
   console.log(`   → Enqueued for agent processing`);
 

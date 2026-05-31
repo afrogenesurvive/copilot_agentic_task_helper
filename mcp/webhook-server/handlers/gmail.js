@@ -13,6 +13,7 @@ import fs from "fs";
 import path from "path";
 import { fileURLToPath } from "url";
 import { enqueueEvent } from "../lib/event-queue.js";
+import { dispatch } from "../lib/tool-dispatch.js";
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const LOG_DIR = path.resolve(__dirname, "..", "..", "..", "logs", "webhook");
@@ -21,20 +22,14 @@ const NOTIFY_DIR = path.resolve(__dirname, "..", "..", "..", "logs", "notificati
 function logVerbose(entry) {
   const ts = new Date().toISOString();
   fs.mkdirSync(LOG_DIR, { recursive: true });
-  fs.appendFileSync(
-    path.join(LOG_DIR, `${ts.slice(0, 10)}_verbose.log`),
-    JSON.stringify({ ts, ...entry }) + "\n",
-  );
+  fs.appendFileSync(path.join(LOG_DIR, `${ts.slice(0, 10)}_verbose.log`), JSON.stringify({ ts, ...entry }) + "\n");
 }
 
 function logNotification(data) {
   const ts = new Date().toISOString();
   const day = ts.slice(0, 10);
   fs.mkdirSync(NOTIFY_DIR, { recursive: true });
-  fs.appendFileSync(
-    path.join(NOTIFY_DIR, `${day}.jsonl`),
-    JSON.stringify({ ts, source: "gmail", type: "new_message", data }) + "\n",
-  );
+  fs.appendFileSync(path.join(NOTIFY_DIR, `${day}.jsonl`), JSON.stringify({ ts, source: "gmail", type: "new_message", data }) + "\n");
 }
 
 /**
@@ -105,6 +100,9 @@ export function gmailHandler(req, res) {
   };
 
   enqueueEvent(event);
+
+  // Check if any tool dispatch rules match
+  dispatch(event);
 
   console.log(`   → Enqueued for agent processing`);
 

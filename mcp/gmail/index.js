@@ -94,10 +94,7 @@ function formatMessage(msg, format = "full") {
 
 /* ── MCP Server ── */
 
-const server = new Server(
-  { name: "gmail-mcp-server", version: "1.0.0" },
-  { capabilities: { tools: {} } },
-);
+const server = new Server({ name: "gmail-mcp-server", version: "1.0.0" }, { capabilities: { tools: {} } });
 
 /* ── Tool: list messages ── */
 
