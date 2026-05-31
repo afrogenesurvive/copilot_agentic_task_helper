@@ -1,0 +1,22 @@
+{
+  "name": "copilot_agentic_task_helper",
+  "version": "1.0.0",
+  "private": true,
+  "description": "Remote Collaborator Chat — Trello-powered chat interface for GitHub Copilot agent interactions",
+  "scripts": {
+    "logs:gmail": "node scripts/log-event.js",
+    "logs:view": "cat logs/2026-05-31.log",
+    "mcp:gmail": "node mcp/gmail/index.js",
+    "mcp:trello": "node mcp/trello/index.js",
+    "mcp:webhook": "node mcp/webhook-server/index.js",
+    "setup:gmail-watch": "node mcp/webhook-server/scripts/setup-gmail-watch.js",
+    "setup:trello-webhook": "node mcp/webhook-server/scripts/setup-trello-webhook.js",
+    "tunnel": "node mcp/webhook-server/scripts/tunnel-with-update.sh"
+  },
+  "dependencies": {
+    "@google-cloud/local-auth": "^3.0.1",
+    "express": "^4.21.0",
+    "googleapis": "^144.0.0",
+    "node-fetch": "^3.3.2"
+  }
+}
