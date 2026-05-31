@@ -54,27 +54,16 @@ const CONFIG = {
 
 const USERS = {};
 
-/** Try to fetch config from the Netlify Function, falling back to direct path */
-async function fetchConfig(url) {
-  const resp = await fetch(url);
-  if (!resp.ok) throw new Error(`HTTP ${resp.status}`);
-  return resp.json();
-}
-
-/** Fetch config from Netlify Function and merge into CONFIG + USERS */
+/** Fetch config from /config.json (generated at deploy time by build-config.js) */
 async function loadConfig() {
   let env;
   try {
-    // Try /api/config first (requires redirect rule in netlify.toml)
-    env = await fetchConfig("/api/config");
+    const resp = await fetch("/config.json");
+    if (!resp.ok) throw new Error(`HTTP ${resp.status}`);
+    env = await resp.json();
   } catch {
-    try {
-      // Fallback: direct Netlify Functions path
-      env = await fetchConfig("/.netlify/functions/config");
-    } catch {
-      console.warn("[config] Not available. Deploy to Netlify with env vars (see .env).");
-      return;
-    }
+    console.warn("[config] Not available. Deploy to Netlify with env vars (see .env).");
+    return;
   }
 
   if (env.TRELLO_API_KEY) {
@@ -103,7 +92,7 @@ async function loadConfig() {
     }
   }
 
-  console.log("[config] Loaded from /api/config");
+  console.log("[config] Loaded from /config.json");
 }
 
 /* ==================================================================
