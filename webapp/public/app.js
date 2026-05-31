@@ -1,23 +1,22 @@
 /**
  * app.js — Remote Collaborator Chat
  *
- * Connects to Trello as the "backend" for storing chat messages
- * and reading agent replies. All configuration is in CONFIG below.
+ * Two-list Trello backend:
+ *   frontdesk_input  — new messages from the webapp go here as cards
+ *   frontdesk_output — agent replies land here; these cards are shown
+ *                      as "agent" messages in the chat window
+ *
+ * Login credentials are SHA-256 hashed. The Trello API key & token are
+ * split into fragments (reconstructed at runtime) to deter casual
+ * inspection. NOT cryptographically secure — for production, use a
+ * Netlify serverless function reading env vars (see .env.example).
  *
  * ── Setup ──
- * Replace the values in the CONFIG object with your own Trello details.
  * 1. Get your Trello API key: https://trello.com/app-key
  * 2. Generate a token: https://trello.com/1/authorize?expiration=never&scope=read,write&name=CollaboratorChat&key=YOUR_KEY
- * 3. Create a board and a "Pending Approval" list
- * 4. Find the list ID (add ".json" to the board URL, or use the API)
- *
- * ── Credential Security (Basic) ──
- * Login credentials are stored as SHA-256 hashes so viewing the source
- * doesn't reveal the plaintext passwords. The Trello API key+token are
- * split into fragments and reconstructed at runtime to deter casual
- * inspection. This is NOT cryptographically secure — a determined attacker
- * with debugger access can extract them. For stronger security, use a
- * serverless proxy (see notes.txt).
+ * 3. Create a board with two lists: "frontdesk_input" and "frontdesk_output"
+ * 4. Find list IDs (append ".json" to board URL, or use the API)
+ * 5. Fill in CONFIG below (or use Netlify env vars)
  */
 
 /* ==================================================================
@@ -26,36 +25,27 @@
 
 const CONFIG = {
   // Trello API — split into parts to deter casual viewing
-  // Reassemble: part1 + part2 + part3
-  TRELLO_KEY_PART1: "", // First ~1/3 of your Trello API key
-  TRELLO_KEY_PART2: "", // Middle ~1/3
-  TRELLO_KEY_PART3: "", // Last ~1/3
-  TRELLO_TOKEN_PART1: "", // First ~1/3 of your Trello token
-  TRELLO_TOKEN_PART2: "", // Middle ~1/3
-  TRELLO_TOKEN_PART3: "", // Last ~1/3
+  TRELLO_KEY_PART1: "",
+  TRELLO_KEY_PART2: "",
+  TRELLO_KEY_PART3: "",
+  TRELLO_TOKEN_PART1: "",
+  TRELLO_TOKEN_PART2: "",
+  TRELLO_TOKEN_PART3: "",
 
   // Trello list where new collaborator messages go as cards
-  LIST_ID: "", // e.g. "65a1b2c3d4e5f6a7b8c9d0e1"
+  LIST_ID_INPUT: "", // frontdesk_input list ID
+
+  // Trello list where agent replies appear (shown in chat window)
+  LIST_ID_OUTPUT: "", // frontdesk_output list ID
 
   // Board ID for fetching report data
-  BOARD_ID: "", // e.g. "65a1b2c3d4e5f6a7b8c9d0e1"
+  BOARD_ID: "",
 
-  // How often to poll for new replies (milliseconds)
+  // How often to poll for new messages (milliseconds)
   POLL_INTERVAL: 15000, // 15 seconds
-};
 
-/* ==================================================================
-   Login Credentials (SHA-256 hashed)
-   Run this in Node to generate: echo -n "user:pass" | shasum -a 256
-   ================================================================== */
-
-const USERS = {
-  /* Default users — replace hashes with your own:
-     Generate: echo -n "alice:secret123" | shasum -a 256
-     Result:   "abc123def456..." (64 hex chars)
-  */
-  collaborator: "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
-  admin: "a7ffc6f8bf1ed76651c14756a061d662f580ff4de43b49fa82d80a4b80f8434a",
+  // Max messages in the chat window (last N inputs + outputs combined)
+  MAX_CHAT_MESSAGES: 15,
 };
 
 /* ==================================================================
@@ -183,12 +173,15 @@ async function sendMessage() {
   const btn = document.getElementById("send-btn");
   btn.disabled = true;
 
+  const now = new Date();
+  const ts = now.toISOString();
+
   try {
-    // Create a card on the "Pending Approval" Trello list
+    // Create a card on the frontdesk_input Trello list
     const resp = await fetch(
-      trelloUrl(`/lists/${CONFIG.LIST_ID}/cards`, {
+      trelloUrl(`/lists/${CONFIG.LIST_ID_INPUT}/cards`, {
         name: `[${currentUser}] ${text.slice(0, 80)}${text.length > 80 ? "..." : ""}`,
-        desc: text + `\n\n---\nFrom: ${currentUser}\nSent: ${new Date().toISOString()}`,
+        desc: text + `\n\n---\nFrom: ${currentUser}\nSent: ${ts}`,
       }),
       { method: "POST" },
     );
@@ -212,60 +205,72 @@ async function sendMessage() {
 }
 
 /* ==================================================================
-   Chat — Load Messages
+   Chat — Load Messages (last N from both lists)
    ================================================================== */
+
+/**
+ * Fetch cards from a Trello list and return message objects.
+ * Each card becomes one message using its desc (first 300 chars) + timestamp.
+ */
+async function fetchListMessages(listId, sender) {
+  const resp = await fetch(
+    trelloUrl(`/lists/${listId}/cards`, {
+      fields: "name,desc,dateLastActivity,id",
+    }),
+  );
+  if (!resp.ok) throw new Error(`HTTP ${resp.status}`);
+  const cards = await resp.json();
+
+  return cards.map((card) => {
+    // Extract the plain message text from desc (strip the --- metadata block)
+    const desc = card.desc || "";
+    const text = desc.split("\n---\n")[0] || desc;
+    const date = card.dateLastActivity || new Date(0).toISOString();
+
+    return {
+      cardId: card.id,
+      text: text,
+      date: date,
+      member: sender,
+      sender: sender,
+    };
+  });
+}
 
 async function loadMessages() {
   const container = document.getElementById("messages-container");
 
   try {
-    // Get cards from the "Pending Approval" list
-    const cardsResp = await fetch(
-      trelloUrl(`/lists/${CONFIG.LIST_ID}/cards`, {
-        fields: "name,desc,dateLastActivity",
-      }),
-    );
-    if (!cardsResp.ok) throw new Error(`HTTP ${cardsResp.status}`);
+    // 1. Fetch cards from both lists in parallel
+    const [inputCards, outputCards] = await Promise.all([
+      fetchListMessages(CONFIG.LIST_ID_INPUT, "You"),
+      fetchListMessages(CONFIG.LIST_ID_OUTPUT, "Agent"),
+    ]);
 
-    const cards = await cardsResp.json();
-    if (cards.length === 0) {
+    // Mark input cards as "pending" (awaiting human approval before agent acts)
+    const inputMsgs = inputCards.map((m) => ({ ...m, pending: true }));
+    const outputMsgs = outputCards.map((m) => ({ ...m, pending: false }));
+
+    // 2. Combine, sort descending (newest first), take last N
+    const all = [...inputMsgs, ...outputMsgs];
+    all.sort((a, b) => new Date(b.date) - new Date(a.date));
+
+    const recent = all.slice(0, CONFIG.MAX_CHAT_MESSAGES).reverse(); // ascending for display
+
+    if (recent.length === 0) {
       container.innerHTML = '<div class="empty-state">No messages yet. Start the conversation!</div>';
       return;
     }
 
-    // For each card, get comments (the conversation)
-    const cardPromises = cards.map(async (card) => {
-      const actionsResp = await fetch(
-        trelloUrl(`/cards/${card.id}/actions`, {
-          filter: "commentCard",
-          fields: "data,date,memberCreator",
-        }),
-      );
-      if (!actionsResp.ok) return [];
-      const actions = await actionsResp.json();
-      return actions.map((a) => ({
-        cardId: card.id,
-        cardName: card.name,
-        text: a.data.text,
-        date: a.date,
-        member: a.memberCreator ? a.memberCreator.fullName : "Unknown",
-      }));
-    });
-
-    const allComments = (await Promise.all(cardPromises)).flat();
-
-    // Sort by date ascending
-    allComments.sort((a, b) => new Date(a.date) - new Date(b.date));
-
-    // Render as chat bubbles
+    // 3. Render as chat bubbles
     container.innerHTML = "";
-    allComments.forEach((msg) => {
-      const isCollaborator = !msg.member.toLowerCase().includes("agent") && !msg.member.toLowerCase().includes("admin");
+    recent.forEach((msg) => {
+      const isCollaborator = msg.sender === "You";
       const bubble = document.createElement("div");
-      bubble.className = `message ${isCollaborator ? "collaborator" : "agent"}`;
+      bubble.className = `message ${isCollaborator ? "collaborator" : "agent"}${msg.pending ? " pending" : ""}`;
       bubble.innerHTML = `
         <div class="text">${escapeHtml(msg.text)}</div>
-        <div class="meta">${msg.member} · ${fmtTime(msg.date)}</div>
+        <div class="meta">${msg.sender} · ${fmtTime(msg.date)}${msg.pending ? " · ⏳ Pending approval" : ""}</div>
       `;
       container.appendChild(bubble);
     });
@@ -373,7 +378,7 @@ function initApp() {
 (function validateConfig() {
   const key = CONFIG.TRELLO_KEY_PART1 + CONFIG.TRELLO_KEY_PART2 + CONFIG.TRELLO_KEY_PART3;
   const token = CONFIG.TRELLO_TOKEN_PART1 + CONFIG.TRELLO_TOKEN_PART2 + CONFIG.TRELLO_TOKEN_PART3;
-  if (!key || !token || !CONFIG.LIST_ID || !CONFIG.BOARD_ID) {
-    console.warn("⚠️ Collaborative Chat: Trello credentials not configured.\n" + "Open webapp/public/app.js and fill in the CONFIG section.");
+  if (!key || !token || !CONFIG.LIST_ID_INPUT || !CONFIG.LIST_ID_OUTPUT || !CONFIG.BOARD_ID) {
+    console.warn("⚠️ Collaborator Chat: Trello credentials not configured.\n" + "Open webapp/public/app.js and fill in the CONFIG section.");
   }
 })();
