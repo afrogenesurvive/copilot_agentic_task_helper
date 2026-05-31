@@ -1,61 +1,61 @@
-<!DOCTYPE html>
+<!doctype html>
 <html lang="en">
-<head>
-  <meta charset="UTF-8" />
-  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-  <title>Collaborator Chat</title>
-  <link rel="stylesheet" href="style.css" />
-</head>
-<body>
-  <!-- Login Screen -->
-  <div id="login-screen">
-    <div class="login-card">
-      <h1>🤝 Collaborator Chat</h1>
-      <p class="subtitle">Remote Trello-powered chat</p>
-      <div class="form-group">
-        <label for="username">Username</label>
-        <input type="text" id="username" placeholder="Enter username" autocomplete="username" />
-      </div>
-      <div class="form-group">
-        <label for="password">Password</label>
-        <input type="password" id="password" placeholder="Enter password" autocomplete="current-password" />
-      </div>
-      <button id="login-btn">Log In</button>
-      <p id="login-error" class="hidden error"></p>
-    </div>
-  </div>
-
-  <!-- App Screen -->
-  <div id="app-screen" class="hidden">
-    <header>
-      <h1>🤝 Collaborator Chat</h1>
-      <button id="logout-btn">Log Out</button>
-    </header>
-
-    <nav class="tabs">
-      <button id="tab-chat" class="active">💬 Chat</button>
-      <button id="tab-reports">📊 Reports</button>
-    </nav>
-
-    <!-- Chat View -->
-    <div id="chat-view">
-      <div id="messages-container">
-        <div class="empty-state">No messages yet. Start the conversation!</div>
-      </div>
-      <div class="input-bar">
-        <textarea id="message-input" placeholder="Type your message..." rows="2"></textarea>
-        <button id="send-btn">Send</button>
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>Collaborator Chat</title>
+    <link rel="stylesheet" href="style.css" />
+  </head>
+  <body>
+    <!-- Login Screen -->
+    <div id="login-screen">
+      <div class="login-card">
+        <h1>🤝 Collaborator Chat</h1>
+        <p class="subtitle">Remote Trello-powered chat</p>
+        <div class="form-group">
+          <label for="username">Username</label>
+          <input type="text" id="username" placeholder="Enter username" autocomplete="username" />
+        </div>
+        <div class="form-group">
+          <label for="password">Password</label>
+          <input type="password" id="password" placeholder="Enter password" autocomplete="current-password" />
+        </div>
+        <button id="login-btn">Log In</button>
+        <p id="login-error" class="hidden error"></p>
       </div>
     </div>
 
-    <!-- Reports View -->
-    <div id="reports-view" class="hidden">
-      <div id="reports-container">
-        <div class="empty-state">Loading reports...</div>
+    <!-- App Screen -->
+    <div id="app-screen" class="hidden">
+      <header>
+        <h1>🤝 Collaborator Chat</h1>
+        <button id="logout-btn">Log Out</button>
+      </header>
+
+      <nav class="tabs">
+        <button id="tab-chat" class="active">💬 Chat</button>
+        <button id="tab-reports">📊 Reports</button>
+      </nav>
+
+      <!-- Chat View -->
+      <div id="chat-view">
+        <div id="messages-container">
+          <div class="empty-state">No messages yet. Start the conversation!</div>
+        </div>
+        <div class="input-bar">
+          <textarea id="message-input" placeholder="Type your message..." rows="2"></textarea>
+          <button id="send-btn">Send</button>
+        </div>
+      </div>
+
+      <!-- Reports View -->
+      <div id="reports-view" class="hidden">
+        <div id="reports-container">
+          <div class="empty-state">Loading reports...</div>
+        </div>
       </div>
     </div>
-  </div>
 
-  <script src="app.js"></script>
-</body>
+    <script src="app.js"></script>
+  </body>
 </html>

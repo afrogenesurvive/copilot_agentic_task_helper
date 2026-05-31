@@ -11,7 +11,10 @@
     "mcp:webhook": "node mcp/webhook-server/index.js",
     "setup:gmail-watch": "node mcp/webhook-server/scripts/setup-gmail-watch.js",
     "setup:trello-webhook": "node mcp/webhook-server/scripts/setup-trello-webhook.js",
-    "tunnel": "node mcp/webhook-server/scripts/tunnel-with-update.sh"
+    "update:endpoint": "node mcp/webhook-server/scripts/update-push-endpoint.js",
+    "tunnel": "node mcp/webhook-server/scripts/tunnel-with-update.sh",
+    "webhook:start": "node mcp/webhook-server/index.js",
+    "webhook:start:tunnel": "concurrently \"node mcp/webhook-server/index.js\" \"./mcp/webhook-server/scripts/tunnel-with-update.sh\""
   },
   "dependencies": {
     "@google-cloud/local-auth": "^3.0.1",
