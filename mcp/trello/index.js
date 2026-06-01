@@ -116,6 +116,12 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
       summary = `${n} lists`;
       break;
     }
+    case "trello_get_card_actions": {
+      result = await handleGetCardActions(args);
+      const actions = result.content?.[0]?.text ? JSON.parse(result.content[0].text) : [];
+      summary = `${actions.length} actions`;
+      break;
+    }
     default:
       result = { content: [{ type: "text", text: `Unknown tool: ${name}` }], isError: true };
       summary = "unknown tool";
@@ -279,8 +285,34 @@ server.setRequestHandler(ListToolsRequestSchema, async () => ({
         required: ["boardId"],
       },
     },
+    {
+      name: "trello_get_card_actions",
+      description: "Get actions (comments, updates, etc.) for a Trello card. Use filter=commentCard to get only comments.",
+      inputSchema: {
+        type: "object",
+        properties: {
+          cardId: { type: "string", description: "Card ID" },
+          filter: { type: "string", description: "Action filter: 'commentCard', 'createCard', 'updateCard', or 'all' (default: 'commentCard')" },
+        },
+        required: ["cardId"],
+      },
+    },
   ],
 }));
+
+async function handleGetCardActions(args) {
+  const { cardId, filter } = args;
+  if (!cardId) {
+    return { content: [{ type: "text", text: "Missing required parameter: cardId" }], isError: true };
+  }
+  try {
+    const params = { filter: filter || "commentCard", fields: "data,date,type" };
+    const data = await trelloFetch(trelloUrl(`/cards/${cardId}/actions`, params));
+    return { content: [{ type: "text", text: JSON.stringify(data, null, 2) }] };
+  } catch (err) {
+    return { content: [{ type: "text", text: `Error getting card actions: ${err.message}` }], isError: true };
+  }
+}
 
 /* ── Start ── */
 

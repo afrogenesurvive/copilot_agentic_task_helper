@@ -202,10 +202,7 @@ async function findOrCreateDailyCard(listId) {
   if (existing) return existing;
 
   // Create new daily card
-  const createResp = await fetch(
-    trelloUrl(`/lists/${listId}/cards`, { name: today, desc: `Messages for ${today}` }),
-    { method: "POST" },
-  );
+  const createResp = await fetch(trelloUrl(`/lists/${listId}/cards`, { name: today, desc: `Messages for ${today}` }), { method: "POST" });
   if (!createResp.ok) throw new Error(`HTTP ${createResp.status}`);
   const newCard = await createResp.json();
   console.log(`📅 Created daily card "${today}" on list ${listId}`);
@@ -226,10 +223,7 @@ async function sendMessage() {
 
     // Add the message as a comment with username prefix
     const commentText = `[${currentUser}] ${text}`;
-    const commentResp = await fetch(
-      trelloUrl(`/cards/${todayCard.id}/actions/comments`, { text: commentText }),
-      { method: "POST" },
-    );
+    const commentResp = await fetch(trelloUrl(`/cards/${todayCard.id}/actions/comments`, { text: commentText }), { method: "POST" });
     if (!commentResp.ok) throw new Error(`HTTP ${commentResp.status}`);
 
     input.value = "";
@@ -263,9 +257,7 @@ async function fetchListMessages(listId, sender) {
   if (!todayCard) return [];
 
   // Get comments from today's card
-  const actionsResp = await fetch(
-    trelloUrl(`/cards/${todayCard.id}/actions`, { filter: "commentCard", fields: "data,date" }),
-  );
+  const actionsResp = await fetch(trelloUrl(`/cards/${todayCard.id}/actions`, { filter: "commentCard", fields: "data,date" }));
   if (!actionsResp.ok) return [];
   const actions = await actionsResp.json();
 
