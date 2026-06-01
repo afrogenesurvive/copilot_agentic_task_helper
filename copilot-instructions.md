@@ -21,6 +21,8 @@
 ## MCP Tool Usage
 
 - Trello: use for board/card/list management — never read `logs/notifications/trello/` for current data
+- Trello: `trello_get_card_actions` (with `filter=commentCard`) reads card comments via MCP instead of raw API calls
+- Frontdesk reply workflow: read comments on today's `frontdesk_input` card → find/create today's `frontdesk_output` card → add reply as comment
 - Gmail: use `mcp_gmail_gmail_list_messages` + `mcp_gmail_gmail_get_message` for reading emails — never read `logs/notifications/gmail/` for current data
 - Never expose credentials in code — use env vars or the edge function
 - Tool call logging is **automatic** — both MCP servers (`mcp/trello/index.js` and `mcp/gmail/index.js`) have built-in `logToolCall()` functions that write to `logs/tool_call/`. The webhook server also polls this log and displays new entries in the terminal with a 🔧 prefix every 2 seconds.

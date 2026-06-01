@@ -21,10 +21,12 @@ The collaborator chat webapp and frontdesk system use a **one-card-per-day** pat
 - **frontdesk_output** — One card per day, named by date (`2026-05-31`). Each agent reply is a **comment** on that day's card.
 
 **When replying to a frontdesk input:**
-1. Read the latest comments on today's `frontdesk_input` card to see what the user said
-2. **Do NOT add a comment to the input card** — instead, find or create today's card on **frontdesk_output** (name it with today's date like `2026-05-31`, or use the current date)
-3. Add your reply as a **comment** on that frontdesk_output daily card using `trello_add_comment`
-4. ✅ The webapp polls both lists every 15 seconds and will display the reply as an agent message
+
+1. Use `trello_get_card_actions` with `filter=commentCard` to read the latest comments on today's `frontdesk_input` card
+2. **Do NOT add a comment to the input card** — instead, find or create today's card on **frontdesk_output** (name it with today's date like `2026-06-01`, or use `new Date().toISOString().slice(0,10)`)
+3. Use `trello_list_cards` to check if a card for today already exists on the output list, then `trello_create_card` if needed
+4. Add your reply as a **comment** on that frontdesk_output daily card using `trello_add_comment`
+5. ✅ The webapp polls both lists every 15 seconds and will display the reply as an agent message
 
 ### Architecture Overview
 
@@ -43,8 +45,7 @@ The collaborator chat webapp and frontdesk system use a **one-card-per-day** pat
 │  │ - list_cards │  │ - send_msg   │  │  - Tool dispatch rules engine  │ │
 │  │ - add_comment│  │              │  │  - Auto-renewing Gmail watch   │ │
 │  │ - update_card│  │              │  └────────────────────────────────┘ │
-│  │ - get_lists  │  │              │                                     │
-│  └──────────────┘  └──────────────┘                                     │
+│  │ - get_lists  │  │              │                                     ││  │ - get_card_actions │           │                                     ││  └──────────────┘  └──────────────┘                                     │
 └──────────────────────────────────────────────────────────────────────────┘
 ```
 
@@ -52,14 +53,15 @@ The collaborator chat webapp and frontdesk system use a **one-card-per-day** pat
 
 #### Trello MCP Server (`mcp/trello/index.js`) — stdio transport
 
-| Tool                 | Description                                | Required Params  |
-| -------------------- | ------------------------------------------ | ---------------- |
-| `trello_create_card` | Create a new card in a list                | `listId`, `name` |
-| `trello_get_card`    | Get full card details by ID                | `cardId`         |
-| `trello_list_cards`  | List all cards in a list                   | `listId`         |
-| `trello_add_comment` | Add a comment to a card                    | `cardId`, `text` |
-| `trello_update_card` | Update card fields (name, desc, pos, etc.) | `cardId`         |
-| `trello_get_lists`   | Get all lists on a board                   | `boardId`        |
+| Tool                      | Description                                       | Required Params           |
+| ------------------------- | ------------------------------------------------- | ------------------------- |
+| `trello_create_card`      | Create a new card in a list                       | `listId`, `name`          |
+| `trello_get_card`         | Get full card details by ID                       | `cardId`                  |
+| `trello_list_cards`       | List all cards in a list                          | `listId`                  |
+| `trello_add_comment`      | Add a comment to a card                           | `cardId`, `text`          |
+| `trello_update_card`      | Update card fields (name, desc, pos, etc.)        | `cardId`                  |
+| `trello_get_lists`        | Get all lists on a board                          | `boardId`                 |
+| `trello_get_card_actions` | Get actions/comments for a card (filter optional) | `cardId`                  |
 
 Uses `TRELLO_KEY`, `TRELLO_TOKEN`, `TRELLO_BASE_URL` from environment.
 
