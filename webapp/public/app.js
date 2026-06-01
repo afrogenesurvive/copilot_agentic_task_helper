@@ -298,14 +298,16 @@ async function loadMessages() {
       return;
     }
 
-    // 3. Render as chat bubbles
+    // 3. Render as chat bubbles (strip passphrase blocks from display)
     container.innerHTML = "";
     recent.forEach((msg) => {
       const isCollaborator = msg.sender === "You";
+      // Strip ---passphrase--- from displayed text so it doesn't clutter the chat
+      const displayText = msg.text.replace(/^---.+?---\s*/, "");
       const bubble = document.createElement("div");
       bubble.className = `message ${isCollaborator ? "collaborator" : "agent"}`;
       bubble.innerHTML = `
-        <div class="text">${escapeHtml(msg.text)}</div>
+        <div class="text">${escapeHtml(displayText)}</div>
         <div class="meta">${msg.sender} · ${fmtTime(msg.date)}</div>
       `;
       container.appendChild(bubble);
