@@ -12,8 +12,9 @@
 
 import { Server } from "@modelcontextprotocol/sdk/server/index.js";
 import { StdioServerTransport } from "@modelcontextprotocol/sdk/server/stdio.js";
+import { CallToolRequestSchema, ListToolsRequestSchema } from "@modelcontextprotocol/sdk/types.js";
 import { google } from "googleapis";
-import { google as googleAuth } from "google-auth-library";
+import { OAuth2Client } from "google-auth-library";
 import "dotenv/config";
 
 /* ── Auth ── */
@@ -23,7 +24,7 @@ function getAuthClient() {
   if (!GMAIL_CLIENT_ID || !GMAIL_CLIENT_SECRET || !GMAIL_REFRESH_TOKEN) {
     throw new Error("Missing Gmail OAuth2 credentials in environment");
   }
-  const oauth2 = new googleAuth.auth.OAuth2(GMAIL_CLIENT_ID, GMAIL_CLIENT_SECRET);
+  const oauth2 = new OAuth2Client(GMAIL_CLIENT_ID, GMAIL_CLIENT_SECRET);
   oauth2.setCredentials({ refresh_token: GMAIL_REFRESH_TOKEN });
   return oauth2;
 }
@@ -92,25 +93,94 @@ function formatMessage(msg, format = "full") {
   return result;
 }
 
+/* ── Tool call logger ── */
+
+import fs from "fs";
+import path from "path";
+import { fileURLToPath } from "url";
+
+const __dirname = path.dirname(fileURLToPath(import.meta.url));
+const LOG_DIR = path.resolve(__dirname, "..", "..", "logs", "tool_call");
+
+function logToolCall(name, args, response) {
+  const ts = new Date().toISOString();
+  const today = ts.slice(0, 10);
+  const argsStr = JSON.stringify(args).slice(0, 200);
+  let respStr = typeof response === "string" ? response : "done";
+  // Truncate long JSON responses to keep logs readable
+  if (respStr.length > 100) {
+    try {
+      const parsed = JSON.parse(respStr);
+      if (Array.isArray(parsed)) respStr = `${parsed.length} items`;
+      else if (parsed.id) respStr = `id=${parsed.id}`;
+      else respStr = respStr.slice(0, 100) + "...";
+    } catch {
+      respStr = respStr.slice(0, 100) + "...";
+    }
+  }
+  fs.mkdirSync(LOG_DIR, { recursive: true });
+
+  for (const [eventName, details] of [
+    ["tool_call", `gmail/${name} input=${argsStr}`],
+    ["tool_response", `gmail/${name} output=${respStr}`],
+  ]) {
+    const line = `[${ts}] EVENT name=${eventName} details=${details}`;
+    const entry = { timestamp: ts, name: eventName, details };
+    fs.appendFileSync(path.join(LOG_DIR, `${today}_verbose.log`), JSON.stringify(entry) + "\n");
+    fs.appendFileSync(path.join(LOG_DIR, `${today}.log`), line + "\n");
+    console.error(`[mcp] ${line}`);
+  }
+}
+
 /* ── MCP Server ── */
 
 const server = new Server({ name: "gmail-mcp-server", version: "1.0.0" }, { capabilities: { tools: {} } });
 
-/* ── Tool: list messages ── */
+/* ── Tool call handler (single dispatch) ── */
 
-server.setRequestHandler({ method: "tools/call", params: { name: "gmail_list_messages" } }, async (request) => {
-  const args = request.params?.arguments || {};
+server.setRequestHandler(CallToolRequestSchema, async (request) => {
+  const { name, arguments: args } = request.params;
+
+  let result;
+  let summary;
+  switch (name) {
+    case "gmail_list_messages":
+      result = await handleListMessages(args);
+      try {
+        const d = JSON.parse(result.content?.[0]?.text || "[]");
+        summary = `${d.length} messages`;
+      } catch {
+        summary = "done";
+      }
+      break;
+    case "gmail_get_message":
+      result = await handleGetMessage(args);
+      try {
+        const d = JSON.parse(result.content?.[0]?.text || "{}");
+        summary = `"${d.headers?.subject || d.subject || "(no subject)"}" from ${d.headers?.from || d.from || "?"}`.slice(0, 120);
+      } catch {
+        summary = "done";
+      }
+      break;
+    case "gmail_send_message":
+      result = await handleSendMessage(args);
+      summary = "sent";
+      break;
+    default:
+      result = { content: [{ type: "text", text: `Unknown tool: ${name}` }], isError: true };
+      summary = "unknown tool";
+  }
+  logToolCall(name, args, summary);
+  return result;
+});
+
+async function handleListMessages(args) {
   const query = args.query || "";
   const maxResults = Math.min(args.maxResults || 10, 100);
   const userId = process.env.GMAIL_USER || "me";
 
   try {
-    const res = await gmail.users.messages.list({
-      userId,
-      q: query,
-      maxResults,
-    });
-
+    const res = await gmail.users.messages.list({ userId, q: query, maxResults });
     const messages = res.data.messages || [];
     const detailed = await Promise.all(
       messages.map(async (m) => {
@@ -118,27 +188,17 @@ server.setRequestHandler({ method: "tools/call", params: { name: "gmail_list_mes
         return formatMessage(detail.data, "metadata");
       }),
     );
-
-    return {
-      content: [{ type: "text", text: JSON.stringify(detailed, null, 2) }],
-    };
+    return { content: [{ type: "text", text: JSON.stringify(detailed, null, 2) }] };
   } catch (err) {
-    return {
-      content: [{ type: "text", text: `Error listing messages: ${err.message}` }],
-      isError: true,
-    };
+    return { content: [{ type: "text", text: `Error listing messages: ${err.message}` }], isError: true };
   }
-});
+}
 
-/* ── Tool: get message ── */
-
-server.setRequestHandler({ method: "tools/call", params: { name: "gmail_get_message" } }, async (request) => {
-  const args = request.params?.arguments || {};
+async function handleGetMessage(args) {
   const id = args.id;
   if (!id) {
     return { content: [{ type: "text", text: "Missing required parameter: id" }], isError: true };
   }
-
   const format = args.format || "full";
   const userId = process.env.GMAIL_USER || "me";
 
@@ -148,35 +208,20 @@ server.setRequestHandler({ method: "tools/call", params: { name: "gmail_get_mess
       id,
       format: format === "metadata" ? "metadata" : "full",
     });
-    const formatted = formatMessage(res.data, format);
-
-    return {
-      content: [{ type: "text", text: JSON.stringify(formatted, null, 2) }],
-    };
+    return { content: [{ type: "text", text: JSON.stringify(formatMessage(res.data, format), null, 2) }] };
   } catch (err) {
-    return {
-      content: [{ type: "text", text: `Error getting message: ${err.message}` }],
-      isError: true,
-    };
+    return { content: [{ type: "text", text: `Error getting message: ${err.message}` }], isError: true };
   }
-});
+}
 
-/* ── Tool: send message ── */
-
-server.setRequestHandler({ method: "tools/call", params: { name: "gmail_send_message" } }, async (request) => {
-  const args = request.params?.arguments || {};
+async function handleSendMessage(args) {
   const { to, subject, body } = args;
   if (!to || !subject || !body) {
-    return {
-      content: [{ type: "text", text: "Missing required parameters: to, subject, body" }],
-      isError: true,
-    };
+    return { content: [{ type: "text", text: "Missing required parameters: to, subject, body" }], isError: true };
   }
-
   const userId = process.env.GMAIL_USER || "me";
 
   try {
-    // Build raw MIME message
     const from = userId;
     const mime = [
       `From: ${from}`,
@@ -188,28 +233,17 @@ server.setRequestHandler({ method: "tools/call", params: { name: "gmail_send_mes
       "",
       body,
     ].join("\r\n");
-
     const encoded = Buffer.from(mime).toString("base64").replace(/\+/g, "-").replace(/\//g, "_").replace(/=+$/, "");
-
-    const res = await gmail.users.messages.send({
-      userId,
-      requestBody: { raw: encoded },
-    });
-
-    return {
-      content: [{ type: "text", text: JSON.stringify({ id: res.data.id, threadId: res.data.threadId }, null, 2) }],
-    };
+    const res = await gmail.users.messages.send({ userId, requestBody: { raw: encoded } });
+    return { content: [{ type: "text", text: JSON.stringify({ id: res.data.id, threadId: res.data.threadId }, null, 2) }] };
   } catch (err) {
-    return {
-      content: [{ type: "text", text: `Error sending message: ${err.message}` }],
-      isError: true,
-    };
+    return { content: [{ type: "text", text: `Error sending message: ${err.message}` }], isError: true };
   }
-});
+}
 
 /* ── Tool definitions ── */
 
-server.setRequestHandler({ method: "tools/list" }, async () => ({
+server.setRequestHandler(ListToolsRequestSchema, async () => ({
   tools: [
     {
       name: "gmail_list_messages",

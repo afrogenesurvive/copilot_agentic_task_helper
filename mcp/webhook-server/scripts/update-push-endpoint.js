@@ -30,7 +30,7 @@ async function listWebhooks() {
 }
 
 async function updateWebhook(webhookId, newUrl) {
-  const url = `https://api.trello.com/1/webhooks/${webhookId}?key=${TRELLO_KEY}`;
+  const url = `https://api.trello.com/1/webhooks/${webhookId}?key=${TRELLO_KEY}&token=${TRELLO_TOKEN}`;
   const body = new URLSearchParams({ callbackURL: newUrl });
 
   const resp = await fetch(url, { method: "PUT", body });

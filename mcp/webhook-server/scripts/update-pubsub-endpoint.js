@@ -4,7 +4,8 @@
  * update-pubsub-endpoint.js — Update GCloud Pub/Sub push endpoint
  *
  * Uses the service account key (GOOGLE_APPLICATION_CREDENTIALS)
- * to update the push subscription endpoint, without needing the gcloud CLI.
+ * to update the push subscription endpoint via direct REST API call,
+ * without needing the gcloud CLI.
  *
  * Usage:
  *   node mcp/webhook-server/scripts/update-pubsub-endpoint.js
@@ -15,7 +16,7 @@
  *   WEBHOOK_BASE_URL              — tunnel URL to point the push to
  */
 
-import { google } from "googleapis";
+import { GoogleAuth } from "google-auth-library";
 import fs from "fs";
 import path from "path";
 import { fileURLToPath } from "url";
@@ -48,41 +49,63 @@ async function main() {
   }
 
   const pushEndpoint = `${baseUrl}/webhooks/gmail/push`;
+  const subscriptionName = `projects/agent-workflow-497323/subscriptions/${subscription}`;
 
   console.log(`📧 Updating Pub/Sub push endpoint...`);
   console.log(`   Subscription: ${subscription}`);
   console.log(`   Push endpoint: ${pushEndpoint}`);
 
-  // Authenticate with service account
-  const auth = new google.auth.GoogleAuth({
+  // Authenticate with service account and get an access token
+  const auth = new GoogleAuth({
     keyFile: resolvedPath,
     scopes: ["https://www.googleapis.com/auth/pubsub"],
   });
 
-  const pubsub = google.pubsub({ version: "v1", auth });
+  const client = await auth.getClient();
+  const token = await client.getAccessToken();
 
-  const name = `projects/agent-workflow-497323/subscriptions/${subscription}`;
+  // Step 1: Get the current subscription to preserve other fields
+  console.log(`   Fetching current subscription config...`);
+  const getResp = await fetch(`https://pubsub.googleapis.com/v1/${subscriptionName}`, { headers: { Authorization: `Bearer ${token.token}` } });
 
-  try {
-    await pubsub.projects.subscriptions.patch({
-      name,
-      updateMask: "pushConfig",
-      requestBody: {
-        pushConfig: {
-          pushEndpoint,
-          // No auth needed — the endpoint is public via Cloudflare
-          oidcToken: undefined,
-        },
-      },
-    });
-    console.log(`✅ Pub/Sub push endpoint updated successfully`);
-  } catch (err) {
-    console.error(`❌ Failed to update Pub/Sub subscription: ${err.message}`);
-    if (err.response?.data) {
-      console.error(`   Details: ${JSON.stringify(err.response.data)}`);
-    }
-    process.exit(1);
+  if (!getResp.ok) {
+    const err = await getResp.text();
+    throw new Error(`Failed to fetch subscription: ${getResp.status} — ${err}`);
   }
+
+  const current = await getResp.json();
+
+  // Step 2: Update only the pushConfig
+  // The Google Pub/Sub PATCH API expects an UpdateSubscriptionRequest body:
+  //   { "subscription": { "pushConfig": {...} }, "updateMask": "pushConfig" }
+  const updateBody = {
+    subscription: {
+      pushConfig: {
+        pushEndpoint,
+      },
+    },
+    updateMask: "pushConfig",
+  };
+
+  console.log(`   Sending update...`);
+  const patchResp = await fetch(`https://pubsub.googleapis.com/v1/${subscriptionName}`, {
+    method: "PATCH",
+    headers: {
+      Authorization: `Bearer ${token.token}`,
+      "Content-Type": "application/json",
+    },
+    body: JSON.stringify(updateBody),
+  });
+
+  if (!patchResp.ok) {
+    const err = await patchResp.text();
+    throw new Error(`Failed to update subscription: ${patchResp.status} — ${err}`);
+  }
+
+  console.log(`✅ Pub/Sub push endpoint updated successfully`);
 }
 
-main().catch(console.error);
+main().catch((err) => {
+  console.error(`❌ ${err.message}`);
+  process.exit(1);
+});

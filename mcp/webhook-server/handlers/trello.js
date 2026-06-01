@@ -29,14 +29,31 @@ function logVerbose(entry) {
   fs.appendFileSync(path.join(LOG_DIR, `${ts.slice(0, 10)}_verbose.log`), JSON.stringify({ ts, ...entry }) + "\n");
 }
 
-function logNotification(data) {
+function logNotification(body) {
   const ts = new Date().toISOString();
   const day = ts.slice(0, 10);
+  const action = body.action || {};
+  const model = body.model || {};
+  const d = action.data || {};
+
+  const entry = {
+    ts,
+    source: "trello",
+    type: action.type || "unknown",
+    data: {
+      board: model.name || d.board?.name,
+      list: d.list?.name,
+      card: d.card?.name,
+      checklist: d.checklist?.name,
+      checkItem: d.checkItem?.name,
+    },
+  };
+
+  // Strip undefined fields
+  Object.keys(entry.data).forEach((k) => entry.data[k] === undefined && delete entry.data[k]);
+
   fs.mkdirSync(NOTIFY_DIR, { recursive: true });
-  fs.appendFileSync(
-    path.join(NOTIFY_DIR, `${day}.jsonl`),
-    JSON.stringify({ ts, source: "trello", type: data.action?.type || "unknown", data }) + "\n",
-  );
+  fs.appendFileSync(path.join(NOTIFY_DIR, `${day}.jsonl`), JSON.stringify(entry) + "\n");
 }
 
 /**

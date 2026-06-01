@@ -12,6 +12,7 @@
 
 import { Server } from "@modelcontextprotocol/sdk/server/index.js";
 import { StdioServerTransport } from "@modelcontextprotocol/sdk/server/stdio.js";
+import { CallToolRequestSchema, ListToolsRequestSchema } from "@modelcontextprotocol/sdk/types.js";
 import fetch from "node-fetch";
 import "dotenv/config";
 
@@ -36,115 +37,174 @@ async function trelloFetch(url, options = {}) {
   return resp.json();
 }
 
+/* ── Tool call logger ── */
+
+import fs from "fs";
+import path from "path";
+import { fileURLToPath } from "url";
+
+const __dirname = path.dirname(fileURLToPath(import.meta.url));
+const LOG_DIR = path.resolve(__dirname, "..", "..", "logs", "tool_call");
+
+function logToolCall(name, args, response) {
+  const ts = new Date().toISOString();
+  const today = ts.slice(0, 10);
+  const argsStr = JSON.stringify(args).slice(0, 200);
+  let respStr = typeof response === "string" ? response : "done";
+  // Truncate long JSON responses to keep logs readable
+  if (respStr.length > 100) {
+    try {
+      const parsed = JSON.parse(respStr);
+      if (Array.isArray(parsed)) respStr = `${parsed.length} items`;
+      else if (parsed.id) respStr = `id=${parsed.id}`;
+      else respStr = respStr.slice(0, 100) + "...";
+    } catch {
+      respStr = respStr.slice(0, 100) + "...";
+    }
+  }
+  fs.mkdirSync(LOG_DIR, { recursive: true });
+
+  for (const [eventName, details] of [
+    ["tool_call", `trello/${name} input=${argsStr}`],
+    ["tool_response", `trello/${name} output=${respStr}`],
+  ]) {
+    const line = `[${ts}] EVENT name=${eventName} details=${details}`;
+    const entry = { timestamp: ts, name: eventName, details };
+    fs.appendFileSync(path.join(LOG_DIR, `${today}_verbose.log`), JSON.stringify(entry) + "\n");
+    fs.appendFileSync(path.join(LOG_DIR, `${today}.log`), line + "\n");
+    console.error(`[mcp] ${line}`);
+  }
+}
+
 /* ── MCP Server ── */
 
 const server = new Server({ name: "trello-mcp-server", version: "1.0.0" }, { capabilities: { tools: {} } });
 
-/* ── Tool: create card ── */
+/* ── Tool call handler (single dispatch) ── */
 
-server.setRequestHandler({ method: "tools/call", params: { name: "trello_create_card" } }, async (request) => {
-  const args = request.params?.arguments || {};
+server.setRequestHandler(CallToolRequestSchema, async (request) => {
+  const { name, arguments: args } = request.params;
+
+  let result;
+  let summary;
+  switch (name) {
+    case "trello_create_card":
+      result = await handleCreateCard(args);
+      summary = `created "${args.name}"`;
+      break;
+    case "trello_get_card":
+      result = await handleGetCard(args);
+      summary = "fetched";
+      break;
+    case "trello_list_cards": {
+      result = await handleListCards(args);
+      const n = result.content?.[0]?.text ? JSON.parse(result.content[0].text).length : 0;
+      summary = `${n} cards`;
+      break;
+    }
+    case "trello_add_comment":
+      result = await handleAddComment(args);
+      summary = "commented";
+      break;
+    case "trello_update_card":
+      result = await handleUpdateCard(args);
+      summary = "updated";
+      break;
+    case "trello_get_lists": {
+      result = await handleGetLists(args);
+      const n = result.content?.[0]?.text ? JSON.parse(result.content[0].text).length : 0;
+      summary = `${n} lists`;
+      break;
+    }
+    default:
+      result = { content: [{ type: "text", text: `Unknown tool: ${name}` }], isError: true };
+      summary = "unknown tool";
+  }
+  logToolCall(name, args, summary);
+  return result;
+});
+
+async function handleCreateCard(args) {
   const { listId, name, desc } = args;
   if (!listId || !name) {
     return { content: [{ type: "text", text: "Missing required parameters: listId, name" }], isError: true };
   }
-
   try {
     const data = await trelloFetch(trelloUrl(`/lists/${listId}/cards`, { name, desc: desc || "" }), { method: "POST" });
     return { content: [{ type: "text", text: JSON.stringify({ id: data.id, url: data.url, name: data.name }, null, 2) }] };
   } catch (err) {
     return { content: [{ type: "text", text: `Error creating card: ${err.message}` }], isError: true };
   }
-});
+}
 
-/* ── Tool: get card ── */
-
-server.setRequestHandler({ method: "tools/call", params: { name: "trello_get_card" } }, async (request) => {
-  const args = request.params?.arguments || {};
+async function handleGetCard(args) {
   const { cardId } = args;
   if (!cardId) {
     return { content: [{ type: "text", text: "Missing required parameter: cardId" }], isError: true };
   }
-
   try {
     const data = await trelloFetch(trelloUrl(`/cards/${cardId}`, { fields: "all" }));
     return { content: [{ type: "text", text: JSON.stringify(data, null, 2) }] };
   } catch (err) {
     return { content: [{ type: "text", text: `Error getting card: ${err.message}` }], isError: true };
   }
-});
+}
 
-/* ── Tool: list cards ── */
-
-server.setRequestHandler({ method: "tools/call", params: { name: "trello_list_cards" } }, async (request) => {
-  const args = request.params?.arguments || {};
+async function handleListCards(args) {
   const { listId } = args;
   if (!listId) {
     return { content: [{ type: "text", text: "Missing required parameter: listId" }], isError: true };
   }
-
   try {
     const data = await trelloFetch(trelloUrl(`/lists/${listId}/cards`, { fields: "name,id,url,dateLastActivity" }));
     return { content: [{ type: "text", text: JSON.stringify(data, null, 2) }] };
   } catch (err) {
     return { content: [{ type: "text", text: `Error listing cards: ${err.message}` }], isError: true };
   }
-});
+}
 
-/* ── Tool: add comment ── */
-
-server.setRequestHandler({ method: "tools/call", params: { name: "trello_add_comment" } }, async (request) => {
-  const args = request.params?.arguments || {};
+async function handleAddComment(args) {
   const { cardId, text } = args;
   if (!cardId || !text) {
     return { content: [{ type: "text", text: "Missing required parameters: cardId, text" }], isError: true };
   }
-
   try {
     const data = await trelloFetch(trelloUrl(`/cards/${cardId}/actions/comments`, { text }), { method: "POST" });
     return { content: [{ type: "text", text: JSON.stringify({ id: data.id }, null, 2) }] };
   } catch (err) {
     return { content: [{ type: "text", text: `Error adding comment: ${err.message}` }], isError: true };
   }
-});
+}
 
-/* ── Tool: update card ── */
-
-server.setRequestHandler({ method: "tools/call", params: { name: "trello_update_card" } }, async (request) => {
-  const args = request.params?.arguments || {};
+async function handleUpdateCard(args) {
   const { cardId, ...fields } = args;
   if (!cardId) {
     return { content: [{ type: "text", text: "Missing required parameter: cardId" }], isError: true };
   }
-
   try {
     const data = await trelloFetch(trelloUrl(`/cards/${cardId}`, fields), { method: "PUT" });
     return { content: [{ type: "text", text: JSON.stringify({ id: data.id, name: data.name }, null, 2) }] };
   } catch (err) {
     return { content: [{ type: "text", text: `Error updating card: ${err.message}` }], isError: true };
   }
-});
+}
 
-/* ── Tool: get lists on board ── */
-
-server.setRequestHandler({ method: "tools/call", params: { name: "trello_get_lists" } }, async (request) => {
-  const args = request.params?.arguments || {};
+async function handleGetLists(args) {
   const { boardId } = args;
   if (!boardId) {
     return { content: [{ type: "text", text: "Missing required parameter: boardId" }], isError: true };
   }
-
   try {
     const data = await trelloFetch(trelloUrl(`/boards/${boardId}/lists`, { fields: "name,id" }));
     return { content: [{ type: "text", text: JSON.stringify(data, null, 2) }] };
   } catch (err) {
     return { content: [{ type: "text", text: `Error getting lists: ${err.message}` }], isError: true };
   }
-});
+}
 
 /* ── Tool definitions ── */
 
-server.setRequestHandler({ method: "tools/list" }, async () => ({
+server.setRequestHandler(ListToolsRequestSchema, async () => ({
   tools: [
     {
       name: "trello_create_card",

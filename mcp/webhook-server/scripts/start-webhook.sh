@@ -125,37 +125,7 @@ echo "📧 Checking Gmail Pub/Sub watch..."
 if [ -z "${GMAIL_CLIENT_ID:-}" ] || [ -z "${GMAIL_CLIENT_SECRET:-}" ] || [ -z "${GMAIL_REFRESH_TOKEN:-}" ]; then
   echo "⚠️  Gmail OAuth2 credentials not set — skipping Gmail watch check"
 else
-  # Use node to check/start the watch via gmail-watch.js
-  node -e "
-    import { ensureWatch, getWatchStatus } from './lib/gmail-watch.js';
-    const status = getWatchStatus();
-    if (status) {
-      const expiresAt = new Date(parseInt(status.expiration, 10));
-      const remaining = expiresAt - Date.now();
-      console.log('📧 Watch status:');
-      console.log('   Email:    ' + status.email);
-      console.log('   History:  ' + status.historyId);
-      console.log('   Expires:  ' + expiresAt.toISOString() + ' (' + Math.round(remaining/1000/60) + 'm remaining)');
-
-      if (remaining < 60 * 60 * 1000) {
-        console.log('   → Watch expiring soon, renewing...');
-        await ensureWatch();
-        const updated = getWatchStatus();
-        console.log('   ✅ Watch renewed — expires ' + new Date(parseInt(updated.expiration, 10)).toISOString());
-      } else {
-        console.log('   ✅ Watch is valid');
-      }
-    } else {
-      console.log('   → No watch active, starting...');
-      await ensureWatch();
-      const updated = getWatchStatus();
-      if (updated) {
-        console.log('   ✅ Watch started — expires ' + new Date(parseInt(updated.expiration, 10)).toISOString());
-      } else {
-        console.log('   ❌ Failed to start watch');
-      }
-    }
-  " 2>&1 || echo "⚠️  Could not check Gmail watch (check credentials)"
+  node "$SCRIPT_DIR/check-gmail-watch.js" 2>&1 || echo "⚠️  Could not check Gmail watch"
 fi
 
 echo ""
