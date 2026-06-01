@@ -53,15 +53,15 @@ The collaborator chat webapp and frontdesk system use a **one-card-per-day** pat
 
 #### Trello MCP Server (`mcp/trello/index.js`) — stdio transport
 
-| Tool                      | Description                                       | Required Params           |
-| ------------------------- | ------------------------------------------------- | ------------------------- |
-| `trello_create_card`      | Create a new card in a list                       | `listId`, `name`          |
-| `trello_get_card`         | Get full card details by ID                       | `cardId`                  |
-| `trello_list_cards`       | List all cards in a list                          | `listId`                  |
-| `trello_add_comment`      | Add a comment to a card                           | `cardId`, `text`          |
-| `trello_update_card`      | Update card fields (name, desc, pos, etc.)        | `cardId`                  |
-| `trello_get_lists`        | Get all lists on a board                          | `boardId`                 |
-| `trello_get_card_actions` | Get actions/comments for a card (filter optional) | `cardId`                  |
+| Tool                      | Description                                       | Required Params  |
+| ------------------------- | ------------------------------------------------- | ---------------- |
+| `trello_create_card`      | Create a new card in a list                       | `listId`, `name` |
+| `trello_get_card`         | Get full card details by ID                       | `cardId`         |
+| `trello_list_cards`       | List all cards in a list                          | `listId`         |
+| `trello_add_comment`      | Add a comment to a card                           | `cardId`, `text` |
+| `trello_update_card`      | Update card fields (name, desc, pos, etc.)        | `cardId`         |
+| `trello_get_lists`        | Get all lists on a board                          | `boardId`        |
+| `trello_get_card_actions` | Get actions/comments for a card (filter optional) | `cardId`         |
 
 Uses `TRELLO_KEY`, `TRELLO_TOKEN`, `TRELLO_BASE_URL` from environment.
 
@@ -180,6 +180,19 @@ In short:
 
 - **"Enqueued event"** = raw notification saved to the queue (always happens)
 - **"Enqueued for agent processing"** = a matching rule triggered a pending tool call for the agent to act on (only if a rule matched)
+
+### Prompt Injection Sanitization
+
+All MCP servers (`mcp/trello/index.js` and `mcp/gmail/index.js`) sanitize user-generated content before returning it to the agent. The shared sanitizer in `scripts/sanitize.mjs`:
+
+- **Scans** for known prompt injection patterns: instruction overrides (`"ignore previous instructions"`), role-playing attempts, base64-encoded instructions, and hidden markdown manipulation
+- **Replaces** any detected injection content with `[🛡️ Sanitized — potential injection content removed]` plus a warning prefix
+- **Recursively walks** all string fields in API responses via `sanitizeObject()`, skipping safe fields like IDs and URLs
+- **Logs** a warning to stderr when injection is detected, including the source tool and matched pattern
+
+**Sanitization is applied to:**
+- Trello: card names, descriptions, comments (all user-generated text)
+- Gmail: email subjects, bodies, sender names, snippets
 
 ### Logging System
 

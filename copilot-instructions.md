@@ -32,8 +32,9 @@
 
 When asked about Trello or Gmail content:
 
-1. **Always use MCP tools first** — they give real-time, complete data
-2. Log files under `logs/notifications/` contain only push notification metadata (trimmed to `{direction, from, to, subject, date, snippet}` for Gmail or `{board, list, card, checklist, checkItem}` for Trello) — treat them as **backup/audit only**, not as a data source for answering questions
+1. **Always use MCP tools first** — they give real-time, complete data and apply prompt-injection sanitization automatically
+2. All user-generated content from Trello/Gmail is sanitized through `scripts/sanitize.mjs` before the agent sees it
+3. Log files under `logs/notifications/` contain only push notification metadata (trimmed to `{direction, from, to, subject, date, snippet}` for Gmail or `{board, list, card, checklist, checkItem}` for Trello) — treat them as **backup/audit only**, not as a data source for answering questions
 3. Pending tool calls: read from `logs/pending-tool-calls/queue.jsonl` (that's the authoritative queue)
 4. Tool call logs: use `/tool-logs` endpoint on the webhook server or read `logs/tool_call/YYYY-MM-DD.log` directly
 
