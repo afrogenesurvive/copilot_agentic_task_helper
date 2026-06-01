@@ -15,6 +15,7 @@ import { StdioServerTransport } from "@modelcontextprotocol/sdk/server/stdio.js"
 import { CallToolRequestSchema, ListToolsRequestSchema } from "@modelcontextprotocol/sdk/types.js";
 import fetch from "node-fetch";
 import "dotenv/config";
+import { sanitizeObject, logInjectionWarning } from "../../scripts/sanitize.mjs";
 
 const TRELLO_KEY = process.env.TRELLO_KEY || "";
 const TRELLO_TOKEN = process.env.TRELLO_TOKEN || "";
@@ -45,6 +46,22 @@ import { fileURLToPath } from "url";
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const LOG_DIR = path.resolve(__dirname, "..", "..", "logs", "tool_call");
+
+/**
+ * Wrap text into a sanitized MCP content response.
+ * Strips prompt injection patterns from external data before the agent sees it.
+ */
+function safeText(text) {
+  return { type: "text", text: text };
+}
+
+/**
+ * Sanitize and stringify an API response object.
+ */
+function safeJson(data) {
+  const sanitized = sanitizeObject(data);
+  return { type: "text", text: JSON.stringify(sanitized, null, 2) };
+}
 
 function logToolCall(name, args, response) {
   const ts = new Date().toISOString();
@@ -133,78 +150,78 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
 async function handleCreateCard(args) {
   const { listId, name, desc } = args;
   if (!listId || !name) {
-    return { content: [{ type: "text", text: "Missing required parameters: listId, name" }], isError: true };
+    return { content: [safeText("Missing required parameters: listId, name")], isError: true };
   }
   try {
     const data = await trelloFetch(trelloUrl(`/lists/${listId}/cards`, { name, desc: desc || "" }), { method: "POST" });
-    return { content: [{ type: "text", text: JSON.stringify({ id: data.id, url: data.url, name: data.name }, null, 2) }] };
+    return { content: [safeJson({ id: data.id, url: data.url, name: data.name })] }; // id/url/name are internal, sanitize defensively
   } catch (err) {
-    return { content: [{ type: "text", text: `Error creating card: ${err.message}` }], isError: true };
+    return { content: [safeText(`Error creating card: ${err.message}`)], isError: true };
   }
 }
 
 async function handleGetCard(args) {
   const { cardId } = args;
   if (!cardId) {
-    return { content: [{ type: "text", text: "Missing required parameter: cardId" }], isError: true };
+    return { content: [safeText("Missing required parameter: cardId")], isError: true };
   }
   try {
     const data = await trelloFetch(trelloUrl(`/cards/${cardId}`, { fields: "all" }));
-    return { content: [{ type: "text", text: JSON.stringify(data, null, 2) }] };
+    return { content: [safeJson(data)] }; // Card names, descriptions, comments may contain injection
   } catch (err) {
-    return { content: [{ type: "text", text: `Error getting card: ${err.message}` }], isError: true };
+    return { content: [safeText(`Error getting card: ${err.message}`)], isError: true };
   }
 }
 
 async function handleListCards(args) {
   const { listId } = args;
   if (!listId) {
-    return { content: [{ type: "text", text: "Missing required parameter: listId" }], isError: true };
+    return { content: [safeText("Missing required parameter: listId")], isError: true };
   }
   try {
     const data = await trelloFetch(trelloUrl(`/lists/${listId}/cards`, { fields: "name,id,url,dateLastActivity" }));
-    return { content: [{ type: "text", text: JSON.stringify(data, null, 2) }] };
+    return { content: [safeJson(data)] }; // Card names may contain injection
   } catch (err) {
-    return { content: [{ type: "text", text: `Error listing cards: ${err.message}` }], isError: true };
+    return { content: [safeText(`Error listing cards: ${err.message}`)], isError: true };
   }
 }
 
 async function handleAddComment(args) {
   const { cardId, text } = args;
   if (!cardId || !text) {
-    return { content: [{ type: "text", text: "Missing required parameters: cardId, text" }], isError: true };
+    return { content: [safeText("Missing required parameters: cardId, text")], isError: true };
   }
   try {
     const data = await trelloFetch(trelloUrl(`/cards/${cardId}/actions/comments`, { text }), { method: "POST" });
-    return { content: [{ type: "text", text: JSON.stringify({ id: data.id }, null, 2) }] };
+    return { content: [safeJson({ id: data.id })] }; // Internal ID, sanitize defensively
   } catch (err) {
-    return { content: [{ type: "text", text: `Error adding comment: ${err.message}` }], isError: true };
+    return { content: [safeText(`Error adding comment: ${err.message}`)], isError: true };
   }
 }
 
 async function handleUpdateCard(args) {
   const { cardId, ...fields } = args;
   if (!cardId) {
-    return { content: [{ type: "text", text: "Missing required parameter: cardId" }], isError: true };
+    return { content: [safeText("Missing required parameter: cardId")], isError: true };
   }
   try {
     const data = await trelloFetch(trelloUrl(`/cards/${cardId}`, fields), { method: "PUT" });
-    return { content: [{ type: "text", text: JSON.stringify({ id: data.id, name: data.name }, null, 2) }] };
+    return { content: [safeJson({ id: data.id, name: data.name })] }; // Card name may contain injection
   } catch (err) {
-    return { content: [{ type: "text", text: `Error updating card: ${err.message}` }], isError: true };
+    return { content: [safeText(`Error updating card: ${err.message}`)], isError: true };
   }
 }
 
 async function handleGetLists(args) {
   const { boardId } = args;
   if (!boardId) {
-    return { content: [{ type: "text", text: "Missing required parameter: boardId" }], isError: true };
+    return { content: [safeText("Missing required parameter: boardId")], isError: true };
   }
   try {
     const data = await trelloFetch(trelloUrl(`/boards/${boardId}/lists`, { fields: "name,id" }));
-    return { content: [{ type: "text", text: JSON.stringify(data, null, 2) }] };
+    return { content: [safeJson(data)] }; // List names may contain injection
   } catch (err) {
-    return { content: [{ type: "text", text: `Error getting lists: ${err.message}` }], isError: true };
+    return { content: [safeText(`Error getting lists: ${err.message}`)], isError: true };
   }
 }
 
@@ -303,14 +320,14 @@ server.setRequestHandler(ListToolsRequestSchema, async () => ({
 async function handleGetCardActions(args) {
   const { cardId, filter } = args;
   if (!cardId) {
-    return { content: [{ type: "text", text: "Missing required parameter: cardId" }], isError: true };
+    return { content: [safeText("Missing required parameter: cardId")], isError: true };
   }
   try {
     const params = { filter: filter || "commentCard", fields: "data,date,type" };
     const data = await trelloFetch(trelloUrl(`/cards/${cardId}/actions`, params));
-    return { content: [{ type: "text", text: JSON.stringify(data, null, 2) }] };
+    return { content: [safeJson(data)] }; // Card comments are user-generated — sanitize
   } catch (err) {
-    return { content: [{ type: "text", text: `Error getting card actions: ${err.message}` }], isError: true };
+    return { content: [safeText(`Error getting card actions: ${err.message}`)], isError: true };
   }
 }
 

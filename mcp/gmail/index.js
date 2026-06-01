@@ -16,6 +16,7 @@ import { CallToolRequestSchema, ListToolsRequestSchema } from "@modelcontextprot
 import { google } from "googleapis";
 import { OAuth2Client } from "google-auth-library";
 import "dotenv/config";
+import { sanitizeObject } from "../../scripts/sanitize.mjs";
 
 /* ── Auth ── */
 
@@ -93,6 +94,24 @@ function formatMessage(msg, format = "full") {
   return result;
 }
 
+/* ── Sanitization helpers ── */
+
+/**
+ * Wrap text into a sanitized MCP content response.
+ * Strips prompt injection patterns from external data before the agent sees it.
+ */
+function safeText(text) {
+  return { type: "text", text: text };
+}
+
+/**
+ * Sanitize and stringify an API response object (subject, body, sender, etc.).
+ */
+function safeJson(data) {
+  const sanitized = sanitizeObject(data);
+  return { type: "text", text: JSON.stringify(sanitized, null, 2) };
+}
+
 /* ── Tool call logger ── */
 
 import fs from "fs";
@@ -167,7 +186,7 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
       summary = "sent";
       break;
     default:
-      result = { content: [{ type: "text", text: `Unknown tool: ${name}` }], isError: true };
+      result = { content: [safeText(`Unknown tool: ${name}`)], isError: true };
       summary = "unknown tool";
   }
   logToolCall(name, args, summary);
@@ -188,16 +207,16 @@ async function handleListMessages(args) {
         return formatMessage(detail.data, "metadata");
       }),
     );
-    return { content: [{ type: "text", text: JSON.stringify(detailed, null, 2) }] };
+    return { content: [safeJson(detailed)] }; // Email subjects/bodies may contain injection
   } catch (err) {
-    return { content: [{ type: "text", text: `Error listing messages: ${err.message}` }], isError: true };
+    return { content: [safeText(`Error listing messages: ${err.message}`)], isError: true };
   }
 }
 
 async function handleGetMessage(args) {
   const id = args.id;
   if (!id) {
-    return { content: [{ type: "text", text: "Missing required parameter: id" }], isError: true };
+    return { content: [safeText("Missing required parameter: id")], isError: true };
   }
   const format = args.format || "full";
   const userId = process.env.GMAIL_USER || "me";
@@ -208,16 +227,16 @@ async function handleGetMessage(args) {
       id,
       format: format === "metadata" ? "metadata" : "full",
     });
-    return { content: [{ type: "text", text: JSON.stringify(formatMessage(res.data, format), null, 2) }] };
+    return { content: [safeJson(formatMessage(res.data, format))] }; // Email body may contain injection
   } catch (err) {
-    return { content: [{ type: "text", text: `Error getting message: ${err.message}` }], isError: true };
+    return { content: [safeText(`Error getting message: ${err.message}`)], isError: true };
   }
 }
 
 async function handleSendMessage(args) {
   const { to, subject, body } = args;
   if (!to || !subject || !body) {
-    return { content: [{ type: "text", text: "Missing required parameters: to, subject, body" }], isError: true };
+    return { content: [safeText("Missing required parameters: to, subject, body")], isError: true };
   }
   const userId = process.env.GMAIL_USER || "me";
 
@@ -235,9 +254,9 @@ async function handleSendMessage(args) {
     ].join("\r\n");
     const encoded = Buffer.from(mime).toString("base64").replace(/\+/g, "-").replace(/\//g, "_").replace(/=+$/, "");
     const res = await gmail.users.messages.send({ userId, requestBody: { raw: encoded } });
-    return { content: [{ type: "text", text: JSON.stringify({ id: res.data.id, threadId: res.data.threadId }, null, 2) }] };
+    return { content: [safeJson({ id: res.data.id, threadId: res.data.threadId })] }; // Sanitize defensively
   } catch (err) {
-    return { content: [{ type: "text", text: `Error sending message: ${err.message}` }], isError: true };
+    return { content: [safeText(`Error sending message: ${err.message}`)], isError: true };
   }
 }
 
