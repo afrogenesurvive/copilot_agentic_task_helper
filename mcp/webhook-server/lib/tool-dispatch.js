@@ -14,6 +14,7 @@ import fs from "fs";
 import path from "path";
 import { fileURLToPath } from "url";
 import { enqueueEvent } from "./event-queue.js";
+import { sanitizeObject } from "../../../scripts/sanitize.mjs";
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const RULES_FILE = path.resolve(__dirname, "..", "..", "..", "safe", "webhook-tool-rules.json");
@@ -98,11 +99,11 @@ export function dispatch(event) {
       if (!conditionsMet) continue;
     }
 
-    // Rule matched — enqueue the tool call
+    // Rule matched — enqueue the tool call (interpolated params are sanitized)
     const params = {};
     if (rule.params) {
       for (const [key, value] of Object.entries(rule.params)) {
-        params[key] = typeof value === "string" ? interpolate(value, event) : value;
+        params[key] = typeof value === "string" ? sanitizeObject(interpolate(value, event)) : value;
       }
     }
 
@@ -112,7 +113,7 @@ export function dispatch(event) {
       data: {
         rule: rule.name,
         tool: rule.tool,
-        params,
+        params: sanitizeObject(params),
         originalEvent: { source: event.source, type: event.type, data: event.data },
       },
     });
