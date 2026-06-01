@@ -31,7 +31,7 @@
 When asked about Trello or Gmail content:
 
 1. **Always use MCP tools first** — they give real-time, complete data
-2. Log files under `logs/notifications/` contain only push notification metadata (trimmed to `{from, subject, date, snippet}` for Gmail or `{board, list, card, checklist, checkItem}` for Trello) — treat them as **backup/audit only**, not as a data source for answering questions
+2. Log files under `logs/notifications/` contain only push notification metadata (trimmed to `{direction, from, to, subject, date, snippet}` for Gmail or `{board, list, card, checklist, checkItem}` for Trello) — treat them as **backup/audit only**, not as a data source for answering questions
 3. Pending tool calls: read from `logs/pending-tool-calls/queue.jsonl` (that's the authoritative queue)
 4. Tool call logs: use `/tool-logs` endpoint on the webhook server or read `logs/tool_call/YYYY-MM-DD.log` directly
 
@@ -39,6 +39,8 @@ When asked about Trello or Gmail content:
 
 - Express server on port **3199** (`mcp/webhook-server/index.js`)
 - Receives Trello webhook callbacks and Gmail Pub/Sub push notifications
+- Gmail watch covers both **INBOX** (received) and **SENT** (sent) labels — both directions captured
+- Notification log entries include a `direction` field (`"received"` or `"sent"`) to distinguish
 - Event queue (`/events`) persists to `logs/pending-tool-calls/queue.jsonl`
 - Tool dispatch rules engine reads `safe/webhook-tool-rules.json`
 - Live tool call tail: displays 🔧 prefixed lines in the webhook terminal every 2 seconds

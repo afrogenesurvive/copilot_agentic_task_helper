@@ -112,7 +112,7 @@ Each entry contains these fields (undefined ones stripped):
 
 #### Gmail notifications (`logs/notifications/gmail/YYYY-MM-DD.jsonl`)
 
-Each entry contains these fields (undefined ones stripped):
+Each entry contains these fields (undefined ones stripped). The Gmail watch covers both **INBOX** (received) and **SENT** (sent) labels, so both directions are captured:
 
 ```json
 {
@@ -120,7 +120,9 @@ Each entry contains these fields (undefined ones stripped):
   "source": "gmail",
   "type": "new_message",
   "data": {
+    "direction": "received|sent",
     "from": "Sender email",
+    "to": "Recipient email",
     "subject": "Email subject",
     "date": "Email date header",
     "snippet": "Gmail snippet"
@@ -150,6 +152,18 @@ The authoritative queue for pending tool calls. Persisted to disk for crash reco
 {"id":"1717000000000-abc123","source":"trello","type":"createCard","data":{...},"queuedAt":"..."}
 {"id":"1717000000001-def456","source":"tool_dispatch","type":"pending_tool_call","data":{...},"queuedAt":"..."}
 ```
+
+#### How the event queue works (what "Enqueued event" and "Enqueued for agent processing" mean)
+
+When a webhook notification arrives (from Trello or Gmail), the following pipeline runs:
+
+1. **Webhook received** → The handler validates the payload (e.g., Trello HEAD verification, Gmail Pub/Sub decode)
+2. **`enqueueEvent(event)`** — "Enqueued event" means the raw notification has been added to the in-memory queue **and** persisted to `logs/pending-tool-calls/queue.jsonl`. The event is given a unique ID, tagged with its `source` (trello/gmail) and `type` (createCard/new_message/etc.), and stored so the agent can process it later. This survives server restarts thanks to the JSONL file on disk.
+3. **`dispatch(event)`** — "Enqueued for agent processing" means the tool dispatch rules engine has checked the event against `safe/webhook-tool-rules.json`. If a rule matches, an additional **pending tool call** is enqueued (with `source: "tool_dispatch"`, `type: "pending_tool_call"`), which tells the agent which MCP tool to invoke and with what parameters. If no rules match, the raw event is still in the queue for manual inspection via the `/events` endpoint, but no automatic tool call is created.
+
+In short:
+- **"Enqueued event"** = raw notification saved to the queue (always happens)
+- **"Enqueued for agent processing"** = a matching rule triggered a pending tool call for the agent to act on (only if a rule matched)
 
 ### Logging System
 
