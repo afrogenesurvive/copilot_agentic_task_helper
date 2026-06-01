@@ -189,6 +189,29 @@ document.getElementById("message-input").addEventListener("keydown", (e) => {
   }
 });
 
+/**
+ * Find or create the daily card on a given list.
+ * Cards are named by date (YYYY-MM-DD) — one card per day.
+ */
+async function findOrCreateDailyCard(listId) {
+  const today = new Date().toISOString().slice(0, 10);
+  const resp = await fetch(trelloUrl(`/lists/${listId}/cards`, { fields: "name,id" }));
+  if (!resp.ok) throw new Error(`HTTP ${resp.status}`);
+  const cards = await resp.json();
+  const existing = cards.find((c) => c.name === today);
+  if (existing) return existing;
+
+  // Create new daily card
+  const createResp = await fetch(
+    trelloUrl(`/lists/${listId}/cards`, { name: today, desc: `Messages for ${today}` }),
+    { method: "POST" },
+  );
+  if (!createResp.ok) throw new Error(`HTTP ${createResp.status}`);
+  const newCard = await createResp.json();
+  console.log(`📅 Created daily card "${today}" on list ${listId}`);
+  return newCard;
+}
+
 async function sendMessage() {
   const input = document.getElementById("message-input");
   const text = input.value.trim();
@@ -197,25 +220,17 @@ async function sendMessage() {
   const btn = document.getElementById("send-btn");
   btn.disabled = true;
 
-  const now = new Date();
-  const ts = now.toISOString();
-
   try {
-    // Create a card on the frontdesk_input Trello list
-    const resp = await fetch(
-      trelloUrl(`/lists/${CONFIG.LIST_ID_INPUT}/cards`, {
-        name: `[${currentUser}] ${text.slice(0, 80)}${text.length > 80 ? "..." : ""}`,
-        desc: text + `\n\n---\nFrom: ${currentUser}\nSent: ${ts}`,
-      }),
+    // Find or create today's card on frontdesk_input
+    const todayCard = await findOrCreateDailyCard(CONFIG.LIST_ID_INPUT);
+
+    // Add the message as a comment with username prefix
+    const commentText = `[${currentUser}] ${text}`;
+    const commentResp = await fetch(
+      trelloUrl(`/cards/${todayCard.id}/actions/comments`, { text: commentText }),
       { method: "POST" },
     );
-
-    if (!resp.ok) throw new Error(`HTTP ${resp.status}: ${await resp.text()}`);
-
-    const card = await resp.json();
-
-    // Add the text as the first comment
-    await fetch(trelloUrl(`/cards/${card.id}/actions/comments`, { text }), { method: "POST" });
+    if (!commentResp.ok) throw new Error(`HTTP ${commentResp.status}`);
 
     input.value = "";
     await loadMessages(); // Refresh
@@ -233,32 +248,34 @@ async function sendMessage() {
    ================================================================== */
 
 /**
- * Fetch cards from a Trello list and return message objects.
- * Each card becomes one message using its desc (first 300 chars) + timestamp.
+ * Fetch today's comments from a Trello list's daily card.
+ * Each day has one card named by date; comments on that card are the messages.
  */
 async function fetchListMessages(listId, sender) {
-  const resp = await fetch(
-    trelloUrl(`/lists/${listId}/cards`, {
-      fields: "name,desc,dateLastActivity,id",
-    }),
+  const today = new Date().toISOString().slice(0, 10);
+
+  // Find today's card on the list
+  const listResp = await fetch(trelloUrl(`/lists/${listId}/cards`, { fields: "name,id" }));
+  if (!listResp.ok) throw new Error(`HTTP ${listResp.status}`);
+  const cards = await listResp.json();
+  const todayCard = cards.find((c) => c.name === today);
+
+  if (!todayCard) return [];
+
+  // Get comments from today's card
+  const actionsResp = await fetch(
+    trelloUrl(`/cards/${todayCard.id}/actions`, { filter: "commentCard", fields: "data,date" }),
   );
-  if (!resp.ok) throw new Error(`HTTP ${resp.status}`);
-  const cards = await resp.json();
+  if (!actionsResp.ok) return [];
+  const actions = await actionsResp.json();
 
-  return cards.map((card) => {
-    // Extract the plain message text from desc (strip the --- metadata block)
-    const desc = card.desc || "";
-    const text = desc.split("\n---\n")[0] || desc;
-    const date = card.dateLastActivity || new Date(0).toISOString();
-
-    return {
-      cardId: card.id,
-      text: text,
-      date: date,
-      member: sender,
-      sender: sender,
-    };
-  });
+  return actions.map((action) => ({
+    cardId: todayCard.id,
+    text: action.data?.text || "",
+    date: action.date,
+    member: sender,
+    sender: sender,
+  }));
 }
 
 async function loadMessages() {
@@ -271,12 +288,8 @@ async function loadMessages() {
       fetchListMessages(CONFIG.LIST_ID_OUTPUT, "Agent"),
     ]);
 
-    // Mark input cards as "pending" (awaiting human approval before agent acts)
-    const inputMsgs = inputCards.map((m) => ({ ...m, pending: true }));
-    const outputMsgs = outputCards.map((m) => ({ ...m, pending: false }));
-
     // 2. Combine, sort descending (newest first), take last N
-    const all = [...inputMsgs, ...outputMsgs];
+    const all = [...inputCards, ...outputCards];
     all.sort((a, b) => new Date(b.date) - new Date(a.date));
 
     const recent = all.slice(0, CONFIG.MAX_CHAT_MESSAGES).reverse(); // ascending for display
@@ -291,10 +304,10 @@ async function loadMessages() {
     recent.forEach((msg) => {
       const isCollaborator = msg.sender === "You";
       const bubble = document.createElement("div");
-      bubble.className = `message ${isCollaborator ? "collaborator" : "agent"}${msg.pending ? " pending" : ""}`;
+      bubble.className = `message ${isCollaborator ? "collaborator" : "agent"}`;
       bubble.innerHTML = `
         <div class="text">${escapeHtml(msg.text)}</div>
-        <div class="meta">${msg.sender} · ${fmtTime(msg.date)}${msg.pending ? " · ⏳ Pending approval" : ""}</div>
+        <div class="meta">${msg.sender} · ${fmtTime(msg.date)}</div>
       `;
       container.appendChild(bubble);
     });
