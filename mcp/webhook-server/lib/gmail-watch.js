@@ -59,7 +59,7 @@ export async function startWatch(overrides = {}) {
 
   const topicName = overrides.topicName || process.env.GMAIL_TOPIC_NAME;
   const userId = overrides.userId || process.env.GMAIL_USER || "me";
-  const labelIds = overrides.labelIds || ["INBOX"];
+  const labelIds = overrides.labelIds || ["INBOX", "SENT"];
 
   if (!topicName) {
     throw new Error("GMAIL_TOPIC_NAME is required");

@@ -81,15 +81,20 @@ async function fetchMessageDetails(historyId) {
       userId,
       id: msgId,
       format: "metadata",
-      metadataHeaders: ["From", "Subject", "Date"],
+      metadataHeaders: ["From", "To", "Subject", "Date"],
     });
     const headers = msg.data.payload?.headers || [];
     const from = headers.find((h) => h.name === "From")?.value;
+    const to = headers.find((h) => h.name === "To")?.value;
     const subject = headers.find((h) => h.name === "Subject")?.value;
     const date = headers.find((h) => h.name === "Date")?.value;
 
-    console.error(`   → Fetched: "${subject || "(no subject)"}" from ${from || "?"}`);
-    return { from, subject, date, snippet: msg.data.snippet, messageId: msgId };
+    // Determine direction: if the "From" matches our configured user, it was sent by us
+    const configuredUser = process.env.GMAIL_USER || "me";
+    const direction = from && from.includes(configuredUser.replace(/@.*/, "")) ? "sent" : "received";
+
+    console.error(`   → Fetched: "${subject || "(no subject)"}" from ${from || "?"} (${direction})`);
+    return { from, to, subject, date, snippet: msg.data.snippet, messageId: msgId, direction };
   } catch (err) {
     console.error(`   ⚠️  fetchMessageDetails error: ${err.message}`);
     return {};
@@ -153,12 +158,15 @@ export async function gmailHandler(req, res) {
   const details = await fetchMessageDetails(historyId);
 
   // Log notification (trimmed to specified fields)
+  const direction = details.direction || "received";
   const entry = {
     ts,
     source: "gmail",
     type: "new_message",
     data: {
+      direction,
       from: details.from,
+      to: details.to,
       subject: details.subject,
       date: details.date,
       snippet: details.snippet,
@@ -167,17 +175,22 @@ export async function gmailHandler(req, res) {
   // Strip undefined fields
   Object.keys(entry.data).forEach((k) => entry.data[k] === undefined && delete entry.data[k]);
   logNotification(entry);
-  console.log(`   → Logged: ${entry.data.subject ? `"${entry.data.subject}"` : "(no subject)"} from ${entry.data.from || "?"}`);
+  const action = direction === "sent" ? "to" : "from";
+  console.log(`   → Logged: ${entry.data.subject ? `"${entry.data.subject}"` : "(no subject)"} ${action} ${entry.data[action] || "?"}`);
 
   // Enqueue event
   const event = {
     source: "gmail",
     type: "new_message",
     data: {
+      direction,
       emailAddress,
       historyId,
       messageId: body.message.messageId,
       publishTime: body.message.publishTime,
+      ...(details.from && { from: details.from }),
+      ...(details.to && { to: details.to }),
+      ...(details.subject && { subject: details.subject }),
       ...(details.messageId && { gmailMessageId: details.messageId }),
     },
   };
