@@ -12,6 +12,8 @@
 import fs from "fs";
 import path from "path";
 import { fileURLToPath } from "url";
+import { google } from "googleapis";
+import { OAuth2Client } from "google-auth-library";
 import { enqueueEvent } from "../lib/event-queue.js";
 import { dispatch } from "../lib/tool-dispatch.js";
 
@@ -25,11 +27,73 @@ function logVerbose(entry) {
   fs.appendFileSync(path.join(LOG_DIR, `${ts.slice(0, 10)}_verbose.log`), JSON.stringify({ ts, ...entry }) + "\n");
 }
 
-function logNotification(data) {
-  const ts = new Date().toISOString();
+function logNotification(entry) {
+  const ts = entry.ts || new Date().toISOString();
   const day = ts.slice(0, 10);
   fs.mkdirSync(NOTIFY_DIR, { recursive: true });
-  fs.appendFileSync(path.join(NOTIFY_DIR, `${day}.jsonl`), JSON.stringify({ ts, source: "gmail", type: "new_message", data }) + "\n");
+  fs.appendFileSync(path.join(NOTIFY_DIR, `${day}.jsonl`), JSON.stringify(entry) + "\n");
+}
+
+function getGmailAuth() {
+  const { GMAIL_CLIENT_ID, GMAIL_CLIENT_SECRET, GMAIL_REFRESH_TOKEN } = process.env;
+  if (!GMAIL_CLIENT_ID || !GMAIL_CLIENT_SECRET || !GMAIL_REFRESH_TOKEN) return null;
+  const oauth2 = new OAuth2Client(GMAIL_CLIENT_ID, GMAIL_CLIENT_SECRET);
+  oauth2.setCredentials({ refresh_token: GMAIL_REFRESH_TOKEN });
+  return oauth2;
+}
+
+async function fetchMessageDetails(historyId) {
+  try {
+    const auth = getGmailAuth();
+    if (!auth) {
+      console.error("   ⚠️  No Gmail auth available");
+      return {};
+    }
+    const gmail = google.gmail({ version: "v1", auth });
+    const userId = process.env.GMAIL_USER || "me";
+
+    // The push notification historyId is the state AFTER the change.
+    // To find the message that triggered it, we query history BEFORE this ID.
+    // Try several offsets in case the exact history boundary differs.
+    let msgId = null;
+    for (const offset of [0, -1, -5, -10]) {
+      const startId = typeof historyId === "number" || typeof historyId === "string" ? String(Number(historyId) + offset) : String(historyId);
+      if (Number(startId) <= 0) continue;
+
+      const history = await gmail.users.history.list({
+        userId,
+        startHistoryId: startId,
+        historyTypes: ["messageAdded"],
+      });
+
+      const added = history.data.history || [];
+      msgId = added[0]?.messagesAdded?.[0]?.message?.id;
+      if (msgId) break;
+    }
+
+    if (!msgId) {
+      console.error("   ⚠️  No message found in history for", historyId);
+      return {};
+    }
+
+    // Fetch the message
+    const msg = await gmail.users.messages.get({
+      userId,
+      id: msgId,
+      format: "metadata",
+      metadataHeaders: ["From", "Subject", "Date"],
+    });
+    const headers = msg.data.payload?.headers || [];
+    const from = headers.find((h) => h.name === "From")?.value;
+    const subject = headers.find((h) => h.name === "Subject")?.value;
+    const date = headers.find((h) => h.name === "Date")?.value;
+
+    console.error(`   → Fetched: "${subject || "(no subject)"}" from ${from || "?"}`);
+    return { from, subject, date, snippet: msg.data.snippet, messageId: msgId };
+  } catch (err) {
+    console.error(`   ⚠️  fetchMessageDetails error: ${err.message}`);
+    return {};
+  }
 }
 
 /**
@@ -44,7 +108,7 @@ function logNotification(data) {
  *   subscription: string
  * }
  */
-export function gmailHandler(req, res) {
+export async function gmailHandler(req, res) {
   const ts = new Date().toISOString();
 
   if (req.method === "GET") {
@@ -84,8 +148,26 @@ export function gmailHandler(req, res) {
     messageId: body.message.messageId,
   });
 
-  // Log notification
-  logNotification({ emailAddress, historyId, messageId: body.message.messageId });
+  // Fetch message details from Gmail API for richer logging
+  console.log(`   → Fetching message details...`);
+  const details = await fetchMessageDetails(historyId);
+
+  // Log notification (trimmed to specified fields)
+  const entry = {
+    ts,
+    source: "gmail",
+    type: "new_message",
+    data: {
+      from: details.from,
+      subject: details.subject,
+      date: details.date,
+      snippet: details.snippet,
+    },
+  };
+  // Strip undefined fields
+  Object.keys(entry.data).forEach((k) => entry.data[k] === undefined && delete entry.data[k]);
+  logNotification(entry);
+  console.log(`   → Logged: ${entry.data.subject ? `"${entry.data.subject}"` : "(no subject)"} from ${entry.data.from || "?"}`);
 
   // Enqueue event
   const event = {
@@ -96,6 +178,7 @@ export function gmailHandler(req, res) {
       historyId,
       messageId: body.message.messageId,
       publishTime: body.message.publishTime,
+      ...(details.messageId && { gmailMessageId: details.messageId }),
     },
   };
 

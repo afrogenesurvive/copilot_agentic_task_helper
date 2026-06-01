@@ -12,7 +12,7 @@
  */
 
 import { google } from "googleapis";
-import { google as googleAuth } from "google-auth-library";
+import { OAuth2Client } from "google-auth-library";
 import fs from "fs";
 import path from "path";
 import { fileURLToPath } from "url";
@@ -27,7 +27,7 @@ function getAuthClient() {
   if (!GMAIL_CLIENT_ID || !GMAIL_CLIENT_SECRET || !GMAIL_REFRESH_TOKEN) {
     throw new Error("Missing Gmail OAuth2 credentials");
   }
-  const oauth2 = new googleAuth.auth.OAuth2(GMAIL_CLIENT_ID, GMAIL_CLIENT_SECRET);
+  const oauth2 = new OAuth2Client(GMAIL_CLIENT_ID, GMAIL_CLIENT_SECRET);
   oauth2.setCredentials({ refresh_token: GMAIL_REFRESH_TOKEN });
   return oauth2;
 }

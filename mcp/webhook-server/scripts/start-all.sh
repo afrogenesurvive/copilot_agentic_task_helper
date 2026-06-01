@@ -96,25 +96,32 @@ echo ""
 # ═══════════════════════════════════════════════
 echo "🌐 [3/6] Starting webhook server on port $PORT..."
 
-# Kill existing if any
+# Kill existing if any (fresh start ensures clean state)
 EXISTING=$(lsof -ti ":$PORT" 2>/dev/null)
 if [ -n "$EXISTING" ]; then
-  echo "   ⚠️  Port $PORT already in use (PID $EXISTING), not restarting"
-else
-  cd "$WEBHOOK_DIR"
-  node index.js &
-  WEBHOOK_PID=$!
-  cd "$PROJECT_DIR"
-
-  # Wait for server to be ready
-  for i in $(seq 1 10); do
-    if curl -sf "http://localhost:$PORT/health" &>/dev/null; then
-      echo "   ✅ Webhook server is up (PID $WEBHOOK_PID)"
-      break
-    fi
+  echo "   ⚠️  Port $PORT already in use (PID $EXISTING) — restarting..."
+  kill "$EXISTING" 2>/dev/null
+  sleep 2
+  # Force kill if still alive
+  if lsof -ti ":$PORT" &>/dev/null; then
+    kill -9 "$EXISTING" 2>/dev/null
     sleep 1
-  done
+  fi
 fi
+
+cd "$WEBHOOK_DIR"
+node index.js &
+WEBHOOK_PID=$!
+cd "$PROJECT_DIR"
+
+# Wait for server to be ready
+for i in $(seq 1 10); do
+  if curl -sf "http://localhost:$PORT/health" &>/dev/null; then
+    echo "   ✅ Webhook server is up (PID $WEBHOOK_PID)"
+    break
+  fi
+  sleep 1
+done
 echo ""
 
 # ═══════════════════════════════════════════════
@@ -133,7 +140,38 @@ elif [ -z "$MODEL_IDS" ]; then
 else
   WEBHOOKS=$(curl -sf "https://api.trello.com/1/tokens/${TRELLO_TOKEN}/webhooks/?key=${TRELLO_KEY}" 2>/dev/null || echo "[]")
 
+  # ── Cleanup: only remove webhooks for boards NOT in our list ──
+  # Keep webhooks with old URLs — they're better than nothing if registration fails
   IFS=',' read -ra BOARDS <<< "$MODEL_IDS"
+  EXPECTED_URL="${TUNNEL_URL}/webhooks/trello"
+
+  BOARDS_PATTERN=$(printf "|%s" "${BOARDS[@]}")
+  BOARDS_PATTERN="(${BOARDS_PATTERN:1})"
+
+  CLEANUP_TARGETS=$(echo "$WEBHOOKS" | python3 -c "
+import sys, json, re
+data = json.load(sys.stdin)
+if not isinstance(data, list): data = []
+boards_pattern = '$BOARDS_PATTERN'
+for wh in data:
+    wh_id = wh.get('id', '')
+    board_id = wh.get('idModel', '')
+    # Only delete if board is NOT in our list (orphaned)
+    if not re.search(boards_pattern, board_id):
+        print(wh_id)
+" 2>/dev/null)
+
+  if [ -n "$CLEANUP_TARGETS" ]; then
+    while IFS= read -r WH_ID; do
+      [ -z "$WH_ID" ] && continue
+      echo "   🧹 Removing orphaned webhook $WH_ID (board no longer tracked)..."
+      curl -sf -X DELETE "https://api.trello.com/1/webhooks/${WH_ID}?key=${TRELLO_KEY}&token=${TRELLO_TOKEN}" > /dev/null 2>&1 \
+        && echo "   ✅ Removed" \
+        || echo "   ⚠️  Could not remove $WH_ID"
+    done <<< "$CLEANUP_TARGETS"
+    # Re-fetch webhooks after cleanup
+    WEBHOOKS=$(curl -sf "https://api.trello.com/1/tokens/${TRELLO_TOKEN}/webhooks/?key=${TRELLO_KEY}" 2>/dev/null || echo "[]")
+  fi
   for BOARD_ID in "${BOARDS[@]}"; do
     BOARD_ID="$(echo "$BOARD_ID" | xargs)"
     [ -z "$BOARD_ID" ] && continue
@@ -157,20 +195,70 @@ except: pass
         echo "   ✅ Board $BOARD_ID — webhook up to date"
       else
         echo "   ⚠️  Board $BOARD_ID — URL mismatch, updating..."
-        curl -sf -X PUT "https://api.trello.com/1/webhooks/$(echo "$WEBHOOKS" | python3 -c "
+        WEBHOOK_ID=$(echo "$WEBHOOKS" | python3 -c "
 import sys,json; data=json.load(sys.stdin);
 for wh in data:
     if wh.get('idModel')=='$BOARD_ID': print(wh['id']); break
-" 2>/dev/null)?key=${TRELLO_KEY}" \
-          -d "callbackURL=$EXPECTED" > /dev/null 2>&1 && echo "   ✅ Updated" || echo "   ❌ Update failed"
+" 2>/dev/null)
+        if [ -n "$WEBHOOK_ID" ]; then
+          # Retry up to 3 times with backoff — Trello's proxy validation can be flaky
+          UPDATE_OK=false
+          for retry in 1 2 3; do
+            [ "$retry" -gt 1 ] && echo "   🔄 Retry $retry..." && sleep 5
+            RESPONSE=$(curl -s -X PUT "https://api.trello.com/1/webhooks/${WEBHOOK_ID}?key=${TRELLO_KEY}&token=${TRELLO_TOKEN}" \
+              -d "callbackURL=$EXPECTED" 2>&1)
+            if echo "$RESPONSE" | python3 -c "import sys,json; d=json.load(sys.stdin); sys.exit(0 if d.get('id') else 1)" 2>/dev/null; then
+              UPDATE_OK=true
+              break
+            fi
+          done
+          if [ "$UPDATE_OK" = true ]; then
+            echo "   ✅ Updated"
+          elif echo "$RESPONSE" | grep -q "VALIDATOR_URL_NOT_REACHABLE"; then
+            echo "   ⚠️  Trello cannot verify the tunnel URL (proxy issue). Keeping existing webhook as-is."
+            echo "   ℹ️  Old webhook still registered — events may not arrive until URL is reachable."
+          else
+            echo "   ❌ Update failed: $(echo "$RESPONSE" | head -c 300)"
+            echo "   🔄 Falling back — deleting and recreating webhook..."
+            curl -sf -X DELETE "https://api.trello.com/1/webhooks/${WEBHOOK_ID}?key=${TRELLO_KEY}&token=${TRELLO_TOKEN}" > /dev/null 2>&1
+            sleep 2
+            REG_RESP=$(curl -s -X POST "https://api.trello.com/1/tokens/${TRELLO_TOKEN}/webhooks/?key=${TRELLO_KEY}" \
+              -d "callbackURL=$EXPECTED" \
+              -d "idModel=$BOARD_ID" \
+              -d "description=Copilot agent - $BOARD_ID" 2>&1)
+            if echo "$REG_RESP" | python3 -c "import sys,json; d=json.load(sys.stdin); sys.exit(0 if d.get('id') else 1)" 2>/dev/null; then
+              echo "   ✅ Recreated successfully"
+            else
+              echo "   ❌ Recreation failed: $(echo "$REG_RESP" | head -c 300)"
+            fi
+          fi
+        else
+          echo "   ❌ Could not find webhook ID for board $BOARD_ID"
+        fi
       fi
     else
       echo "   📝 Registering webhook for board $BOARD_ID..."
-      curl -sf -X POST "https://api.trello.com/1/tokens/${TRELLO_TOKEN}/webhooks/?key=${TRELLO_KEY}" \
-        -d "callbackURL=$EXPECTED" \
-        -d "idModel=$BOARD_ID" \
-        -d "description=Copilot agent - $BOARD_ID" > /dev/null 2>&1 \
-        && echo "   ✅ Registered" || echo "   ❌ Registration failed"
+      # Retry up to 3 times with backoff
+      REG_OK=false
+      for retry in 1 2 3; do
+        [ "$retry" -gt 1 ] && echo "   🔄 Retry $retry..." && sleep 5
+        REG_RESP=$(curl -s -X POST "https://api.trello.com/1/tokens/${TRELLO_TOKEN}/webhooks/?key=${TRELLO_KEY}" \
+          -d "callbackURL=$EXPECTED" \
+          -d "idModel=$BOARD_ID" \
+          -d "description=Copilot agent - $BOARD_ID" 2>&1)
+        if echo "$REG_RESP" | python3 -c "import sys,json; d=json.load(sys.stdin); sys.exit(0 if d.get('id') else 1)" 2>/dev/null; then
+          REG_OK=true
+          break
+        fi
+      done
+      if [ "$REG_OK" = true ]; then
+        echo "   ✅ Registered"
+      elif echo "$REG_RESP" | grep -q "VALIDATOR_URL_NOT_REACHABLE"; then
+        echo "   ⚠️  Trello cannot verify the tunnel URL (proxy issue). Webhook not registered."
+        echo "   ℹ️  Try using a public domain instead of Cloudflare tunnel."
+      else
+        echo "   ❌ Registration failed: $(echo "$REG_RESP" | head -c 300)"
+      fi
     fi
   done
 fi
@@ -184,29 +272,9 @@ echo "📧 [5/6] Checking Gmail Pub/Sub watch..."
 if [ -z "${GMAIL_CLIENT_ID:-}" ] || [ -z "${GMAIL_CLIENT_SECRET:-}" ] || [ -z "${GMAIL_REFRESH_TOKEN:-}" ]; then
   echo "   ⚠️  Gmail OAuth2 credentials not set — skipping"
 else
+  echo "   Running check..."
   cd "$WEBHOOK_DIR"
-  node -e "
-    import { ensureWatch, getWatchStatus } from './lib/gmail-watch.js';
-    const status = getWatchStatus();
-    if (status) {
-      const expiresAt = new Date(parseInt(status.expiration, 10));
-      const remaining = expiresAt - Date.now();
-      console.log('   Watch: email=' + status.email + ', expires=' + expiresAt.toISOString() + ' (' + Math.round(remaining/1000/60) + 'm)');
-      if (remaining < 60 * 60 * 1000) {
-        console.log('   → Renewing...');
-        await ensureWatch();
-        const u = getWatchStatus();
-        console.log('   ✅ Renewed — expires ' + new Date(parseInt(u.expiration, 10)).toISOString());
-      } else {
-        console.log('   ✅ Watch is valid');
-      }
-    } else {
-      console.log('   → No watch active, starting...');
-      await ensureWatch();
-      const u = getWatchStatus();
-      console.log('   ✅ Started — expires ' + new Date(parseInt(u.expiration, 10)).toISOString());
-    }
-  " 2>&1 || echo "   ⚠️  Could not check Gmail watch"
+  node scripts/check-gmail-watch.js 2>&1 || echo "   ⚠️  Could not check Gmail watch"
   cd "$PROJECT_DIR"
 fi
 echo ""
