@@ -18,6 +18,7 @@ import { sanitizeObject } from "../../../scripts/sanitize.mjs";
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const LOG_DIR = path.resolve(__dirname, "..", "..", "..", "logs", "webhook");
 const NOTIFY_DIR = path.resolve(__dirname, "..", "..", "..", "logs", "notifications", "trello");
+const FRONTDESK_UNAUTHORIZED_DIR = path.resolve(__dirname, "..", "..", "..", "logs", "frontdesk", "unauthorized");
 
 function logError(msg) {
   const ts = new Date().toISOString();
@@ -161,6 +162,23 @@ export function trelloHandler(req, res) {
         event.data.data.text = event.data.data.text.replace(/^---.+?---\s*/, "");
       }
     }
+  }
+
+  // Log non-authorized frontdesk input to a dedicated directory for review
+  if (event.type === "commentCard" && event.list?.name === "frontdesk_input" && event.data._authorized !== true) {
+    const day = ts.slice(0, 10);
+    const logEntry = {
+      ts,
+      direction: "input",
+      text: action?.data?.text || "",
+      verified: event.data._verified,
+      card: event.card?.name,
+      cardId: action?.data?.card?.id,
+    };
+    fs.mkdirSync(FRONTDESK_UNAUTHORIZED_DIR, { recursive: true });
+    fs.appendFileSync(path.join(FRONTDESK_UNAUTHORIZED_DIR, `${day}.jsonl`), JSON.stringify(logEntry) + "\n");
+    console.log(`   ⚠️ Non-authorized frontdesk input from "${event.card?.name || "?"}" — "${event.data.text || "(empty)"}"`);
+    console.log(`   → Logged to logs/frontdesk/unauthorized/`);
   }
 
   // Authorized frontdesk input skips the queue entirely — the agent
