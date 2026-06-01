@@ -10,6 +10,7 @@
 import fs from "fs";
 import path from "path";
 import { fileURLToPath } from "url";
+import crypto from "crypto";
 import { enqueueEvent } from "../lib/event-queue.js";
 import { dispatch } from "../lib/tool-dispatch.js";
 import { sanitizeObject } from "../../../scripts/sanitize.mjs";
@@ -109,6 +110,31 @@ export function trelloHandler(req, res) {
     list: action?.data?.list,
     timestamp: action?.date || ts,
   };
+
+  // Verify HMAC signature for frontdesk_input commentCard events
+  if (event.type === "commentCard" && event.list?.name === "frontdesk_input") {
+    const text = action?.data?.text || "";
+    const sigMatch = text.match(/\[sig:([a-f0-9]{16})\]$/);
+    if (sigMatch) {
+      const providedSig = sigMatch[1];
+      const cleanText = text.replace(/\s*\[sig:[a-f0-9]{16}\]$/, "");
+      const secret = process.env.FRONTEND_SECRET;
+      if (secret) {
+        const expectedSig = crypto.createHmac("sha256", secret).update(cleanText).digest("hex").slice(0, 16);
+        if (providedSig === expectedSig) {
+          console.log(`   ✅ HMAC signature valid for frontdesk_input comment`);
+          event.data._verified = true;
+        } else {
+          console.log(`   ⚠️ HMAC signature INVALID for frontdesk_input comment`);
+          event.data._verified = false;
+        }
+      }
+    } else if (process.env.FRONTEND_SECRET) {
+      // No signature but we expect one — flag as unverified
+      console.log(`   ⚠️ frontdesk_input comment has no HMAC signature (may be direct API call)`);
+      event.data._verified = false;
+    }
+  }
 
   enqueueEvent(event);
 
