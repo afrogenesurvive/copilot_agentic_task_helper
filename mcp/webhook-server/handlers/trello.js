@@ -12,6 +12,7 @@ import path from "path";
 import { fileURLToPath } from "url";
 import { enqueueEvent } from "../lib/event-queue.js";
 import { dispatch } from "../lib/tool-dispatch.js";
+import { sanitizeObject } from "../../../scripts/sanitize.mjs";
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const LOG_DIR = path.resolve(__dirname, "..", "..", "..", "logs", "webhook");
@@ -40,13 +41,13 @@ function logNotification(body) {
     ts,
     source: "trello",
     type: action.type || "unknown",
-    data: {
+    data: sanitizeObject({
       board: model.name || d.board?.name,
       list: d.list?.name,
       card: d.card?.name,
       checklist: d.checklist?.name,
       checkItem: d.checkItem?.name,
-    },
+    }),
   };
 
   // Strip undefined fields
@@ -83,7 +84,7 @@ export function trelloHandler(req, res) {
 
   logVerbose({ type: "webhook_received", source: "trello", action: action?.type, card: action?.data?.card?.name });
 
-  // Log notification
+  // Log notification (sanitized)
   logNotification(body);
 
   // Check if this board is in our watch list
@@ -98,13 +99,13 @@ export function trelloHandler(req, res) {
     return res.status(200).json({ status: "ignored", reason: "board_not_watched" });
   }
 
-  // Enqueue as pending tool call
+  // Enqueue as pending tool call (sanitized against prompt injection)
   const event = {
     source: "trello",
     type: action?.type || "unknown",
-    data: action?.data || {},
+    data: sanitizeObject(action?.data || {}),
     board: model?.name || action?.data?.board?.name,
-    card: action?.data?.card,
+    card: sanitizeObject(action?.data?.card || {}),
     list: action?.data?.list,
     timestamp: action?.date || ts,
   };

@@ -16,6 +16,7 @@ import { google } from "googleapis";
 import { OAuth2Client } from "google-auth-library";
 import { enqueueEvent } from "../lib/event-queue.js";
 import { dispatch } from "../lib/tool-dispatch.js";
+import { sanitizeObject } from "../../../scripts/sanitize.mjs";
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const LOG_DIR = path.resolve(__dirname, "..", "..", "..", "logs", "webhook");
@@ -157,20 +158,20 @@ export async function gmailHandler(req, res) {
   console.log(`   → Fetching message details...`);
   const details = await fetchMessageDetails(historyId);
 
-  // Log notification (trimmed to specified fields)
+  // Log notification (trimmed to specified fields, sanitized)
   const direction = details.direction || "received";
   const entry = {
     ts,
     source: "gmail",
     type: "new_message",
-    data: {
+    data: sanitizeObject({
       direction,
       from: details.from,
       to: details.to,
       subject: details.subject,
       date: details.date,
       snippet: details.snippet,
-    },
+    }),
   };
   // Strip undefined fields
   Object.keys(entry.data).forEach((k) => entry.data[k] === undefined && delete entry.data[k]);
@@ -178,11 +179,11 @@ export async function gmailHandler(req, res) {
   const action = direction === "sent" ? "to" : "from";
   console.log(`   → Logged: ${entry.data.subject ? `"${entry.data.subject}"` : "(no subject)"} ${action} ${entry.data[action] || "?"}`);
 
-  // Enqueue event
+  // Enqueue event (sanitized)
   const event = {
     source: "gmail",
     type: "new_message",
-    data: {
+    data: sanitizeObject({
       direction,
       emailAddress,
       historyId,
@@ -192,7 +193,7 @@ export async function gmailHandler(req, res) {
       ...(details.to && { to: details.to }),
       ...(details.subject && { subject: details.subject }),
       ...(details.messageId && { gmailMessageId: details.messageId }),
-    },
+    }),
   };
 
   enqueueEvent(event);
