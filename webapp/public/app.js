@@ -6,32 +6,22 @@
  *   frontdesk_output — agent replies land here; these cards are shown
  *                      as "agent" messages in the chat window
  *
- * Login credentials are SHA-256 hashed. The Trello API key & token are
- * split into fragments (reconstructed at runtime) to deter casual
- * inspection. The only external HTTP requests are to the Trello API.
+ * Login credentials are SHA-256 hashed. Trello API calls go through a
+ * Netlify function proxy — the API key never reaches the browser.
  *
  * ── Setup ──
  * 1. Get your Trello API key: https://trello.com/app-key
  * 2. Generate a token: https://trello.com/1/authorize?expiration=never&scope=read,write&name=CollaboratorChat&key=YOUR_KEY
  * 3. Create a board with two lists: "frontdesk_input" and "frontdesk_output"
  * 4. Find list IDs (append ".json" to board URL, or use the API)
- * 5. Fill in CONFIG and USERS below
+ * 5. Set env vars on Netlify (see README)
  */
 
 /* ==================================================================
-   CONFIGURATION — Replace these with your own values
+   CONFIGURATION — Fill in your Trello list & board IDs
    ================================================================== */
 
 const CONFIG = {
-  // Trello API — split into parts to deter casual viewing
-  // These placeholders are replaced at the CDN edge by inject-hash.js
-  TRELLO_KEY_PART1: "__TRELLO_KEY_1__",
-  TRELLO_KEY_PART2: "__TRELLO_KEY_2__",
-  TRELLO_KEY_PART3: "__TRELLO_KEY_3__",
-  TRELLO_TOKEN_PART1: "__TRELLO_TOKEN_1__",
-  TRELLO_TOKEN_PART2: "__TRELLO_TOKEN_2__",
-  TRELLO_TOKEN_PART3: "__TRELLO_TOKEN_3__",
-
   // Trello list where new collaborator messages go as cards
   LIST_ID_INPUT: "__LIST_ID_INPUT__", // frontdesk_input list ID
 
@@ -77,12 +67,27 @@ async function sha256(str) {
     .join("");
 }
 
-/** Build the Trello API base URL */
-function trelloUrl(path, params = {}) {
-  const key = CONFIG.TRELLO_KEY_PART1 + CONFIG.TRELLO_KEY_PART2 + CONFIG.TRELLO_KEY_PART3;
-  const token = CONFIG.TRELLO_TOKEN_PART1 + CONFIG.TRELLO_TOKEN_PART2 + CONFIG.TRELLO_TOKEN_PART3;
-  const qs = new URLSearchParams({ key, token, ...params });
-  return `https://api.trello.com/1${path}?${qs}`;
+/** Call Trello API through the Netlify proxy (keeps credentials server-side) */
+async function apiTrello(path, method = "GET", bodyParams, urlParams = {}) {
+  // For POST/PUT, data goes as URL params (Trello API style). For comment
+  // actions, also include text body so the proxy can sign it with HMAC.
+  const payload = { path, method, params: urlParams };
+  if (bodyParams && method !== "GET") {
+    // Include the text body for HMAC signing on comment actions
+    if (path.includes("/actions/comments")) {
+      payload.body = bodyParams;
+    }
+    // Merge body params into URL params for Trello's API
+    payload.params = { ...urlParams, ...bodyParams };
+  }
+  const resp = await fetch("/.netlify/functions/trello-proxy", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(payload),
+  });
+  const data = await resp.json();
+  if (!resp.ok) throw new Error(`API error ${resp.status}: ${data.error || JSON.stringify(data)}`);
+  return data;
 }
 
 /** Format a timestamp for display */
@@ -195,16 +200,15 @@ document.getElementById("message-input").addEventListener("keydown", (e) => {
  */
 async function findOrCreateDailyCard(listId) {
   const today = new Date().toISOString().slice(0, 10);
-  const resp = await fetch(trelloUrl(`/lists/${listId}/cards`, { fields: "name,id" }));
-  if (!resp.ok) throw new Error(`HTTP ${resp.status}`);
-  const cards = await resp.json();
+  const cards = await apiTrello(`/lists/${listId}/cards`, "GET", null, { fields: "name,id" });
   const existing = cards.find((c) => c.name === today);
   if (existing) return existing;
 
   // Create new daily card
-  const createResp = await fetch(trelloUrl(`/lists/${listId}/cards`, { name: today, desc: `Messages for ${today}` }), { method: "POST" });
-  if (!createResp.ok) throw new Error(`HTTP ${createResp.status}`);
-  const newCard = await createResp.json();
+  const newCard = await apiTrello(`/lists/${listId}/cards`, "POST", null, {
+    name: today,
+    desc: `Messages for ${today}`,
+  });
   console.log(`📅 Created daily card "${today}" on list ${listId}`);
   return newCard;
 }
@@ -223,8 +227,7 @@ async function sendMessage() {
 
     // Add the message as a comment with username prefix
     const commentText = `[${currentUser}] ${text}`;
-    const commentResp = await fetch(trelloUrl(`/cards/${todayCard.id}/actions/comments`, { text: commentText }), { method: "POST" });
-    if (!commentResp.ok) throw new Error(`HTTP ${commentResp.status}`);
+    await apiTrello(`/cards/${todayCard.id}/actions/comments`, "POST", { text: commentText });
 
     input.value = "";
     await loadMessages(); // Refresh
@@ -249,17 +252,21 @@ async function fetchListMessages(listId, sender) {
   const today = new Date().toISOString().slice(0, 10);
 
   // Find today's card on the list
-  const listResp = await fetch(trelloUrl(`/lists/${listId}/cards`, { fields: "name,id" }));
-  if (!listResp.ok) throw new Error(`HTTP ${listResp.status}`);
-  const cards = await listResp.json();
+  const cards = await apiTrello(`/lists/${listId}/cards`, "GET", null, { fields: "name,id" });
   const todayCard = cards.find((c) => c.name === today);
 
   if (!todayCard) return [];
 
   // Get comments from today's card
-  const actionsResp = await fetch(trelloUrl(`/cards/${todayCard.id}/actions`, { filter: "commentCard", fields: "data,date" }));
-  if (!actionsResp.ok) return [];
-  const actions = await actionsResp.json();
+  let actions;
+  try {
+    actions = await apiTrello(`/cards/${todayCard.id}/actions`, "GET", null, {
+      filter: "commentCard",
+      fields: "data,date",
+    });
+  } catch {
+    return [];
+  }
 
   return actions.map((action) => ({
     cardId: todayCard.id,
@@ -323,18 +330,12 @@ async function loadReports() {
   try {
     // Fetch recent board actions (past 5 days)
     const fiveDaysAgo = new Date(Date.now() - 5 * 24 * 60 * 60 * 1000).toISOString();
-    const actionsResp = await fetch(
-      trelloUrl(`/boards/${CONFIG.BOARD_ID}/actions`, {
-        filter: "createCard,updateCard,commentCard",
-        fields: "data,date,type",
-        since: fiveDaysAgo,
-        limit: 100,
-      }),
-    );
-
-    if (!actionsResp.ok) throw new Error(`HTTP ${actionsResp.status}`);
-
-    const actions = await actionsResp.json();
+    const actions = await apiTrello(`/boards/${CONFIG.BOARD_ID}/actions`, "GET", null, {
+      filter: "createCard,updateCard,commentCard",
+      fields: "data,date,type",
+      since: fiveDaysAgo,
+      limit: 100,
+    });
 
     // Group by date
     const byDate = {};
@@ -406,11 +407,9 @@ function initApp() {
    ================================================================== */
 
 function validateConfig() {
-  const key = CONFIG.TRELLO_KEY_PART1 + CONFIG.TRELLO_KEY_PART2 + CONFIG.TRELLO_KEY_PART3;
-  const token = CONFIG.TRELLO_TOKEN_PART1 + CONFIG.TRELLO_TOKEN_PART2 + CONFIG.TRELLO_TOKEN_PART3;
-  if (!key || !token || !CONFIG.LIST_ID_INPUT || !CONFIG.LIST_ID_OUTPUT || !CONFIG.BOARD_ID) {
-    console.warn("⚠️ Collaborator Chat: Trello credentials not configured. Fill in CONFIG in app.js.");
+  if (!CONFIG.LIST_ID_INPUT || !CONFIG.LIST_ID_OUTPUT || !CONFIG.BOARD_ID) {
+    console.warn("⚠️ Collaborator Chat: Trello list/board IDs not configured in CONFIG.");
   } else {
-    console.log("✓ Collaborator Chat: Config validated");
+    console.log("✓ Collaborator Chat: Config validated — API calls proxied through Netlify function");
   }
 }
