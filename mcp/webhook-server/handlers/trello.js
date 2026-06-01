@@ -112,13 +112,15 @@ export function trelloHandler(req, res) {
   };
 
   // Verify HMAC signature for frontdesk_input commentCard events
+  // Strips [sig:...] from the text so the agent sees clean text,
+  // and sets event.data._verified so the agent can trust the origin.
   if (event.type === "commentCard" && event.list?.name === "frontdesk_input") {
     const text = action?.data?.text || "";
     const sigMatch = text.match(/\[sig:([a-f0-9]{16})\]$/);
     if (sigMatch) {
       const providedSig = sigMatch[1];
       const cleanText = text.replace(/\s*\[sig:[a-f0-9]{16}\]$/, "");
-      const secret = process.env.FRONTEND_SECRET;
+      const secret = process.env.FRONTEND_HMAC_SECRET;
       if (secret) {
         const expectedSig = crypto.createHmac("sha256", secret).update(cleanText).digest("hex").slice(0, 16);
         if (providedSig === expectedSig) {
@@ -129,19 +131,49 @@ export function trelloHandler(req, res) {
           event.data._verified = false;
         }
       }
-    } else if (process.env.FRONTEND_SECRET) {
+      // Strip sig from text so agent only sees the clean message
+      event.data.text = cleanText;
+      // Also strip from the text field within data.text if nested differently
+      if (event.data.data?.text) event.data.data.text = cleanText;
+    } else if (process.env.FRONTEND_HMAC_SECRET) {
       // No signature but we expect one — flag as unverified
       console.log(`   ⚠️ frontdesk_input comment has no HMAC signature (may be direct API call)`);
       event.data._verified = false;
     }
+
+    // Check for auto-authorization passphrase (---passphrase--- at start of text)
+    // If valid, the agent may auto-answer read-only questions without human approval.
+    const currentText = event.data.text || "";
+    const passphraseMatch = currentText.match(/^---(.+?)---\s*/);
+    if (passphraseMatch) {
+      const providedPassphrase = passphraseMatch[1];
+      const storedPassphrase = process.env.FRONTEND_AUTH_PASSPHRASE;
+      if (storedPassphrase && providedPassphrase === storedPassphrase) {
+        console.log(`   ✅ Frontdesk passphrase valid — auto-authorizing`);
+        event.data._authorized = true;
+      } else {
+        console.log(`   ⚠️ Frontdesk passphrase INVALID`);
+        event.data._authorized = false;
+      }
+      // Strip passphrase block from text so agent only sees the actual question
+      event.data.text = currentText.replace(/^---.+?---\s*/, "");
+      if (event.data.data?.text) {
+        event.data.data.text = event.data.data.text.replace(/^---.+?---\s*/, "");
+      }
+    }
   }
 
-  enqueueEvent(event);
-
-  // Check if any tool dispatch rules match
-  dispatch(event);
-
-  console.log(`   → Enqueued for agent processing`);
+  // Authorized frontdesk input skips the queue entirely — the agent
+  // will auto-answer directly via the webhook event notification.
+  // Only unauthorized frontdesk and non-frontdesk events go through
+  // the queue + tool dispatch pipeline.
+  if (event.data._authorized === true) {
+    console.log(`   ✅ Authorized frontdesk — skipping queue (agent will auto-answer)`);
+  } else {
+    enqueueEvent(event);
+    dispatch(event);
+    console.log(`   → Enqueued for agent processing`);
+  }
 
   res.status(200).json({ status: "received" });
 }

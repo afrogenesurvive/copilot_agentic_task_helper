@@ -18,7 +18,7 @@
  *
  * Requires env vars (set in Netlify UI):
  *   TRELLO_API_KEY, TRELLO_API_TOKEN
- *   FRONTEND_SECRET — shared secret for message signing (optional)
+ *   FRONTEND_HMAC_SECRET — shared secret for message signing (optional)
  */
 
 const TRELLO_BASE = "https://api.trello.com/1";
@@ -54,8 +54,8 @@ exports.handler = async function (event) {
 
     if (body && method !== "GET") {
       // For commentCard actions, sign the text with the frontend secret
-      if (path.includes("/actions/comments") && body.text && process.env.FRONTEND_SECRET) {
-        const sig = crypto.createHmac("sha256", process.env.FRONTEND_SECRET).update(body.text).digest("hex").slice(0, 16);
+      if (path.includes("/actions/comments") && body.text && process.env.FRONTEND_HMAC_SECRET) {
+        const sig = crypto.createHmac("sha256", process.env.FRONTEND_HMAC_SECRET).update(body.text).digest("hex").slice(0, 16);
         body.text = body.text + ` [sig:${sig}]`;
       }
       options.body = JSON.stringify(body);
