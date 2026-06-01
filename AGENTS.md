@@ -162,6 +162,7 @@ When a webhook notification arrives (from Trello or Gmail), the following pipeli
 3. **`dispatch(event)`** — "Enqueued for agent processing" means the tool dispatch rules engine has checked the event against `safe/webhook-tool-rules.json`. If a rule matches, an additional **pending tool call** is enqueued (with `source: "tool_dispatch"`, `type: "pending_tool_call"`), which tells the agent which MCP tool to invoke and with what parameters. If no rules match, the raw event is still in the queue for manual inspection via the `/events` endpoint, but no automatic tool call is created.
 
 In short:
+
 - **"Enqueued event"** = raw notification saved to the queue (always happens)
 - **"Enqueued for agent processing"** = a matching rule triggered a pending tool call for the agent to act on (only if a rule matched)
 
