@@ -94,16 +94,3 @@ export default async (request, context) => {
     headers: response.headers,
   });
 };
-
-
-  // No placeholders found — pass through unchanged
-  if (modified === original) {
-    return response;
-  }
-
-  return new Response(modified, {
-    status: response.status,
-    statusText: response.statusText,
-    headers: response.headers,
-  });
-};
