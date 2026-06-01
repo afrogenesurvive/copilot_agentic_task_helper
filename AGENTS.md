@@ -191,8 +191,10 @@ All MCP servers (`mcp/trello/index.js` and `mcp/gmail/index.js`) sanitize user-g
 - **Logs** a warning to stderr when injection is detected, including the source tool and matched pattern
 
 **Sanitization is applied to:**
+
 - Trello: card names, descriptions, comments (all user-generated text)
 - Gmail: email subjects, bodies, sender names, snippets
+- **Webhook data**: notification log entries (`logs/notifications/*`), enqueued events (`logs/pending-tool-calls/queue.jsonl`), and interpolated rule params in `tool-dispatch.js` are all sanitized before the agent sees them
 
 ### Logging System
 

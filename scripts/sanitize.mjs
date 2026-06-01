@@ -127,7 +127,5 @@ export function sanitizeObject(obj, options = {}) {
  */
 export function logInjectionWarning(source, field, patterns) {
   const ts = new Date().toISOString();
-  console.error(
-    `[sanitize] [${ts}] ⚠️ Prompt injection detected in ${source} field "${field}": ${patterns.join(", ")}`,
-  );
+  console.error(`[sanitize] [${ts}] ⚠️ Prompt injection detected in ${source} field "${field}": ${patterns.join(", ")}`);
 }
