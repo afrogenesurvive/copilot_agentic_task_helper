@@ -67,20 +67,7 @@ export default async (request, context) => {
     modified = modified.replaceAll("__TRELLO_KEY_3__", k3);
   }
 
-  // ── Trello API token (split into thirds) ──
-  const apiToken = Deno.env.get("TRELLO_API_TOKEN") || "";
-  const [t1, t2, t3] = splitThirds(apiToken);
-  if (modified.includes("__TRELLO_TOKEN_1__")) {
-    modified = modified.replaceAll("__TRELLO_TOKEN_1__", t1);
-  }
-  if (modified.includes("__TRELLO_TOKEN_2__")) {
-    modified = modified.replaceAll("__TRELLO_TOKEN_2__", t2);
-  }
-  if (modified.includes("__TRELLO_TOKEN_3__")) {
-    modified = modified.replaceAll("__TRELLO_TOKEN_3__", t3);
-  }
-
-  // ── Trello list & board IDs ──
+  // ── Trello list & board IDs (no API key/token — those are server-side only) ──
   const listInput = Deno.env.get("TRELLO_LIST_FRONTEDESK_INPUT") || "";
   if (modified.includes("__LIST_ID_INPUT__")) {
     modified = modified.replaceAll("__LIST_ID_INPUT__", listInput);
@@ -95,6 +82,19 @@ export default async (request, context) => {
   if (modified.includes("__BOARD_ID__")) {
     modified = modified.replaceAll("__BOARD_ID__", boardId);
   }
+
+  // No placeholders found — pass through unchanged
+  if (modified === original) {
+    return response;
+  }
+
+  return new Response(modified, {
+    status: response.status,
+    statusText: response.statusText,
+    headers: response.headers,
+  });
+};
+
 
   // No placeholders found — pass through unchanged
   if (modified === original) {

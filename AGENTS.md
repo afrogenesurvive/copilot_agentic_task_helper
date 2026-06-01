@@ -196,6 +196,16 @@ All MCP servers (`mcp/trello/index.js` and `mcp/gmail/index.js`) sanitize user-g
 - Gmail: email subjects, bodies, sender names, snippets
 - **Webhook data**: notification log entries (`logs/notifications/*`), enqueued events (`logs/pending-tool-calls/queue.jsonl`), and interpolated rule params in `tool-dispatch.js` are all sanitized before the agent sees them
 
+### Security Architecture
+
+The system uses a **defense-in-depth** approach to protect against prompt injection and credential exposure:
+
+1. **Trello API proxy** (`webapp/netlify/functions/trello-proxy.js`): The webapp never directly calls the Trello API from the browser. All Trello requests go through a Netlify function proxy that keeps the API key and token server-side. The browser only sees list/board IDs.
+
+2. **HMAC message signing**: When the webapp sends a frontdesk message through the proxy, the proxy signs the comment text with `FRONTEND_SECRET` (an HMAC-SHA256 signature appended as `[sig:...]`). The webhook handler (`handlers/trello.js`) verifies this signature. Messages without a valid signature are flagged as unverified, making it possible to detect direct Trello API calls that bypass the webapp.
+
+3. **Prompt injection sanitization**: All external data (Trello, Gmail, webhooks) is sanitized before the agent processes it (see above).
+
 ### Logging System
 
 | Path                                    | Description                                        |
