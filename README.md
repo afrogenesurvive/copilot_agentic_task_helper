@@ -24,11 +24,11 @@ User ↔ Copilot ↔ MCP Servers (Trello, Gmail) ↔ External APIs
 
 The webhook server handles three notification paths:
 
-| Path                                       | Queue       | Tool Dispatch                | Agent Action                     |
-| ------------------------------------------ | ----------- | ---------------------------- | -------------------------------- |
-| **Non-frontdesk** (Gmail, Trello updates)  | ✅ Enqueued | ✅ Runs (tool calls allowed) | Executes tools when prompted     |
-| **Authorized frontdesk** (with passphrase) | ❌ Skipped  | ❌ Skipped                   | Auto-answers read-only questions |
-| **Unauthorized frontdesk** (no passphrase) | ✅ Enqueued | ✅ Runs (agent_log only)     | Flags for human approval         |
+| Path                                       | Queue       | Tool Dispatch                | Agent Action                                                   |
+| ------------------------------------------ | ----------- | ---------------------------- | -------------------------------------------------------------- |
+| **Non-frontdesk** (Gmail, Trello updates)  | ✅ Enqueued | ✅ Runs (tool calls allowed) | Executes tools when prompted                                   |
+| **Authorized frontdesk** (with passphrase) | ❌ Skipped  | ❌ Skipped                   | Auto-answers read-only questions                               |
+| **Unauthorized frontdesk** (no passphrase) | ✅ Enqueued | ✅ Runs (agent_log only)     | Sends generic response, logs to `logs/frontdesk/unauthorized/` |
 
 > To process pending notifications, prompt the agent (e.g., "check for new items").
 > The agent does not autonomously poll the queue — it's prompt-driven.
