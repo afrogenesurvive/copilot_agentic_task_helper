@@ -25,7 +25,7 @@ import path from "path";
 import { fileURLToPath } from "url";
 import { trelloHandler } from "./handlers/trello.js";
 import { gmailHandler } from "./handlers/gmail.js";
-import { enqueueEvent, readEvents, clearEvent } from "./lib/event-queue.js";
+import { enqueueEvent, readEvents, clearEvent, markCleared } from "./lib/event-queue.js";
 
 const app = express();
 const PORT = parseInt(process.env.WEBHOOK_PORT || "3199", 10);
@@ -65,7 +65,8 @@ app.get("/webhooks/gmail/push", gmailHandler);
 /* ── Event queue ── */
 
 app.get("/events", (req, res) => {
-  const pending = readEvents();
+  const filterCleared = req.query.cleared === "false" ? { cleared: false } : undefined;
+  const pending = readEvents(filterCleared);
   res.json({ count: pending.length, events: pending });
 });
 
@@ -73,6 +74,16 @@ app.delete("/events/:id", (req, res) => {
   const removed = clearEvent(req.params.id);
   if (removed) {
     res.json({ status: "cleared", id: req.params.id });
+  } else {
+    res.status(404).json({ error: "Event not found" });
+  }
+});
+
+// PATCH /events/:id — soft-delete (mark cleared without removing)
+app.patch("/events/:id", (req, res) => {
+  const marked = markCleared(req.params.id);
+  if (marked) {
+    res.json({ status: "marked_cleared", id: req.params.id });
   } else {
     res.status(404).json({ error: "Event not found" });
   }

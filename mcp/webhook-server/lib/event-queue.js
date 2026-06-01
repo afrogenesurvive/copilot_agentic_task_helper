@@ -6,9 +6,10 @@
  *
  * Functions:
  *   enqueueEvent(event)  — Add event to queue
- *   readEvents()         — Read all pending events
+ *   readEvents()         — Read all pending events (supports cleared filter)
  *   clearEvent(id)       — Remove a processed event by ID
  *   clearEvents()        — Clear all pending events
+ *   markCleared(id)      — Soft-delete: mark event as 'cleared' in-place
  */
 
 import fs from "fs";
@@ -70,10 +71,31 @@ export function enqueueEvent(event) {
 
 /**
  * Read all pending events (oldest first).
+ * Pass { cleared: false } to exclude soft-deleted events.
+ * @param {object} [filter] - Optional filter { cleared: boolean }
  * @returns {Array} Pending events
  */
-export function readEvents() {
-  return [...queue];
+export function readEvents(filter) {
+  let events = [...queue];
+  if (filter && filter.cleared === false) {
+    events = events.filter((e) => !e.cleared);
+  }
+  return events;
+}
+
+/**
+ * Soft-delete: mark an event as 'cleared' instead of removing it.
+ * @param {string} id — Event ID to mark
+ * @returns {boolean} Whether an event was found and marked
+ */
+export function markCleared(id) {
+  const entry = queue.find((e) => e.id === id);
+  if (!entry) return false;
+  entry.cleared = true;
+  entry.clearedAt = new Date().toISOString();
+  save();
+  console.log(`[event-queue] Marked event ${id} as cleared`);
+  return true;
 }
 
 /**
