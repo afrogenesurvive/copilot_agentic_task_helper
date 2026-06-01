@@ -13,6 +13,19 @@ You are a task workflow agent. When given a new day's context:
 3. Process any pending tool calls in `logs/pending-tool-calls/`
 4. Report what was accomplished
 
+### Frontdesk Workflow (Daily Card Pattern)
+
+The collaborator chat webapp and frontdesk system use a **one-card-per-day** pattern on both input and output lists.
+
+- **frontdesk_input** — One card per day, named by date (`2026-05-31`). Each webapp message is a **comment** on that day's card, prefixed with `[username]`.
+- **frontdesk_output** — One card per day, named by date (`2026-05-31`). Each agent reply is a **comment** on that day's card.
+
+**When replying to a frontdesk input:**
+1. Read the latest comments on today's `frontdesk_input` card to see what the user said
+2. **Do NOT add a comment to the input card** — instead, find or create today's card on **frontdesk_output** (name it with today's date like `2026-05-31`, or use the current date)
+3. Add your reply as a **comment** on that frontdesk_output daily card using `trello_add_comment`
+4. ✅ The webapp polls both lists every 15 seconds and will display the reply as an agent message
+
 ### Architecture Overview
 
 ```
