@@ -30,6 +30,9 @@ import { enqueueEvent, readEvents, clearEvent, markCleared } from "./lib/event-q
 const app = express();
 const PORT = parseInt(process.env.WEBHOOK_PORT || "3199", 10);
 
+const __dirname = path.dirname(fileURLToPath(import.meta.url));
+const TOOL_LOG_DIR = path.resolve(__dirname, "..", "..", "logs", "tool_call");
+
 /* ── Middleware ── */
 
 app.use(cors());
@@ -88,11 +91,6 @@ app.patch("/events/:id", (req, res) => {
     res.status(404).json({ error: "Event not found" });
   }
 });
-
-/* ── Tool call log viewer ── */
-
-const __dirname = path.dirname(fileURLToPath(import.meta.url));
-const TOOL_LOG_DIR = path.resolve(__dirname, "..", "..", "logs", "tool_call");
 
 app.get("/tool-logs", (req, res) => {
   const lines = parseInt(req.query.lines || "20", 10);

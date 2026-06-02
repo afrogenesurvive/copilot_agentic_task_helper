@@ -19,6 +19,7 @@ const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const LOG_DIR = path.resolve(__dirname, "..", "..", "..", "logs", "webhook");
 const NOTIFY_DIR = path.resolve(__dirname, "..", "..", "..", "logs", "notifications", "trello");
 const FRONTDESK_UNAUTHORIZED_DIR = path.resolve(__dirname, "..", "..", "..", "logs", "frontdesk", "unauthorized");
+const SESSION_LOG_DIR = path.resolve(__dirname, "..", "..", "..", "logs", "frontdesk", "sessions");
 
 function logError(msg) {
   const ts = new Date().toISOString();
@@ -179,6 +180,26 @@ export function trelloHandler(req, res) {
     fs.appendFileSync(path.join(FRONTDESK_UNAUTHORIZED_DIR, `${day}.jsonl`), JSON.stringify(logEntry) + "\n");
     console.log(`   ⚠️ Non-authorized frontdesk input from "${event.card?.name || "?"}" — "${event.data.text || "(empty)"}"`);
     console.log(`   → Logged to logs/frontdesk/unauthorized/`);
+  }
+
+  // Capture session log cards from Trello and write to local logs
+  // The Netlify log-session function creates Trello cards on the session_logs
+  // list; the webhook picks them up and persists them to the local filesystem.
+  if (event.type === "createCard" && event.list?.name === "session_logs") {
+    const day = ts.slice(0, 10);
+    const cardDesc = action?.data?.card?.desc || "";
+    let sessionEntry;
+    try {
+      sessionEntry = JSON.parse(cardDesc);
+    } catch {
+      sessionEntry = { ts, raw: cardDesc };
+    }
+    fs.mkdirSync(SESSION_LOG_DIR, { recursive: true });
+    fs.appendFileSync(path.join(SESSION_LOG_DIR, `${day}.jsonl`), JSON.stringify(sessionEntry) + "\n");
+    console.log(`   📋 Session log card: ${action?.data?.card?.name || "?"} — written to logs/frontdesk/sessions/`);
+    // Skip queue — session data doesn't need tool dispatch
+    console.log(`   → Session data — skipping queue`);
+    return res.status(200).json({ status: "session_logged" });
   }
 
   // Authorized frontdesk input skips the queue entirely — the agent

@@ -145,6 +145,36 @@ header h1 {
   font-size: 1.1rem;
 }
 
+.header-right {
+  display: flex;
+  align-items: center;
+  gap: 0.75rem;
+}
+
+#session-timer {
+  font-size: 0.75rem;
+  font-variant-numeric: tabular-nums;
+  padding: 0.25rem 0.5rem;
+  border-radius: 4px;
+  min-width: 3.5rem;
+  text-align: center;
+}
+
+#session-timer.session-ok {
+  color: var(--text-muted);
+  background: transparent;
+}
+
+#session-timer.session-low {
+  color: #fff;
+  background: var(--warning);
+}
+
+#session-timer.session-expired {
+  color: #fff;
+  background: var(--accent);
+}
+
 #logout-btn {
   padding: 0.4rem 0.8rem;
   background: transparent;

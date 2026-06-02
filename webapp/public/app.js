@@ -90,6 +90,25 @@ async function apiTrello(path, method = "GET", bodyParams, urlParams = {}) {
   return data;
 }
 
+/** Log session event (login/logout) to the server */
+async function logSession(user, action) {
+  try {
+    await fetch("/.netlify/functions/log-session", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        user,
+        action,
+        userAgent: navigator.userAgent,
+        timezone: Intl.DateTimeFormat().resolvedOptions().timeZone,
+        language: navigator.language,
+      }),
+    });
+  } catch {
+    // Fire-and-forget — don't block login/logout on logging
+  }
+}
+
 /** Format a timestamp for display */
 function fmtTime(iso) {
   const d = new Date(iso);
@@ -103,10 +122,79 @@ function fmtDate(iso) {
 }
 
 /* ==================================================================
-   State
+   Session — 2 hour auto-logout
    ================================================================== */
 
+const SESSION_DURATION = 2 * 60 * 60 * 1000; // 2 hours in ms
 let currentUser = null;
+let sessionTimer = null;
+
+/** Check if the current session has expired and auto-logout if so */
+function checkSession() {
+  const loginTime = sessionStorage.getItem("frontdesk_login_time");
+  const user = sessionStorage.getItem("frontdesk_user");
+  if (!loginTime || !user) {
+    if (currentUser) doLogout();
+    return false;
+  }
+  const elapsed = Date.now() - parseInt(loginTime, 10);
+  if (elapsed >= SESSION_DURATION) {
+    doLogout();
+    alert("Your session has expired. Please log in again.");
+    return false;
+  }
+  return true;
+}
+
+/** Update the session timer display in the header */
+function updateSessionTimer() {
+  const el = document.getElementById("session-timer");
+  if (!el) return;
+  const loginTime = sessionStorage.getItem("frontdesk_login_time");
+  if (!loginTime) {
+    el.textContent = "";
+    return;
+  }
+  const remaining = SESSION_DURATION - (Date.now() - parseInt(loginTime, 10));
+  if (remaining <= 0) {
+    el.textContent = "Expired";
+    el.className = "session-expired";
+    return;
+  }
+  const mins = Math.floor(remaining / 60000);
+  const secs = Math.floor((remaining % 60000) / 1000);
+  el.textContent = `${mins}:${secs.toString().padStart(2, "0")}`;
+  el.className = mins < 5 ? "session-low" : "session-ok";
+}
+
+/** Start the session timer countdown (updates every second) */
+function startSessionTimer() {
+  if (sessionTimer) clearInterval(sessionTimer);
+  updateSessionTimer();
+  sessionTimer = setInterval(updateSessionTimer, 1000);
+}
+
+/** Try to restore a valid session on page load */
+function tryRestoreSession() {
+  const user = sessionStorage.getItem("frontdesk_user");
+  const loginTime = sessionStorage.getItem("frontdesk_login_time");
+  if (user && loginTime) {
+    const elapsed = Date.now() - parseInt(loginTime, 10);
+    if (elapsed < SESSION_DURATION) {
+      currentUser = user;
+      document.getElementById("login-screen").classList.add("hidden");
+      document.getElementById("app-screen").classList.remove("hidden");
+      startSessionTimer();
+      initApp();
+      return true;
+    } else {
+      // Expired — clear it
+      sessionStorage.removeItem("frontdesk_user");
+      sessionStorage.removeItem("frontdesk_login_time");
+    }
+  }
+  return false;
+}
 
 /* ==================================================================
    Login
@@ -135,9 +223,13 @@ document.getElementById("login-btn").addEventListener("click", async () => {
 
   if (storedHash && storedHash === hash) {
     currentUser = username;
+    sessionStorage.setItem("frontdesk_user", username);
+    sessionStorage.setItem("frontdesk_login_time", String(Date.now()));
     errEl.classList.add("hidden");
     document.getElementById("login-screen").classList.add("hidden");
     document.getElementById("app-screen").classList.remove("hidden");
+    startSessionTimer();
+    logSession(username, "login");
     initApp();
   } else {
     errEl.textContent = "Invalid credentials";
@@ -154,14 +246,24 @@ document.getElementById("password").addEventListener("keydown", (e) => {
    Logout
    ================================================================== */
 
-document.getElementById("logout-btn").addEventListener("click", () => {
+function doLogout() {
+  const user = currentUser;
   currentUser = null;
+  if (user) logSession(user, "logout");
+  if (sessionTimer) clearInterval(sessionTimer);
+  sessionTimer = null;
+  if (pollTimer) clearInterval(pollTimer);
+  pollTimer = null;
+  sessionStorage.removeItem("frontdesk_user");
+  sessionStorage.removeItem("frontdesk_login_time");
   document.getElementById("app-screen").classList.add("hidden");
   document.getElementById("login-screen").classList.remove("hidden");
   document.getElementById("username").value = "";
   document.getElementById("password").value = "";
   document.getElementById("messages-container").innerHTML = '<div class="empty-state">No messages yet. Start the conversation!</div>';
-});
+}
+
+document.getElementById("logout-btn").addEventListener("click", doLogout);
 
 /* ==================================================================
    Tab Switching
@@ -214,6 +316,8 @@ async function findOrCreateDailyCard(listId) {
 }
 
 async function sendMessage() {
+  if (!checkSession()) return;
+
   const input = document.getElementById("message-input");
   const text = input.value.trim();
   if (!text) return;
@@ -278,6 +382,8 @@ async function fetchListMessages(listId, sender) {
 }
 
 async function loadMessages() {
+  if (!checkSession()) return;
+
   const container = document.getElementById("messages-container");
 
   try {
@@ -396,6 +502,9 @@ function escapeHtml(str) {
    ================================================================== */
 
 let pollTimer = null;
+
+// Try restoring a session on page load
+tryRestoreSession();
 
 function initApp() {
   validateConfig();

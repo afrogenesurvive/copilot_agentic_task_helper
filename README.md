@@ -18,6 +18,7 @@ User ↔ Copilot ↔ MCP Servers (Trello, Gmail) ↔ External APIs
 - **Webhook Server**: Relays notifications from external services in `mcp/webhook-server/`
 - **Collaborator Chat Webapp**: Static web app in `webapp/` for remote chat via Trello
 - **Notification System**: Logs and processes events in `logs/`
+- **Session Tracking**: Login/logout events logged to `logs/frontdesk/sessions/` with user, IP, browser, and timezone data
 - **Daily Tasks**: Task tracking in `tasks/`
 
 ## Notification Processing
