@@ -1,56 +1,24 @@
 # Copilot Agentic Task Helper
 
-A system that connects GitHub Copilot with external services (Trello, Gmail) via MCP servers, enabling automated task management and notification processing.
+A system that connects GitHub Copilot with external services (Trello, Gmail) via MCP servers.
 
-## Architecture
+## What It Does
 
-```
-User ↔ Copilot ↔ MCP Servers (Trello, Gmail) ↔ External APIs
-                                          ↕
-                               Webhook Server (notification relay)
-                                          ↕
-                               Webapp (Collaborator Chat)
-```
+- **Task management via Trello** — Read cards, create cards, add comments, and manage lists directly through Copilot
+- **Email access via Gmail** — Search, read, and send emails from Copilot
+- **Collaborator Chat** — A static webapp that lets a remote collaborator send messages to Copilot through a Trello-based chat interface
+- **Notification relay** — A webhook server that receives push notifications from Trello and Gmail and queues them for the agent to process
 
-## Key Components
+## Components
 
-- **MCP Servers**: Trello and Gmail integrations in `mcp/`
-- **Webhook Server**: Relays notifications from external services in `mcp/webhook-server/`
-- **Collaborator Chat Webapp**: Static web app in `webapp/` for remote chat via Trello
-- **Notification System**: Logs and processes events in `logs/`
-- **Session Tracking**: Login/logout events logged to `logs/frontdesk/sessions/` with user, IP, browser, and timezone data
-- **Daily Tasks**: Task tracking in `tasks/`
-
-## Notification Processing
-
-The webhook server handles three notification paths:
-
-| Path                                       | Queue       | Tool Dispatch                | Agent Action                                                   |
-| ------------------------------------------ | ----------- | ---------------------------- | -------------------------------------------------------------- |
-| **Non-frontdesk** (Gmail, Trello updates)  | ✅ Enqueued | ✅ Runs (tool calls allowed) | Executes tools when prompted                                   |
-| **Authorized frontdesk** (with passphrase) | ❌ Skipped  | ❌ Skipped                   | Auto-answers read-only questions                               |
-| **Unauthorized frontdesk** (no passphrase) | ✅ Enqueued | ✅ Runs (agent_log only)     | Sends generic response, logs to `logs/frontdesk/unauthorized/` |
-
-> To process pending notifications, prompt the agent (e.g., "check for new items").
-> The agent does not autonomously poll the queue — it's prompt-driven.
-
-## Security Overview
-
-The system uses a **defense-in-depth** approach:
-
-1. **Trello API proxy** (`webapp/netlify/functions/trello-proxy.js`) — All Trello API calls from the webapp go through a Netlify function, keeping the API key and token server-side. The browser never sees credentials.
-
-2. **HMAC message signing** — The proxy signs frontdesk comments with `FRONTEND_HMAC_SECRET` (HMAC-SHA256). The webhook handler verifies the signature, making direct Trello API calls detectable.
-
-3. **Passphrase auto-authorization** — Frontdesk messages prefixed with `---passphrase---` are auto-authorized for read-only agent responses, skipping the queue entirely.
-
-4. **Prompt injection sanitization** — All external data (Trello, Gmail, webhook events) is sanitized via `scripts/sanitize.mjs` before the agent processes it.
-
-See `webapp/README.md` for deployment setup and `AGENTS.md` for full security documentation.
+- `mcp/trello/` — MCP server for Trello API access
+- `mcp/gmail/` — MCP server for Gmail API access
+- `mcp/webhook-server/` — Express server that receives and relays webhook notifications
+- `webapp/` — Static web app for the collaborator chat interface
 
 ## Getting Started
 
 1. Install dependencies: `npm install` (or per MCP server)
-2. Set up environment variables (see `webapp/README.md`)
+2. Set up environment variables
 3. Start MCP servers as needed
-4. Deploy the webapp to Netlify (see `webapp/README.md`)
+4. Deploy the webapp

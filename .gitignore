@@ -37,3 +37,10 @@ notes.txt
 
 # ── MCP dependencies (each mcp/* has its own node_modules) ──
 mcp/*/node_modules/
+
+# ── README files (exclude root README) ──
+**/README.md
+!/README.md
+README_local.md
+
+AGENTS.md
