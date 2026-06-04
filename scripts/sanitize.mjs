@@ -13,11 +13,74 @@
  *   const safeObj = sanitizeObject(apiResponseData);
  *
  * What it does:
+ *   - Strips hidden/invisible Unicode characters (zero-width spaces, etc.)
  *   - Detects known prompt injection patterns (case-insensitive)
  *   - Replaces injection attempts with a visible sanitization marker
  *   - Recursively walks objects/arrays to sanitize all string fields
  *   - Appends a warning prefix when injection content is detected
  */
+
+/* ── Zero-width / invisible Unicode characters ── */
+
+const HIDDEN_CHARS = [
+  "\u200B", // Zero Width Space
+  "\u200C", // Zero Width Non-Joiner
+  "\u200D", // Zero Width Joiner
+  "\u200E", // Left-to-Right Mark
+  "\u200F", // Right-to-Left Mark
+  "\uFEFF", // Zero Width No-Break Space (BOM)
+  "\u2060", // Word Joiner
+  "\u2061", // Function Application
+  "\u2062", // Invisible Times
+  "\u2063", // Invisible Separator
+  "\u2064", // Invisible Plus
+  "\u2066", // Left-to-Right Isolate
+  "\u2067", // Right-to-Left Isolate
+  "\u2068", // First Strong Isolate
+  "\u2069", // Pop Directional Isolate
+  "\u180E", // Mongolian Vowel Separator
+  "\u00AD", // Soft Hyphen
+  "\u034F", // Combining Grapheme Joiner
+  "\u061C", // Arabic Letter Mark
+  "\u115F", // Hangul Choseong Filler
+  "\u1160", // Hangul Jungseong Filler
+  "\u17B4", // Khmer Vowel Inherent AQ
+  "\u17B5", // Khmer Vowel Inherent AA
+];
+
+const HIDDEN_CHARS_PATTERN = new RegExp(`[${HIDDEN_CHARS.join("")}]`, "gu");
+
+/**
+ * Strip hidden/invisible Unicode characters from a string.
+ * @param {string} str
+ * @returns {string}
+ */
+function stripHiddenChars(str) {
+  return str.replace(HIDDEN_CHARS_PATTERN, "");
+}
+
+/**
+ * Check if a string contains hidden/invisible Unicode characters.
+ * @param {string} str
+ * @returns {boolean}
+ */
+export function hasHiddenChars(str) {
+  return HIDDEN_CHARS_PATTERN.test(str);
+}
+
+/**
+ * Preprocess a string by stripping hidden characters and normalizing
+ * before injection detection. Returns both the cleaned string and
+ * whether hidden characters were found.
+ * @param {string} str
+ * @returns {{ cleaned: string, hadHidden: boolean }}
+ */
+export function preprocess(str) {
+  const hadHidden = HIDDEN_CHARS_PATTERN.test(str);
+  // Reset regex state after test()
+  const cleaned = stripHiddenChars(str);
+  return { cleaned, hadHidden };
+}
 
 /* ── Known prompt injection patterns (case-insensitive) ── */
 
@@ -51,24 +114,28 @@ const WARNING_PREFIX = "⚠️ [Input contained potential prompt injection patte
 
 /**
  * Check if a string matches any injection pattern.
+ * Automatically strips hidden/invisible Unicode characters before checking.
  * @param {string} str - The string to check
- * @returns {{ injected: boolean, patterns: string[] }} - Detection result
+ * @returns {{ injected: boolean, patterns: string[], hadHidden: boolean }} - Detection result
  */
 export function detectInjection(str) {
-  if (typeof str !== "string" || !str) return { injected: false, patterns: [] };
+  if (typeof str !== "string" || !str) return { injected: false, patterns: [], hadHidden: false };
+
+  const { cleaned, hadHidden } = preprocess(str);
 
   const matched = [];
   for (const pattern of INJECTION_PATTERNS) {
-    if (pattern.test(str)) {
+    if (pattern.test(cleaned)) {
       matched.push(pattern.source.slice(0, 60)); // Truncate for log readability
     }
   }
 
-  return { injected: matched.length > 0, patterns: matched };
+  return { injected: matched.length > 0, patterns: matched, hadHidden };
 }
 
 /**
  * Sanitize a single string — replaces injection content with a safe marker.
+ * Strips hidden/invisible Unicode characters before detection.
  * If injection is detected, the entire content is replaced with the marker
  * to prevent any partial bypass.
  *
@@ -78,7 +145,14 @@ export function detectInjection(str) {
 export function sanitize(str) {
   if (typeof str !== "string" || !str) return str || "";
 
-  const { injected } = detectInjection(str);
+  const { cleaned, hadHidden } = preprocess(str);
+  const { injected } = detectInjection(cleaned);
+
+  if (hadHidden && !injected) {
+    // Hidden characters found but no injection pattern — still flag it
+    return WARNING_PREFIX + SANITIZED_MARKER;
+  }
+
   if (!injected) return str;
 
   return WARNING_PREFIX + SANITIZED_MARKER;
@@ -124,8 +198,10 @@ export function sanitizeObject(obj, options = {}) {
  * @param {string} source - e.g. "trello/trello_get_card_actions"
  * @param {string} field - e.g. "data.text" or "body"
  * @param {string[]} patterns - Matched pattern descriptions
+ * @param {boolean} [hadHidden=false] - Whether hidden Unicode characters were found
  */
-export function logInjectionWarning(source, field, patterns) {
+export function logInjectionWarning(source, field, patterns, hadHidden = false) {
   const ts = new Date().toISOString();
-  console.error(`[sanitize] [${ts}] ⚠️ Prompt injection detected in ${source} field "${field}": ${patterns.join(", ")}`);
+  const hiddenNote = hadHidden ? " [hidden Unicode chars stripped]" : "";
+  console.error(`[sanitize] [${ts}] ⚠️ Prompt injection detected in ${source} field "${field}": ${patterns.join(", ")}${hiddenNote}`);
 }

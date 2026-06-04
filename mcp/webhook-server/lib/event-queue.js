@@ -15,6 +15,7 @@
 import fs from "fs";
 import path from "path";
 import { fileURLToPath } from "url";
+import { sanitizeObject } from "../../../scripts/sanitize.mjs";
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const QUEUE_DIR = path.resolve(__dirname, "..", "..", "..", "logs", "pending-tool-calls");
@@ -31,7 +32,9 @@ function load() {
       const lines = fs.readFileSync(QUEUE_FILE, "utf8").split("\n").filter(Boolean);
       for (const line of lines) {
         try {
-          queue.push(JSON.parse(line));
+          const parsed = JSON.parse(line);
+          // Sanitize on load to catch any pre-existing injection content
+          queue.push(sanitizeObject(parsed));
         } catch {
           /* skip malformed */
         }
@@ -45,7 +48,9 @@ function load() {
 function save() {
   try {
     fs.mkdirSync(QUEUE_DIR, { recursive: true });
-    const content = queue.map((e) => JSON.stringify(e)).join("\n") + "\n";
+    // Sanitize all entries before persisting so injection content never hits disk
+    const sanitized = queue.map((e) => sanitizeObject(e));
+    const content = sanitized.map((e) => JSON.stringify(e)).join("\n") + "\n";
     fs.writeFileSync(QUEUE_FILE, content, "utf8");
   } catch (err) {
     console.error("[event-queue] Error saving queue:", err.message);
@@ -62,7 +67,8 @@ load();
  */
 export function enqueueEvent(event) {
   const id = `${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
-  const entry = { id, ...event, queuedAt: new Date().toISOString() };
+  const sanitized = sanitizeObject(event);
+  const entry = { id, ...sanitized, queuedAt: new Date().toISOString() };
   queue.push(entry);
   save();
   console.log(`[event-queue] Enqueued event ${id} (${event.source}/${event.type})`);
