@@ -408,8 +408,8 @@ async function loadMessages() {
     container.innerHTML = "";
     recent.forEach((msg) => {
       const isCollaborator = msg.sender === "You";
-      // Strip ---passphrase--- from displayed text so it doesn't clutter the chat
-      const displayText = msg.text.replace(/^---.+?---\s*/, "");
+      // Strip ---passphrase--- and [sig:...] from displayed text
+      const displayText = msg.text.replace(/^---.+?---\s*/, "").replace(/\s*\[sig:[a-f0-9]{16}\]$/, "");
       const bubble = document.createElement("div");
       bubble.className = `message ${isCollaborator ? "collaborator" : "agent"}`;
       bubble.innerHTML = `
