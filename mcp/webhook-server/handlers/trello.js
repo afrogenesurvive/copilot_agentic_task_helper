@@ -244,12 +244,17 @@ export function trelloHandler(req, res) {
     return res.status(200).json({ status: "session_logged" });
   }
 
-  // All frontdesk input goes through the queue so the agent can find it.
-  // Authorized messages are tagged and will be auto-answered when the agent
-  // processes the queue. Unauthorized messages wait for human approval.
-  enqueueEvent(event);
-  dispatch(event);
-  console.log(`   → Enqueued for agent processing`);
+  // Authorized frontdesk input skips the queue — the agent auto-answers
+  // directly via the webhook event without needing a pending tool call.
+  // Unauthorized frontdesk and non-frontdesk events go through the queue
+  // so the agent can find and act on them when prompted.
+  if (event.data._authorized === true && event.type === "commentCard" && event.list?.name === "frontdesk_input") {
+    console.log(`   ✅ Authorized frontdesk — skipping queue (agent will auto-answer on next prompt)`);
+  } else {
+    enqueueEvent(event);
+    dispatch(event);
+    console.log(`   → Enqueued for agent processing`);
+  }
 
   res.status(200).json({ status: "received" });
 }

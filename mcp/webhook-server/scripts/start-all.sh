@@ -201,10 +201,10 @@ for wh in data:
     if wh.get('idModel')=='$BOARD_ID': print(wh['id']); break
 " 2>/dev/null)
         if [ -n "$WEBHOOK_ID" ]; then
-          # Retry up to 3 times with backoff — Trello's proxy validation can be flaky
+          # Retry up to 5 times with backoff — Trello's proxy validation can be flaky
           UPDATE_OK=false
-          for retry in 1 2 3; do
-            [ "$retry" -gt 1 ] && echo "   🔄 Retry $retry..." && sleep 5
+          for retry in $(seq 1 5); do
+            [ "$retry" -gt 1 ] && echo "   🔄 Retry $retry/5..." && sleep 5
             RESPONSE=$(curl -s -X PUT "https://api.trello.com/1/webhooks/${WEBHOOK_ID}?key=${TRELLO_KEY}&token=${TRELLO_TOKEN}" \
               -d "callbackURL=$EXPECTED" 2>&1)
             if echo "$RESPONSE" | python3 -c "import sys,json; d=json.load(sys.stdin); sys.exit(0 if d.get('id') else 1)" 2>/dev/null; then
@@ -238,10 +238,10 @@ for wh in data:
       fi
     else
       echo "   📝 Registering webhook for board $BOARD_ID..."
-      # Retry up to 3 times with backoff
+      # Retry up to 5 times with backoff
       REG_OK=false
-      for retry in 1 2 3; do
-        [ "$retry" -gt 1 ] && echo "   🔄 Retry $retry..." && sleep 5
+      for retry in $(seq 1 5); do
+        [ "$retry" -gt 1 ] && echo "   🔄 Retry $retry/5..." && sleep 5
         REG_RESP=$(curl -s -X POST "https://api.trello.com/1/tokens/${TRELLO_TOKEN}/webhooks/?key=${TRELLO_KEY}" \
           -d "callbackURL=$EXPECTED" \
           -d "idModel=$BOARD_ID" \
