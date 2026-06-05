@@ -80,7 +80,7 @@ export function dispatch(event) {
   if (rules.length === 0) loadRules();
 
   let matched = false;
-  console.log("DEBUG - tool call dispatch", event);
+  // console.log("DEBUG - tool call dispatch", event);
 
   for (const rule of rules) {
     // Check source

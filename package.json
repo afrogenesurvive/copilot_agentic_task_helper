@@ -19,6 +19,7 @@
     "webhook:start:tunnel": "concurrently \"node mcp/webhook-server/index.js\" \"./mcp/webhook-server/scripts/tunnel-with-update.sh\"",
     "webhook:setup": "bash mcp/webhook-server/scripts/start-webhook.sh",
     "webhook:tunnel": "bash mcp/webhook-server/scripts/setup-tunnel.sh",
+    "webhook:restart": "bash mcp/webhook-server/scripts/restart-webhook.sh",
     "webhook:start-all": "bash mcp/webhook-server/scripts/start-all.sh"
   },
   "dependencies": {
