@@ -83,7 +83,10 @@ export function trelloHandler(req, res) {
   const action = body.action;
   const model = body.model;
 
-  console.log(`📡 [${ts}] Trello event: ${action?.type || "unknown"} on card "${action?.data?.card?.name || "?"}"`);
+  const checkItemName = action?.data?.checkItem?.name;
+  const checklistName = action?.data?.checklist?.name;
+  const checklistSuffix = checkItemName ? ` — checklist item "${checkItemName}" in "${checklistName || "?"}"` : "";
+  console.log(`📡 [${ts}] Trello event: ${action?.type || "unknown"} on card "${action?.data?.card?.name || "?"}"${checklistSuffix}`);
 
   logVerbose({ type: "webhook_received", source: "trello", action: action?.type, card: action?.data?.card?.name });
 
@@ -146,7 +149,9 @@ export function trelloHandler(req, res) {
     // Check for auto-authorization passphrase (---passphrase--- at start of text)
     // If valid, the agent may auto-answer read-only questions without human approval.
     const currentText = event.data.text || "";
-    const passphraseMatch = currentText.match(/^---(.+?)---\s*/);
+    // Match ---passphrase--- anywhere in the text (not just at start)
+    // since the webapp prefixes with [username]
+    const passphraseMatch = currentText.match(/---(.+?)---/);
     if (passphraseMatch) {
       const providedPassphrase = passphraseMatch[1];
       const storedPassphrase = process.env.FRONTEND_AUTH_PASSPHRASE;
@@ -158,9 +163,9 @@ export function trelloHandler(req, res) {
         event.data._authorized = false;
       }
       // Strip passphrase block from text so agent only sees the actual question
-      event.data.text = currentText.replace(/^---.+?---\s*/, "");
+      event.data.text = currentText.replace(/---.+?---\s*/, "").trim();
       if (event.data.data?.text) {
-        event.data.data.text = event.data.data.text.replace(/^---.+?---\s*/, "");
+        event.data.data.text = event.data.data.text.replace(/---.+?---\s*/, "").trim();
       }
     }
   }
@@ -180,6 +185,43 @@ export function trelloHandler(req, res) {
     fs.appendFileSync(path.join(FRONTDESK_UNAUTHORIZED_DIR, `${day}.jsonl`), JSON.stringify(logEntry) + "\n");
     console.log(`   ⚠️ Non-authorized frontdesk input from "${event.card?.name || "?"}" — "${event.data.text || "(empty)"}"`);
     console.log(`   → Logged to logs/frontdesk/unauthorized/`);
+
+    // Auto-reply on frontdesk_output with generic response
+    const trelloKey = process.env.TRELLO_KEY;
+    const trelloToken = process.env.TRELLO_TOKEN;
+    const outputListId = process.env.TRELLO_LIST_FRONTEDESK_OUTPUT;
+    if (trelloKey && trelloToken && outputListId) {
+      const today = new Date().toISOString().slice(0, 10);
+      const originalText = (event.data.text || "(empty)").trim();
+      const genericReply = originalText
+        ? `You said: "${originalText}" — Thank you for your message. A team member will review and respond shortly.`
+        : "Thank you for your message. A team member will review and respond shortly.";
+
+      // Find or create today's output card
+      (async () => {
+        try {
+          const listUrl = `https://api.trello.com/1/lists/${outputListId}/cards?key=${trelloKey}&token=${trelloToken}&fields=name,id`;
+          const listResp = await fetch(listUrl);
+          const cards = await listResp.json();
+          let outputCard = Array.isArray(cards) ? cards.find((c) => c.name === today) : null;
+
+          if (!outputCard) {
+            const createUrl = `https://api.trello.com/1/cards?idList=${outputListId}&key=${trelloKey}&token=${trelloToken}&name=${encodeURIComponent(today)}`;
+            const createResp = await fetch(createUrl, { method: "POST" });
+            outputCard = await createResp.json();
+          }
+
+          // Add generic reply as comment
+          const commentUrl = `https://api.trello.com/1/cards/${outputCard.id}/actions/comments?key=${trelloKey}&token=${trelloToken}&text=${encodeURIComponent(genericReply)}`;
+          await fetch(commentUrl, { method: "POST" });
+          console.log(`   → Auto-replied on frontdesk_output with generic response`);
+        } catch (err) {
+          console.error(`   ⚠️ Failed to auto-reply: ${err.message}`);
+        }
+      })();
+    } else {
+      console.warn(`   ⚠️ TRELLO_KEY, TRELLO_TOKEN, or TRELLO_LIST_FRONTEDESK_OUTPUT not set — cannot auto-reply`);
+    }
   }
 
   // Capture session log cards from Trello and write to local logs
@@ -202,17 +244,12 @@ export function trelloHandler(req, res) {
     return res.status(200).json({ status: "session_logged" });
   }
 
-  // Authorized frontdesk input skips the queue entirely — the agent
-  // will auto-answer directly via the webhook event notification.
-  // Only unauthorized frontdesk and non-frontdesk events go through
-  // the queue + tool dispatch pipeline.
-  if (event.data._authorized === true) {
-    console.log(`   ✅ Authorized frontdesk — skipping queue (agent will auto-answer)`);
-  } else {
-    enqueueEvent(event);
-    dispatch(event);
-    console.log(`   → Enqueued for agent processing`);
-  }
+  // All frontdesk input goes through the queue so the agent can find it.
+  // Authorized messages are tagged and will be auto-answered when the agent
+  // processes the queue. Unauthorized messages wait for human approval.
+  enqueueEvent(event);
+  dispatch(event);
+  console.log(`   → Enqueued for agent processing`);
 
   res.status(200).json({ status: "received" });
 }

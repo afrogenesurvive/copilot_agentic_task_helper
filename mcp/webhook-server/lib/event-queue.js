@@ -33,12 +33,15 @@ function load() {
       for (const line of lines) {
         try {
           const parsed = JSON.parse(line);
+          // Tag events loaded from disk so fresh arrivals can be distinguished
+          parsed._reloaded = true;
           // Sanitize on load to catch any pre-existing injection content
           queue.push(sanitizeObject(parsed));
         } catch {
           /* skip malformed */
         }
       }
+      console.log(`[event-queue] Loaded ${queue.length} existing event(s) from ${QUEUE_FILE} (tagged as _reloaded: true)`);
     }
   } catch (err) {
     console.error("[event-queue] Error loading queue:", err.message);
