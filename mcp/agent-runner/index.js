@@ -20,6 +20,7 @@
 import "dotenv/config";
 import fs from "fs";
 import path from "path";
+import readline from "readline";
 import { fileURLToPath } from "url";
 import { readPending, markCleared, acquireLock, releaseLock } from "./poller.js";
 import { callModel } from "./model-client.js";
@@ -35,6 +36,29 @@ const PID_FILE = path.resolve(__dirname, ".runner.pid");
 const POLL_INTERVAL = parseInt(process.env.AGENT_POLL_INTERVAL || "5000", 10);
 const ENABLED = process.env.AGENT_RUNNER_ENABLED !== "false";
 
+// ── Helpers ──
+
+function printQueueState(label) {
+  const items = readPending();
+  if (items.length === 0) {
+    console.log(`   📭 [QUEUE] ${label} — queue is empty`);
+    return;
+  }
+  console.log(`   📋 [QUEUE] ${label} — ${items.length} item(s):`);
+  for (const item of items) {
+    const num = item.seqNo ? `#${item.seqNo}` : `#?`;
+    const desc = item.data?.rule ? `"${item.data.rule}" → ${item.data.tool}` : `${item.source}/${item.type}`;
+    const summary = item.data?.originalEvent?.data?.card?.name
+      ? ` — card: "${item.data.originalEvent.data.card.name}"`
+      : item.data?.text
+        ? ` — "${item.data.text.slice(0, 60)}"`
+        : item.card?.name
+          ? ` — card: "${item.card.name}"`
+          : "";
+    console.log(`      ${num}) ${desc}${summary}`);
+  }
+}
+
 // ── Main processing loop ──
 
 async function processEvent(event) {
@@ -42,7 +66,13 @@ async function processEvent(event) {
   const seqNo = event.seqNo;
   const tag = seqNo ? `#${seqNo}` : `(${eventId?.slice(0, 8)}...)`;
 
-  console.log(`\n   🔄 [RUNNER] Processing event ${tag}: ${event.source}/${event.type}`);
+  console.log(`\n   ╔══════════════════════════════════════════════╗`);
+  console.log(`   ║       🔄 PROCESSING EVENT ${tag.padEnd(16)}║`);
+  console.log(`   ╚══════════════════════════════════════════════╝`);
+  console.log(`   📋 [RUNNER] ${event.source}/${event.type}`);
+
+  // Show queue state before processing
+  printQueueState("before");
 
   // Acquire lock so the poller skips this item
   acquireLock(eventId);
@@ -56,10 +86,17 @@ async function processEvent(event) {
       console.log(`   ⏭️  [RUNNER] No decision — marking as skipped`);
       logAction({ eventId, seqNo, eventType: `${event.source}/${event.type}`, action: "skipped" });
       markCleared(eventId);
+      printQueueState("after");
       return;
     }
 
-    // Step 2: Validate and execute the tool call
+    // Step 2: Taking action
+    console.log(`\n   ╔══════════════════════════════════════════════╗`);
+    console.log(`   ║        🛠️  TAKING ACTION                       ║`);
+    console.log(`   ╚══════════════════════════════════════════════╝`);
+    console.log(`   🎯 [RUNNER] ${decision.name}`);
+    console.log(`   📝 [RUNNER] Params: ${JSON.stringify(decision.arguments)}`);
+
     const result = await executeToolCall(decision.name, decision.arguments);
 
     // Step 3: Log the outcome
@@ -76,15 +113,19 @@ async function processEvent(event) {
 
     // Step 4: Mark as cleared
     if (result.ok) {
-      console.log(`   ✅ [RUNNER] Event ${tag} processed successfully`);
+      console.log(`\n   ✅ [RUNNER] Event ${tag} processed successfully`);
     } else {
       console.log(`   ❌ [RUNNER] Event ${tag} failed: ${result.error}`);
     }
     markCleared(eventId);
+
+    // Show queue state after
+    printQueueState("after");
   } catch (err) {
     console.error(`   ❌ [RUNNER] Unexpected error processing ${tag}: ${err.message}`);
     logAction({ eventId, seqNo, eventType: `${event.source}/${event.type}`, action: "failed", error: err.message });
     releaseLock(eventId);
+    printQueueState("after");
   }
 }
 
@@ -97,7 +138,7 @@ async function mainLoop() {
   const pending = readPending();
   if (pending.length === 0) return;
 
-  console.log(`   📋 [RUNNER] ${pending.length} pending item(s) in priority queue`);
+  console.log(`\n   🔔 [RUNNER] ${pending.length} pending item(s) detected in priority queue`);
 
   // Process one item per tick to keep the loop responsive
   const event = pending[0];
@@ -127,26 +168,57 @@ const interval = setInterval(mainLoop, POLL_INTERVAL);
 // Run once immediately
 mainLoop();
 
+// ── Interactive terminal ──
+// Type "stop", "exit", "quit", or press Ctrl+C to shut down
+
+const rl = readline.createInterface({
+  input: process.stdin,
+  output: process.stdout,
+  prompt: "runner> ",
+  terminal: true,
+});
+
+rl.prompt();
+
+rl.on("line", (input) => {
+  const cmd = input.trim().toLowerCase();
+  if (cmd === "stop" || cmd === "exit" || cmd === "quit") {
+    shutdown();
+  } else if (cmd === "status") {
+    const items = readPending();
+    console.log(`   📋 Priority queue: ${items.length} pending`);
+    for (const item of items) {
+      const num = item.seqNo ? `#${item.seqNo}` : `#?`;
+      console.log(`      ${num}) ${item.source}/${item.type}`);
+    }
+    rl.prompt();
+  } else if (cmd === "help") {
+    console.log(`   Available commands:`);
+    console.log(`   stop/exit/quit  — Shut down the runner`);
+    console.log(`   status          — Show pending queue items`);
+    console.log(`   help            — Show this help`);
+    rl.prompt();
+  } else if (cmd) {
+    console.log(`   Unknown command. Type "help" for options.`);
+    rl.prompt();
+  } else {
+    rl.prompt();
+  }
+});
+
 // ── Graceful shutdown ──
 
-process.on("SIGINT", () => {
-  console.log("\n   ⏹️  [RUNNER] Shutting down...");
+function shutdown() {
+  console.log(`\n   ⏹️  [RUNNER] Shutting down...`);
   clearInterval(interval);
+  rl.close();
   try {
     fs.unlinkSync(PID_FILE);
   } catch {
     /* ignore */
   }
   process.exit(0);
-});
+}
 
-process.on("SIGTERM", () => {
-  console.log("\n   ⏹️  [RUNNER] Terminated");
-  clearInterval(interval);
-  try {
-    fs.unlinkSync(PID_FILE);
-  } catch {
-    /* ignore */
-  }
-  process.exit(0);
-});
+process.on("SIGINT", shutdown);
+process.on("SIGTERM", shutdown);
