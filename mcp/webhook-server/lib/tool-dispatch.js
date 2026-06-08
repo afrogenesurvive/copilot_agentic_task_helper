@@ -27,17 +27,19 @@ function loadRules() {
       const content = fs.readFileSync(RULES_FILE, "utf8");
       const parsed = JSON.parse(content);
       rules = (parsed.rules || []).filter((r) => r.enabled !== false);
-      console.log(`[tool-dispatch] Loaded ${rules.length} rules from ${RULES_FILE}`);
+      console.log(`   🤖 [TOOL] Loaded ${rules.length} rules from ${RULES_FILE}`);
     } else {
-      console.log(`[tool-dispatch] No rules file at ${RULES_FILE}`);
+      console.log(`   🤖 [TOOL] No rules file at ${RULES_FILE}`);
     }
   } catch (err) {
-    console.error(`[tool-dispatch] Error loading rules: ${err.message}`);
+    console.error(`   ❌ [TOOL] Error loading rules: ${err.message}`);
   }
 }
 
 /**
  * Resolve a dotted path like "data.card.name" from an object.
+ * Used to extract values from webhook events for rule matching and template interpolation.
+ * Example: resolvePath({data:{card:{name:"test"}}}, "data.card.name") → "test"
  */
 function resolvePath(obj, pathStr) {
   return pathStr.split(".").reduce((acc, part) => (acc && acc[part] !== undefined ? acc[part] : undefined), obj);
@@ -46,6 +48,9 @@ function resolvePath(obj, pathStr) {
 /**
  * Check if a condition matches a value.
  * Supports: { contains, equals, regex, exists }
+ *
+ * Used by the rules engine to compare event fields against rule conditions.
+ * Example: { list: { name: { contains: "frontdesk" } } }
  */
 function matchCondition(value, condition) {
   if (condition === null || condition === undefined) return value === null || value === undefined;
@@ -108,23 +113,27 @@ export function dispatch(event) {
       }
     }
 
-    enqueueEvent({
-      source: "tool_dispatch",
-      type: "pending_tool_call",
-      data: {
-        rule: rule.name,
-        tool: rule.tool,
-        params: sanitizeObject(params),
-        originalEvent: { source: event.source, type: event.type, data: event.data },
+    // Route to PRIORITY queue — matched rules need agent attention
+    enqueueEvent(
+      {
+        source: "tool_dispatch",
+        type: "pending_tool_call",
+        data: {
+          rule: rule.name, // Human-readable rule name (e.g., "Frontdesk input")
+          tool: rule.tool, // MCP tool to call (e.g., "trello_add_comment")
+          params: sanitizeObject(params), // Pre-interpolated params for the tool
+          originalEvent: { source: event.source, type: event.type, data: event.data },
+        },
       },
-    });
+      "priority", // ← This is the key: tool dispatch = priority
+    );
 
-    console.log(`[tool-dispatch] Rule "${rule.name}" matched → tool: ${rule.tool}`);
+    console.log(`   🤖 [TOOL] Rule "${rule.name}" → ${rule.tool}`);
     matched = true;
   }
 
   if (!matched) {
-    console.log(`[tool-dispatch] No rules matched for ${event.source}/${event.type}`);
+    console.log(`   🤖 [TOOL] No rules matched for ${event.source}/${event.type}`);
   }
 
   return matched;

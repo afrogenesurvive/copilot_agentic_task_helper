@@ -20,6 +20,10 @@ dist/
 build/
 .next/
 
+# ── Runner ──
+mcp/agent-runner/system-prompt.md
+mcp/agent-runner/.runner.pid
+
 # ── Editor / IDE ──
 .vscode/
 .idea/

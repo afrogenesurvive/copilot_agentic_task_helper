@@ -47,15 +47,17 @@ async function fetchMessageDetails(historyId) {
   try {
     const auth = getGmailAuth();
     if (!auth) {
-      console.error("   ⚠️  No Gmail auth available");
+      console.error("   ⚠️  [GMAIL] No Gmail auth available");
       return {};
     }
     const gmail = google.gmail({ version: "v1", auth });
     const userId = process.env.GMAIL_USER || "me";
 
-    // The push notification historyId is the state AFTER the change.
-    // To find the message that triggered it, we query history BEFORE this ID.
-    // Try several offsets in case the exact history boundary differs.
+    // The push notification historyId is the Gmail history state AFTER the change.
+    // To find the exact message that triggered it, we query history at several
+    // offsets before this ID (0, -1, -5, -10) because the push notification
+    // doesn't include the message ID directly — just the history state.
+    // Try each offset until we find a newly added message.
     let msgId = null;
     for (const offset of [0, -1, -5, -10]) {
       const startId = typeof historyId === "number" || typeof historyId === "string" ? String(Number(historyId) + offset) : String(historyId);
@@ -73,7 +75,7 @@ async function fetchMessageDetails(historyId) {
     }
 
     if (!msgId) {
-      console.error("   ⚠️  No message found in history for", historyId);
+      console.error("   ⚠️  [GMAIL] No message found in history");
       return {};
     }
 
@@ -90,14 +92,16 @@ async function fetchMessageDetails(historyId) {
     const subject = headers.find((h) => h.name === "Subject")?.value;
     const date = headers.find((h) => h.name === "Date")?.value;
 
-    // Determine direction: if the "From" matches our configured user, it was sent by us
+    // Determine direction: did WE send this, or did someone else?
+    // If the "From" header contains our configured email username, it was sent by us.
+    // This helps separate outbound replies from incoming customer messages.
     const configuredUser = process.env.GMAIL_USER || "me";
     const direction = from && from.includes(configuredUser.replace(/@.*/, "")) ? "sent" : "received";
 
-    console.error(`   → Fetched: "${subject || "(no subject)"}" from ${from || "?"} (${direction})`);
+    console.error(`   📧 [GMAIL] Fetched: "${subject || "(no subject)"}" from ${from || "?"} (${direction})`);
     return { from, to, subject, date, snippet: msg.data.snippet, messageId: msgId, direction };
   } catch (err) {
-    console.error(`   ⚠️  fetchMessageDetails error: ${err.message}`);
+    console.error(`   ❌ [GMAIL] fetchMessageDetails: ${err.message}`);
     return {};
   }
 }
@@ -119,32 +123,34 @@ export async function gmailHandler(req, res) {
 
   if (req.method === "GET") {
     // Some push systems send a GET to verify
-    console.log(`📧 [${ts}] Gmail push verification (GET)`);
+    console.log(`📧 [GMAIL] Push verification (GET)`);
     return res.status(200).send("OK");
   }
 
   const body = req.body;
 
   if (!body || !body.message) {
-    console.log(`⚠️  [${ts}] Gmail push — unexpected body format`);
+    console.log(`⚠️  [GMAIL] Unexpected body format`);
     logVerbose({ type: "invalid_body", source: "gmail", body: JSON.stringify(body).slice(0, 500) });
     return res.status(400).json({ error: "Expected Pub/Sub message format" });
   }
 
-  // Decode the Pub/Sub message data
+  // Gmail Cloud Pub/Sub sends push notifications with base64-encoded JSON.
+  // The decoded payload contains { emailAddress, historyId }.
+  // The historyId lets us query Gmail API for the actual message details.
   let decoded;
   try {
     const json = Buffer.from(body.message.data, "base64").toString("utf8");
     decoded = JSON.parse(json);
   } catch (err) {
-    console.log(`⚠️  [${ts}] Gmail push — failed to decode: ${err.message}`);
+    console.log(`⚠️  [GMAIL] Failed to decode push: ${err.message}`);
     logVerbose({ type: "decode_error", source: "gmail", error: err.message });
     return res.status(200).json({ status: "decode_failed" });
   }
 
   const { emailAddress, historyId } = decoded;
 
-  console.log(`📧 [${ts}] Gmail push: historyId=${historyId}, email=${emailAddress || "?"}`);
+  console.log(`📧 [GMAIL] Push from ${emailAddress || "?"}`);
 
   logVerbose({
     type: "push_received",
@@ -155,7 +161,7 @@ export async function gmailHandler(req, res) {
   });
 
   // Fetch message details from Gmail API for richer logging
-  console.log(`   → Fetching message details...`);
+  console.log(`   📧 [GMAIL] Fetching message details...`);
   const details = await fetchMessageDetails(historyId);
 
   // Log notification (trimmed to specified fields, sanitized)
@@ -177,9 +183,15 @@ export async function gmailHandler(req, res) {
   Object.keys(entry.data).forEach((k) => entry.data[k] === undefined && delete entry.data[k]);
   logNotification(entry);
   const action = direction === "sent" ? "to" : "from";
-  console.log(`   → Logged: ${entry.data.subject ? `"${entry.data.subject}"` : "(no subject)"} ${action} ${entry.data[action] || "?"}`);
+  console.log(
+    `   📧 [GMAIL] ${entry.data.direction === "sent" ? "→ Sent: " : "← Received: "}"${entry.data.subject || "(no subject)"}" ${entry.data.direction === "sent" ? "to" : "from"} ${entry.data[action] || "?"}`,
+  );
 
-  // Enqueue event (sanitized)
+  // --- Build and route the event ---
+  // Gmail events always go to misc_notifications (raw webhook data).
+  // However, dispatch() checks tool dispatch rules: if a rule matches
+  // (e.g., "email from VIP customer"), an additional pending_tool_call
+  // is enqueued to the priority queue for agent action.
   const event = {
     source: "gmail",
     type: "new_message",
@@ -196,12 +208,12 @@ export async function gmailHandler(req, res) {
     }),
   };
 
-  enqueueEvent(event);
+  enqueueEvent(event, "misc_notifications");
 
-  // Check if any tool dispatch rules match
+  // Check if any tool dispatch rules match (matched rules → priority queue)
   dispatch(event);
 
-  console.log(`   → Enqueued for agent processing`);
+  console.log(`   📧 [GMAIL] Event → misc_notifications (tool dispatch → priority)`);
 
   res.status(200).json({ status: "received" });
 }
