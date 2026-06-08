@@ -67,7 +67,7 @@ export function trelloHandler(req, res) {
   const ts = new Date().toISOString();
 
   if (req.method === "HEAD") {
-    console.log(`📡 [${ts}] Trello webhook verification (HEAD)`);
+    console.log(`📡 [TRELLO] Webhook verification (HEAD)`);
     logVerbose({ type: "head_verification", source: "trello" });
     return res.status(200).end();
   }
@@ -83,10 +83,12 @@ export function trelloHandler(req, res) {
   const action = body.action;
   const model = body.model;
 
-  const checkItemName = action?.data?.checkItem?.name;
-  const checklistName = action?.data?.checklist?.name;
-  const checklistSuffix = checkItemName ? ` — checklist item "${checkItemName}" in "${checklistName || "?"}"` : "";
-  console.log(`📡 [${ts}] Trello event: ${action?.type || "unknown"} on card "${action?.data?.card?.name || "?"}"${checklistSuffix}`);
+  // Parse event details for a compact, readable log line
+  const eventType = action?.type || "unknown";
+  const cardName = action?.data?.card?.name || "?";
+  const listName = action?.data?.list?.name;
+  const listLabel = listName ? ` (${listName})` : "";
+  console.log(`📡 [TRELLO] ${eventType} — "${cardName}"${listLabel}`);
 
   logVerbose({ type: "webhook_received", source: "trello", action: action?.type, card: action?.data?.card?.name });
 
@@ -101,7 +103,7 @@ export function trelloHandler(req, res) {
     .filter(Boolean);
 
   if (watchedIds.length > 0 && boardId && !watchedIds.includes(boardId)) {
-    console.log(`   → Board ${boardId} not in watch list, skipping`);
+    console.log(`   ⏭️ [TRELLO] Board not in watch list — skipped`);
     return res.status(200).json({ status: "ignored", reason: "board_not_watched" });
   }
 
@@ -129,10 +131,10 @@ export function trelloHandler(req, res) {
       if (secret) {
         const expectedSig = crypto.createHmac("sha256", secret).update(cleanText).digest("hex").slice(0, 16);
         if (providedSig === expectedSig) {
-          console.log(`   ✅ HMAC signature valid for frontdesk_input comment`);
+          console.log(`   ✅ [AUTH] HMAC signature valid`);
           event.data._verified = true;
         } else {
-          console.log(`   ⚠️ HMAC signature INVALID for frontdesk_input comment`);
+          console.log(`   ❌ [AUTH] HMAC signature INVALID`);
           event.data._verified = false;
         }
       }
@@ -142,12 +144,14 @@ export function trelloHandler(req, res) {
       if (event.data.data?.text) event.data.data.text = cleanText;
     } else if (process.env.FRONTEND_HMAC_SECRET) {
       // No signature but we expect one — flag as unverified
-      console.log(`   ⚠️ frontdesk_input comment has no HMAC signature (may be direct API call)`);
+      console.log(`   ⚠️ [AUTH] No HMAC signature (direct API call?)`);
       event.data._verified = false;
     }
 
-    // Check for auto-authorization passphrase (---passphrase--- at start of text)
-    // If valid, the agent may auto-answer read-only questions without human approval.
+    // --- Layer 2: Passphrase auto-authorization ---
+    // A message containing ---<passphrase>--- is trusted to be from an authorized user.
+    // The agent can then auto-answer read-only questions without waiting for human approval.
+    // The passphrase block is stripped from the text before the agent sees it.
     const currentText = event.data.text || "";
     // Match ---passphrase--- anywhere in the text (not just at start)
     // since the webapp prefixes with [username]
@@ -156,10 +160,10 @@ export function trelloHandler(req, res) {
       const providedPassphrase = passphraseMatch[1];
       const storedPassphrase = process.env.FRONTEND_AUTH_PASSPHRASE;
       if (storedPassphrase && providedPassphrase === storedPassphrase) {
-        console.log(`   ✅ Frontdesk passphrase valid — auto-authorizing`);
+        console.log(`   ✅ [AUTH] Passphrase valid — authorized`);
         event.data._authorized = true;
       } else {
-        console.log(`   ⚠️ Frontdesk passphrase INVALID`);
+        console.log(`   ❌ [AUTH] Passphrase INVALID`);
         event.data._authorized = false;
       }
       // Strip passphrase block from text so agent only sees the actual question
@@ -170,7 +174,11 @@ export function trelloHandler(req, res) {
     }
   }
 
-  // Log non-authorized frontdesk input to a dedicated directory for review
+  // --- Unauthorized frontdesk handling ---
+  // Messages that aren't passphrase-authorized get:
+  //   1. Logged to logs/frontdesk/unauthorized/ for audit trail
+  //   2. Auto-replied on frontdesk_output with a generic "we'll get back to you" message
+  // The auto-reply happens via direct Trello API call — no agent involvement needed.
   if (event.type === "commentCard" && event.list?.name === "frontdesk_input" && event.data._authorized !== true) {
     const day = ts.slice(0, 10);
     const logEntry = {
@@ -183,7 +191,7 @@ export function trelloHandler(req, res) {
     };
     fs.mkdirSync(FRONTDESK_UNAUTHORIZED_DIR, { recursive: true });
     fs.appendFileSync(path.join(FRONTDESK_UNAUTHORIZED_DIR, `${day}.jsonl`), JSON.stringify(logEntry) + "\n");
-    console.log(`   ⚠️ Non-authorized frontdesk input from "${event.card?.name || "?"}" — "${event.data.text || "(empty)"}"`);
+    console.log(`   ⚠️ [AUTH] Unauthorized frontdesk from "${event.card?.name || "?"}" — "${(event.data.text || "(empty)").slice(0, 60)}"`);
     console.log(`   → Logged to logs/frontdesk/unauthorized/`);
 
     // Auto-reply on frontdesk_output with generic response
@@ -214,13 +222,13 @@ export function trelloHandler(req, res) {
           // Add generic reply as comment
           const commentUrl = `https://api.trello.com/1/cards/${outputCard.id}/actions/comments?key=${trelloKey}&token=${trelloToken}&text=${encodeURIComponent(genericReply)}`;
           await fetch(commentUrl, { method: "POST" });
-          console.log(`   → Auto-replied on frontdesk_output with generic response`);
+          console.log(`   ✅ [AUTH] Auto-replied on frontdesk_output`);
         } catch (err) {
-          console.error(`   ⚠️ Failed to auto-reply: ${err.message}`);
+          console.error(`   ❌ [AUTH] Auto-reply failed: ${err.message}`);
         }
       })();
     } else {
-      console.warn(`   ⚠️ TRELLO_KEY, TRELLO_TOKEN, or TRELLO_LIST_FRONTEDESK_OUTPUT not set — cannot auto-reply`);
+      console.warn(`   ⚠️ Missing TRELLO_KEY/TRELLO_TOKEN/TRELLO_LIST_FRONTEDESK_OUTPUT — cannot auto-reply`);
     }
   }
 
@@ -238,22 +246,27 @@ export function trelloHandler(req, res) {
     }
     fs.mkdirSync(SESSION_LOG_DIR, { recursive: true });
     fs.appendFileSync(path.join(SESSION_LOG_DIR, `${day}.jsonl`), JSON.stringify(sessionEntry) + "\n");
-    console.log(`   📋 Session log card: ${action?.data?.card?.name || "?"} — written to logs/frontdesk/sessions/`);
+    console.log(`   📋 [TRELLO] Session log written to logs/frontdesk/sessions/`);
     // Skip queue — session data doesn't need tool dispatch
-    console.log(`   → Session data — skipping queue`);
+    console.log(`   ⏭️ [TRELLO] Session data — skipping queue`);
     return res.status(200).json({ status: "session_logged" });
   }
 
-  // Authorized frontdesk input skips the queue — the agent auto-answers
-  // directly via the webhook event without needing a pending tool call.
-  // Unauthorized frontdesk and non-frontdesk events go through the queue
-  // so the agent can find and act on them when prompted.
+  // --- Final queue routing ---
+  // Every event goes to one of two queues:
+  //   priority:            authorized frontdesk inputs → agent auto-answers
+  //   misc_notifications:  everything else → daily review fodder
+  //
+  // Additionally, dispatch() checks each event against webhook-tool-rules.json.
+  // If a rule matches, an additional pending_tool_call event is enqueued to
+  // the priority queue, telling the agent which MCP tool to invoke.
   if (event.data._authorized === true && event.type === "commentCard" && event.list?.name === "frontdesk_input") {
-    console.log(`   ✅ Authorized frontdesk — skipping queue (agent will auto-answer on next prompt)`);
+    enqueueEvent(event, "priority");
+    console.log(`   ✅ [TRELLO] Authorized frontdesk → priority queue (auto-answer)`);
   } else {
-    enqueueEvent(event);
+    enqueueEvent(event, "misc_notifications");
     dispatch(event);
-    console.log(`   → Enqueued for agent processing`);
+    console.log(`   📋 [TRELLO] Event → misc_notifications (tool dispatch → priority)`);
   }
 
   res.status(200).json({ status: "received" });

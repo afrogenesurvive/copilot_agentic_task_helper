@@ -20,7 +20,10 @@
     "webhook:setup": "bash mcp/webhook-server/scripts/start-webhook.sh",
     "webhook:tunnel": "bash mcp/webhook-server/scripts/setup-tunnel.sh",
     "webhook:restart": "bash mcp/webhook-server/scripts/restart-webhook.sh",
-    "webhook:start-all": "bash mcp/webhook-server/scripts/start-all.sh"
+    "webhook:start-all": "bash mcp/webhook-server/scripts/start-all.sh",
+    "runner:start": "node mcp/agent-runner/index.js",
+    "runner:stop": "kill $(cat mcp/agent-runner/.runner.pid 2>/dev/null) 2>/dev/null; echo 'Runner stopped'",
+    "runner:status": "ps aux | grep 'agent-runner' | grep -v grep || echo 'Runner not running'"
   },
   "dependencies": {
     "@google-cloud/local-auth": "^3.0.1",

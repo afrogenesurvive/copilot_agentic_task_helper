@@ -65,7 +65,7 @@ export async function startWatch(overrides = {}) {
     throw new Error("GMAIL_TOPIC_NAME is required");
   }
 
-  console.log(`[gmail-watch] Starting watch for ${userId} → ${topicName}`);
+  console.log(`   🔄 [WATCH] Starting watch for ${userId}`);
 
   const res = await gmail.users.watch({
     userId,
@@ -85,7 +85,7 @@ export async function startWatch(overrides = {}) {
   };
 
   saveState(state);
-  console.log(`[gmail-watch] Watch started — historyId: ${res.data.historyId}`);
+  console.log(`   ✅ [WATCH] Watch started`);
   return res.data;
 }
 
@@ -97,7 +97,7 @@ export async function stopWatch() {
   const gmail = google.gmail({ version: "v1", auth });
   const userId = process.env.GMAIL_USER || "me";
 
-  console.log(`[gmail-watch] Stopping watch for ${userId}`);
+  console.log(`   ⏹️ [WATCH] Stopping watch for ${userId}`);
   await gmail.users.stop({ userId });
 
   try {
@@ -106,7 +106,7 @@ export async function stopWatch() {
     /* ignore */
   }
 
-  console.log("[gmail-watch] Watch stopped");
+  console.log("   ✅ [WATCH] Watch stopped");
 }
 
 /**
@@ -126,13 +126,13 @@ export async function ensureWatch(options = {}) {
     const remaining = expiresAt - now;
 
     if (remaining > renewBeforeMs) {
-      console.log(`[gmail-watch] Watch still valid — ${Math.round(remaining / 1000 / 60)}m remaining`);
+      console.log(`   ✅ [WATCH] Watch valid — ${Math.round(remaining / 1000 / 60)}m remaining`);
       return state;
     }
 
-    console.log(`[gmail-watch] Watch expiring soon (${Math.round(remaining / 1000 / 60)}m) — renewing`);
+    console.log(`   🔄 [WATCH] Watch expiring — ${Math.round(remaining / 1000 / 60)}m left, renewing`);
   } else {
-    console.log("[gmail-watch] No watch state found — starting");
+    console.log("   🔄 [WATCH] No state found — starting new watch");
   }
 
   return await startWatch();

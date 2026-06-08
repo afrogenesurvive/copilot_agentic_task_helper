@@ -17,6 +17,7 @@ import { google } from "googleapis";
 import { OAuth2Client } from "google-auth-library";
 import "dotenv/config";
 import { sanitizeObject } from "../../scripts/sanitize.mjs";
+import { gmailTools } from "../../shared/tool-manifest.js";
 
 /* ── Auth ── */
 
@@ -260,52 +261,10 @@ async function handleSendMessage(args) {
   }
 }
 
-/* ── Tool definitions ── */
+/* ── Tool definitions (from shared manifest) ── */
 
 server.setRequestHandler(ListToolsRequestSchema, async () => ({
-  tools: [
-    {
-      name: "gmail_list_messages",
-      description: "List Gmail messages matching a search query",
-      inputSchema: {
-        type: "object",
-        properties: {
-          query: { type: "string", description: "Gmail search query (same as search box syntax)" },
-          maxResults: { type: "number", description: "Max results (default 10, max 100)", default: 10 },
-        },
-      },
-    },
-    {
-      name: "gmail_get_message",
-      description: "Get a Gmail message by ID with full body content",
-      inputSchema: {
-        type: "object",
-        properties: {
-          id: { type: "string", description: "Message ID" },
-          format: {
-            type: "string",
-            enum: ["full", "metadata"],
-            description: "'full' returns decoded body + headers; 'metadata' returns headers + snippet",
-            default: "full",
-          },
-        },
-        required: ["id"],
-      },
-    },
-    {
-      name: "gmail_send_message",
-      description: "Send a plain text email",
-      inputSchema: {
-        type: "object",
-        properties: {
-          to: { type: "string", description: "Recipient email address" },
-          subject: { type: "string", description: "Email subject" },
-          body: { type: "string", description: "Email body text" },
-        },
-        required: ["to", "subject", "body"],
-      },
-    },
-  ],
+  tools: gmailTools,
 }));
 
 /* ── Start ── */
