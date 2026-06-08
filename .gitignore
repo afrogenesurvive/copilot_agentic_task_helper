@@ -21,6 +21,7 @@ build/
 .next/
 
 # ── Runner ──
+mcp/agent-runner/README.md
 mcp/agent-runner/system-prompt.md
 mcp/agent-runner/.runner.pid
 
