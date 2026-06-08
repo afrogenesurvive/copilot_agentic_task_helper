@@ -150,6 +150,64 @@ app.patch("/events/:id", (req, res) => {
   }
 });
 
+/* ── Status API endpoints (for the frontdesk webapp) ──
+ *
+ * These endpoints serve queue status, task lists, and tool dispatch
+ * rules so the webapp can display them in the Status tab.
+ * All support CORS via the existing app.use(cors()) middleware.
+ */
+
+// GET /api/queue-status — Summary of both queues with counts
+app.get("/api/queue-status", (_req, res) => {
+  try {
+    const priority = readEvents("priority", { cleared: false });
+    const misc = readEvents("misc_notifications", { cleared: false });
+    const priorityDone = readEvents("priority").filter((e) => e.cleared);
+    const miscDone = readEvents("misc_notifications").filter((e) => e.cleared);
+    res.json({
+      priority: { pending: priority.length, cleared: priorityDone.length, items: priority.slice(-20).reverse() },
+      misc: { pending: misc.length, cleared: miscDone.length, items: misc.slice(-20).reverse() },
+    });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// GET /api/tasks — Today's task list (if any)
+app.get("/api/tasks", (_req, res) => {
+  try {
+    const today = new Date().toISOString().slice(0, 10);
+    const taskFile = path.join(TASKS_DIR, `${today}.md`);
+    const tasks = loadTaskList();
+    res.json({ date: today, exists: fs.existsSync(taskFile), content: tasks });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// GET /api/rules — Tool dispatch rules (enabled only)
+app.get("/api/rules", (_req, res) => {
+  try {
+    const rulesPath = path.resolve(__dirname, "..", "..", "safe", "webhook-tool-rules.json");
+    if (!fs.existsSync(rulesPath)) {
+      return res.json({ rules: [] });
+    }
+    const raw = fs.readFileSync(rulesPath, "utf8");
+    const parsed = JSON.parse(raw);
+    const rules = (parsed.rules || []).map((r) => ({
+      name: r.name,
+      enabled: r.enabled,
+      source: r.match?.source,
+      type: r.match?.type,
+      conditions: r.match?.conditions || null,
+      tool: r.tool,
+    }));
+    res.json({ rules });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
 app.get("/tool-logs", (req, res) => {
   const lines = parseInt(req.query.lines || "20", 10);
   const today = new Date().toISOString().slice(0, 10);
@@ -293,6 +351,7 @@ app.listen(PORT, () => {
   console.log(`\n${"=".repeat(50)}`);
   console.log(`   🌐 Webhook server — http://localhost:${PORT}`);
   console.log(`   📋 Events:  /events | Priority: /events/priority`);
+  console.log(`   📊 Status:  /api/queue-status | /api/tasks | /api/rules`);
   console.log(`   🤖 Tool logs: /tool-logs`);
   console.log(`   ⏰ Reminder: every ${REMINDER_INTERVAL / 60000}m`);
   console.log(`   💬 Terminal: type "help" for commands`);
