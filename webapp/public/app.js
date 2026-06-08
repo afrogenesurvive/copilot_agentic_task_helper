@@ -36,6 +36,11 @@ const CONFIG = {
 
   // Max messages in the chat window (last N inputs + outputs combined)
   MAX_CHAT_MESSAGES: 15,
+
+  // Webhook server base URL (for status/tasks/rules data).
+  // When running locally, this is the tunnel URL or localhost.
+  // When deployed, set this to your tunnel URL.
+  WEBHOOK_BASE_URL: "__WEBHOOK_BASE_URL__", // e.g. "https://your-tunnel.ngrok.app" or "http://localhost:3199"
 };
 
 /* ==================================================================
@@ -254,6 +259,8 @@ function doLogout() {
   sessionTimer = null;
   if (pollTimer) clearInterval(pollTimer);
   pollTimer = null;
+  if (statusPollTimer) clearInterval(statusPollTimer);
+  statusPollTimer = null;
   sessionStorage.removeItem("frontdesk_user");
   sessionStorage.removeItem("frontdesk_login_time");
   document.getElementById("app-screen").classList.add("hidden");
@@ -279,9 +286,21 @@ document.getElementById("tab-chat").addEventListener("click", () => {
 document.getElementById("tab-reports").addEventListener("click", () => {
   document.getElementById("tab-reports").classList.add("active");
   document.getElementById("tab-chat").classList.remove("active");
+  document.getElementById("tab-status").classList.remove("active");
   document.getElementById("reports-view").classList.remove("hidden");
   document.getElementById("chat-view").classList.add("hidden");
+  document.getElementById("status-view").classList.add("hidden");
   loadReports();
+});
+
+document.getElementById("tab-status").addEventListener("click", () => {
+  document.getElementById("tab-status").classList.add("active");
+  document.getElementById("tab-chat").classList.remove("active");
+  document.getElementById("tab-reports").classList.remove("active");
+  document.getElementById("status-view").classList.remove("hidden");
+  document.getElementById("chat-view").classList.add("hidden");
+  document.getElementById("reports-view").classList.add("hidden");
+  loadStatus();
 });
 
 /* ==================================================================
@@ -498,6 +517,133 @@ function escapeHtml(str) {
 }
 
 /* ==================================================================
+   Status — Queue Status & Tasks / Rules
+   ================================================================== */
+
+let statusPollTimer = null;
+
+/** Fetch status data from the webhook server */
+async function fetchStatus() {
+  const base = CONFIG.WEBHOOK_BASE_URL || "http://localhost:3199";
+  try {
+    const [queueRes, tasksRes, rulesRes] = await Promise.all([
+      fetch(`${base}/api/queue-status`).then((r) => r.json()),
+      fetch(`${base}/api/tasks`).then((r) => r.json()),
+      fetch(`${base}/api/rules`).then((r) => r.json()),
+    ]);
+    return { queue: queueRes, tasks: tasksRes, rules: rulesRes };
+  } catch {
+    return null;
+  }
+}
+
+/** Render the status view */
+async function loadStatus() {
+  const container = document.getElementById("status-container");
+  container.innerHTML = '<div class="loading">Loading status...</div>';
+
+  const data = await fetchStatus();
+
+  if (!data) {
+    container.innerHTML =
+      '<div class="empty-state">⚠️ Cannot reach webhook server. Make sure the server is running and WEBHOOK_BASE_URL is set in CONFIG.</div>';
+    return;
+  }
+
+  const html = [];
+
+  // ── Section 1: Priority Queue & Tasks ──
+  html.push('<div class="status-section">');
+  html.push("<h3>🔴 Priority Queue &amp; Tasks</h3>");
+
+  // Summary badges
+  const pPending = data.queue?.priority?.pending || 0;
+  const pCleared = data.queue?.priority?.cleared || 0;
+  const mPending = data.queue?.misc?.pending || 0;
+  html.push('<div class="status-summary">');
+  html.push(`<span class="status-badge pending">${pPending} priority pending</span>`);
+  html.push(`<span class="status-badge cleared">${pCleared} priority cleared</span>`);
+  html.push(`<span class="status-badge">${mPending} misc notifications</span>`);
+  html.push("</div>");
+
+  // Priority items
+  const priorityItems = data.queue?.priority?.items || [];
+  if (priorityItems.length > 0) {
+    for (const item of priorityItems) {
+      const label = item.data?.rule || `${item.source}/${item.type}`;
+      const desc = item.data?.originalEvent?.data?.card?.name
+        ? `Card: ${escapeHtml(item.data.originalEvent.data.card.name)}`
+        : item.data?.text
+          ? `"${escapeHtml(item.data.text.slice(0, 80))}"`
+          : item.data?.subject
+            ? `Subject: ${escapeHtml(item.data.subject)}`
+            : "";
+      const cleared = item.cleared ? "cleared-item" : "";
+      html.push(`<div class="status-item ${cleared}">`);
+      html.push(`<div class="item-label">#${item.seqNo} ${escapeHtml(label)}</div>`);
+      if (desc) html.push(`<div class="item-desc">${desc}</div>`);
+      html.push(
+        `<div class="item-meta">${item.queuedAt ? new Date(item.queuedAt).toLocaleString() : ""}${item.cleared ? " · ✅ Cleared" : ""}</div>`,
+      );
+      html.push("</div>");
+    }
+  } else {
+    html.push('<div class="empty-state" style="padding:0.75rem">✅ No pending priority items</div>');
+  }
+
+  // Today's tasks
+  const taskContent = data.tasks?.content;
+  if (taskContent) {
+    html.push('<h3 style="margin-top:1rem">📋 Today\'s Tasks</h3>');
+    const lines = taskContent.split("\n").filter((l) => l.trim());
+    for (const line of lines) {
+      const isDone = line.trim().startsWith("- [x]");
+      const display = line.replace(/^-\s*\[.\]/, "").trim();
+      if (display) {
+        html.push(
+          `<div class="status-item"><span class="task-badge ${isDone ? "done" : "pending-task"}">${isDone ? "✓" : "○"}</span> ${escapeHtml(display)}</div>`,
+        );
+      }
+    }
+  } else {
+    html.push('<div class="empty-state" style="padding:0.75rem">📭 No tasks for today</div>');
+  }
+  html.push("</div>");
+
+  // ── Section 2: Active Rules ──
+  html.push('<div class="status-section">');
+  html.push("<h3>⚙️ Tool Dispatch Rules</h3>");
+
+  const rules = data.rules?.rules || [];
+  if (rules.length > 0) {
+    // Enabled rules first
+    const sorted = [...rules].sort((a, b) => (a.enabled === b.enabled ? 0 : a.enabled ? -1 : 1));
+    for (const rule of sorted) {
+      const enabledClass = rule.enabled ? "rule-enabled" : "rule-disabled";
+      html.push(`<div class="rule-card ${enabledClass}">`);
+      html.push(`<div class="rule-name">${rule.enabled ? "🟢" : "⚪"} ${escapeHtml(rule.name || "(unnamed)")}</div>`);
+      html.push('<div class="rule-detail">');
+      if (rule.source) html.push(`<span>Source: ${rule.source}</span>`);
+      if (rule.type) html.push(`<span>Event: ${rule.type}</span>`);
+      if (rule.tool) html.push(`<span>Tool: ${rule.tool}</span>`);
+      html.push("</div>");
+      if (rule.conditions) {
+        const condStr = Object.entries(rule.conditions)
+          .map(([k, v]) => `${k}: ${JSON.stringify(v)}`)
+          .join(", ");
+        html.push(`<div class="item-meta">Conditions: ${escapeHtml(condStr)}</div>`);
+      }
+      html.push("</div>");
+    }
+  } else {
+    html.push('<div class="empty-state" style="padding:0.75rem">No rules configured</div>');
+  }
+  html.push("</div>");
+
+  container.innerHTML = html.join("\n");
+}
+
+/* ==================================================================
    Init — Load config on page load, then chat polling after login
    ================================================================== */
 
@@ -511,6 +657,9 @@ function initApp() {
   loadMessages();
   if (pollTimer) clearInterval(pollTimer);
   pollTimer = setInterval(loadMessages, CONFIG.POLL_INTERVAL);
+  // Start status polling (updates both the queue and rules)
+  if (statusPollTimer) clearInterval(statusPollTimer);
+  statusPollTimer = setInterval(loadStatus, 15000);
 }
 
 /* ==================================================================

@@ -382,6 +382,145 @@ header h1 {
   white-space: nowrap;
 }
 
+/* ── Status View ── */
+#status-view {
+  flex: 1;
+  overflow-y: auto;
+  padding: 1rem;
+}
+
+#status-container {
+  max-width: 700px;
+  margin: 0 auto;
+}
+
+.status-section {
+  margin-bottom: 1.5rem;
+}
+
+.status-section h3 {
+  font-size: 0.95rem;
+  margin-bottom: 0.5rem;
+  color: var(--text-muted);
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+}
+
+.status-summary {
+  display: flex;
+  gap: 0.75rem;
+  margin-bottom: 0.75rem;
+  flex-wrap: wrap;
+}
+
+.status-badge {
+  padding: 0.3rem 0.7rem;
+  border-radius: 6px;
+  font-size: 0.8rem;
+  font-weight: 600;
+  background: var(--card-bg);
+  border: 1px solid var(--border);
+}
+
+.status-badge.pending {
+  color: var(--warning);
+  border-color: var(--warning);
+}
+
+.status-badge.cleared {
+  color: var(--success);
+  border-color: var(--success);
+}
+
+.status-item {
+  padding: 0.5rem 0.75rem;
+  background: var(--card-bg);
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  margin-bottom: 0.35rem;
+  font-size: 0.85rem;
+  line-height: 1.4;
+}
+
+.status-item .item-label {
+  font-weight: 600;
+  color: var(--accent);
+}
+
+.status-item .item-meta {
+  color: var(--text-muted);
+  font-size: 0.75rem;
+  margin-top: 0.2rem;
+}
+
+.status-item .item-desc {
+  color: var(--text);
+  margin-top: 0.15rem;
+  word-break: break-word;
+}
+
+.status-item.cleared-item {
+  opacity: 0.5;
+}
+
+.rule-card {
+  padding: 0.6rem 0.75rem;
+  background: var(--card-bg);
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  margin-bottom: 0.4rem;
+  font-size: 0.85rem;
+}
+
+.rule-card .rule-name {
+  font-weight: 600;
+  color: var(--accent);
+}
+
+.rule-card .rule-detail {
+  color: var(--text-muted);
+  font-size: 0.78rem;
+  margin-top: 0.2rem;
+  display: flex;
+  gap: 0.5rem;
+  flex-wrap: wrap;
+}
+
+.rule-card .rule-detail span {
+  background: var(--bg);
+  padding: 0.15rem 0.4rem;
+  border-radius: 3px;
+}
+
+.rule-card .rule-enabled {
+  color: var(--success);
+}
+
+.rule-card .rule-disabled {
+  color: var(--text-muted);
+  text-decoration: line-through;
+}
+
+.task-badge {
+  display: inline-block;
+  padding: 0.2rem 0.5rem;
+  border-radius: 4px;
+  font-size: 0.75rem;
+  font-weight: 600;
+  margin-right: 0.3rem;
+}
+
+.task-badge.done {
+  background: var(--success);
+  color: #fff;
+}
+
+.task-badge.pending-task {
+  background: var(--warning);
+  color: #fff;
+}
+
 /* ── Responsive ── */
 @media (max-width: 480px) {
   .message {
