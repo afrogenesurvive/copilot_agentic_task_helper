@@ -1,64 +1,23 @@
 /**
- * Model Client — calls DeepSeek V4 API with function calling
+ * Model Client — calls DeepSeek V4 API with function calling via the OpenAI SDK
  *
  * Takes an event's context, sends it to DeepSeek along with tool
  * definitions from the shared manifest, and returns the model's
  * chosen tool call (function name + arguments).
+ *
+ * Uses the OpenAI SDK because DeepSeek's API is fully compatible with it.
  *
  * Environment:
  *   DEEPSEEK_API_KEY — API key for DeepSeek V4
  *   AGENT_MODEL      — Model name (default: "deepseek-chat")
  */
 
-const DEEPSEEK_BASE = "https://api.deepseek.com/v1";
+import OpenAI from "openai";
 
-/**
- * Build the DeepSeek API request body from event context and tool definitions.
- * @param {object} event — The queue event data
- * @param {Array} toolDefs — Tool definitions from tool-manifest.js (already in MCP format)
- * @returns {object} Request body for DeepSeek chat completions
- */
-function buildRequest(event, toolDefs) {
-  // Map MCP tool definitions → DeepSeek function calling format
-  const tools = toolDefs.map((t) => ({
-    type: "function",
-    function: {
-      name: t.name,
-      description: t.description,
-      parameters: t.inputSchema, // JSON Schema — pass through verbatim
-    },
-  }));
-
-  // Build a concise event summary for the model
-  const eventContext = buildEventContext(event);
-
-  return {
-    model: process.env.AGENT_MODEL || "deepseek-chat",
-    messages: [
-      {
-        role: "system",
-        content: [
-          "You are an autonomous business workflow agent. Your job is to process incoming events",
-          "and decide what action to take. You have a set of tools available (Trello, Gmail).",
-          "",
-          "Rules:",
-          "- Choose ONE tool and provide ALL required parameters",
-          "- If the event is a frontdesk message, reply helpfully but don't make up information",
-          "- If you're unsure, use trello_add_comment to ask for clarification",
-          "- Never make up card IDs, list IDs, or other identifiers",
-          "- Respond only with a tool call — no explanatory text",
-        ].join("\n"),
-      },
-      {
-        role: "user",
-        content: eventContext,
-      },
-    ],
-    tools,
-    tool_choice: "auto",
-    temperature: 0.1, // Low temperature for predictable tool selection
-  };
-}
+const client = new OpenAI({
+  apiKey: process.env.DEEPSEEK_API_KEY || "",
+  baseURL: "https://api.deepseek.com",
+});
 
 /**
  * Build a concise human-readable summary of the event for the model.
@@ -96,38 +55,68 @@ function buildEventContext(event) {
 }
 
 /**
+ * Map MCP tool definitions to OpenAI's tool calling format.
+ */
+function mapTools(toolDefs) {
+  return toolDefs.map((t) => ({
+    type: "function",
+    function: {
+      name: t.name,
+      description: t.description,
+      parameters: t.inputSchema,
+    },
+  }));
+}
+
+/**
  * Call the DeepSeek V4 API with an event and tool definitions.
+ * Uses the OpenAI SDK under the hood.
  * @param {object} event — The queue event
  * @param {Array} toolDefs — Tool definitions from shared/tool-manifest.js
  * @returns {object|null} { name: string, arguments: object } or null if no tool call
  */
 export async function callModel(event, toolDefs) {
-  const apiKey = process.env.DEEPSEEK_API_KEY;
-  if (!apiKey) {
+  if (!process.env.DEEPSEEK_API_KEY) {
     console.error("   ❌ [MODEL] DEEPSEEK_API_KEY not set in .env");
     return null;
   }
 
-  const body = buildRequest(event, toolDefs);
+  const tools = mapTools(toolDefs);
+  const eventContext = buildEventContext(event);
+  const model = "deepseek-v4-flash";
 
   try {
-    const response = await fetch(`${DEEPSEEK_BASE}/chat/completions`, {
-      method: "POST",
-      headers: {
-        "Content-Type": "application/json",
-        Authorization: `Bearer ${apiKey}`,
-      },
-      body: JSON.stringify(body),
+    const response = await client.chat.completions.create({
+      model,
+      messages: [
+        {
+          role: "system",
+          content: [
+            "You are an autonomous business workflow agent. Your job is to process incoming events",
+            "and decide what action to take. You have a set of tools available (Trello, Gmail).",
+            "",
+            "Rules:",
+            "- Choose ONE tool and provide ALL required parameters",
+            "- If the event is a frontdesk message, reply helpfully but don't make up information",
+            "- If you're unsure, use trello_add_comment to ask for clarification",
+            "- Never make up card IDs, list IDs, or other identifiers",
+            "- Respond only with a tool call — no explanatory text",
+          ].join("\n"),
+        },
+        {
+          role: "user",
+          content: eventContext,
+        },
+      ],
+      tools,
+      tool_choice: "auto",
+      temperature: 0.1,
+      thinking: { type: "enabled" },
+      reasoning_effort: "high",
+      stream: false,
     });
 
-    if (!response.ok) {
-      const text = await response.text();
-      console.error(`   ❌ [MODEL] API error ${response.status}: ${text.slice(0, 200)}`);
-      return null;
-    }
-
-    const result = await response.json();
-    const choice = result.choices?.[0];
+    const choice = response.choices?.[0];
     const toolCall = choice?.message?.tool_calls?.[0];
 
     if (!toolCall) {
@@ -148,7 +137,9 @@ export async function callModel(event, toolDefs) {
     console.log(`   🤖 [MODEL] DeepSeek chose: ${toolCall.function.name}(${JSON.stringify(args)})`);
     return { name: toolCall.function.name, arguments: args };
   } catch (err) {
-    console.error(`   ❌ [MODEL] API call failed: ${err.message}`);
+    // OpenAI SDK errors include status code and message
+    const status = err.status ? ` (HTTP ${err.status})` : "";
+    console.error(`   ❌ [MODEL] API call failed${status}: ${err.message}`);
     return null;
   }
 }
