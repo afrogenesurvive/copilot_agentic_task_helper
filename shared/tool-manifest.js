@@ -32,7 +32,7 @@ export const trelloTools = [
     inputSchema: {
       type: "object",
       properties: {
-        cardId: { type: "string", description: "Card ID" },
+        cardId: { type: "string", description: "Trello hex/numeric card ID (NOT the card name — use the hex ID like '6a1cd3381d9b38f6994cd76d')" },
       },
       required: ["cardId"],
     },
@@ -54,7 +54,7 @@ export const trelloTools = [
     inputSchema: {
       type: "object",
       properties: {
-        cardId: { type: "string", description: "Card ID" },
+        cardId: { type: "string", description: "Trello hex/numeric card ID (NOT the card name — use the hex ID like '6a1cd3381d9b38f6994cd76d')" },
         text: { type: "string", description: "Comment text" },
       },
       required: ["cardId", "text"],
@@ -66,7 +66,7 @@ export const trelloTools = [
     inputSchema: {
       type: "object",
       properties: {
-        cardId: { type: "string", description: "Card ID" },
+        cardId: { type: "string", description: "Trello hex/numeric card ID (NOT the card name — use the hex ID like '6a1cd3381d9b38f6994cd76d')" },
         name: { type: "string", description: "New card title (optional)" },
         desc: { type: "string", description: "New description (optional)" },
         pos: { type: "string", description: "Position: 'top', 'bottom', or a number (optional)" },
@@ -92,7 +92,7 @@ export const trelloTools = [
     inputSchema: {
       type: "object",
       properties: {
-        cardId: { type: "string", description: "Card ID" },
+        cardId: { type: "string", description: "Trello hex/numeric card ID (NOT the card name — use the hex ID like '6a1cd3381d9b38f6994cd76d')" },
         filter: {
           type: "string",
           description: "Action filter: 'commentCard', 'createCard', 'updateCard', or 'all' (default: 'commentCard')",

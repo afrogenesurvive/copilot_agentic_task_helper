@@ -83,6 +83,12 @@ export default async (request, context) => {
     modified = modified.replaceAll("__BOARD_ID__", boardId);
   }
 
+  // ── Webhook server URL (the tunnel URL for deployed environments) ──
+  const webhookUrl = Deno.env.get("WEBHOOK_BASE_URL") || "";
+  if (modified.includes("__WEBHOOK_BASE_URL__")) {
+    modified = modified.replaceAll("__WEBHOOK_BASE_URL__", webhookUrl);
+  }
+
   // No placeholders found — pass through unchanged
   if (modified === original) {
     return response;
