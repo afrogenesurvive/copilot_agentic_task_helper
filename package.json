@@ -8,6 +8,7 @@
     "mcp:gmail": "node mcp/gmail/index.js",
     "mcp:trello": "node mcp/trello/index.js",
     "mcp:webhook": "node mcp/webhook-server/index.js",
+    "setup:gmail-auth": "node scripts/gmail-auth.mjs",
     "setup:gmail-watch": "node mcp/webhook-server/scripts/setup-gmail-watch.js",
     "setup:trello-webhook": "node mcp/webhook-server/scripts/setup-trello-webhook.js",
     "update:endpoint": "node mcp/webhook-server/scripts/update-push-endpoint.js",

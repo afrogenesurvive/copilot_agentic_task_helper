@@ -374,139 +374,140 @@ app.listen(PORT, () => {
  *   reminder         — Force print the reminder now
  */
 
-import readline from "readline";
+let rl = null;
 
-const rl = readline.createInterface({
-  input: process.stdin,
-  output: process.stdout,
-  prompt: "webhook> ",
-  terminal: true,
-});
+function setupReadline() {
+  import("readline").then((readline) => {
+    rl = readline.createInterface({
+      input: process.stdin,
+      output: process.stdout,
+      prompt: "webhook> ",
+      terminal: true,
+    });
 
-// Command registry — maps command names to handler functions and help text
-const COMMANDS = {
-  help: { desc: "Show this help", fn: cmdHelp },
-  ls: { desc: "List pending items: ls [priority|misc_notifications]", fn: cmdList },
-  done: { desc: "Mark item cleared by #: done <seqNo>", fn: cmdDone },
-  peek: { desc: "Show full details of an item by its #", fn: cmdPeek },
-  tasks: { desc: "Show today's task list", fn: cmdTasks },
-  clear: { desc: "Clear all items from a queue (caution): clear [priority|misc_notifications]", fn: cmdClear },
-  reminder: { desc: "Force print the reminder now", fn: cmdReminder },
-};
+    // Command registry — maps command names to handler functions and help text
+    const COMMANDS = {
+      help: { desc: "Show this help", fn: cmdHelp },
+      ls: { desc: "List pending items: ls [priority|misc_notifications]", fn: cmdList },
+      done: { desc: "Mark item cleared by #: done <seqNo>", fn: cmdDone },
+      peek: { desc: "Show full details of an item by its #", fn: cmdPeek },
+      tasks: { desc: "Show today's task list", fn: cmdTasks },
+      clear: { desc: "Clear all items from a queue (caution): clear [priority|misc_notifications]", fn: cmdClear },
+      reminder: { desc: "Force print the reminder now", fn: cmdReminder },
+    };
 
-function cmdHelp() {
-  console.log(`\n${"─".repeat(50)}`);
-  console.log("   Available commands:");
-  for (const [name, info] of Object.entries(COMMANDS)) {
-    console.log(`   ${name.padEnd(10)} — ${info.desc}`);
-  }
-  console.log(`${"─".repeat(50)}\n`);
-}
+    function cmdHelp() {
+      console.log(`\n${"─".repeat(50)}`);
+      console.log("   Available commands:");
+      for (const [name, info] of Object.entries(COMMANDS)) {
+        console.log(`   ${name.padEnd(10)} — ${info.desc}`);
+      }
+      console.log(`${"─".repeat(50)}\n`);
+    }
 
-// Lists pending items in a queue with their sequential # for easy reference
-function cmdList(args) {
-  const queueName = args || "priority";
-  const items = readEvents(queueName, { cleared: false });
-  if (items.length === 0) {
-    return console.log(`   📭 "${queueName}" queue is empty.`);
-  }
-  console.log(`\n   📋 "${queueName}" queue (${items.length} pending):`);
-  for (const evt of items) {
-    const num = evt.seqNo ? `#${evt.seqNo}` : `#?`;
-    const desc = evt.data?.rule ? `Rule: "${evt.data.rule}" → tool: ${evt.data.tool}` : `${evt.source}/${evt.type}`;
-    const summary = evt.data?.originalEvent?.data?.card?.name
-      ? ` — card: "${evt.data.originalEvent.data.card.name}"`
-      : evt.data?.text
-        ? ` — "${evt.data.text.slice(0, 60)}"`
-        : evt.card?.name
-          ? ` — card: "${evt.card.name}"`
-          : "";
-    console.log(`   ${num}) ${desc}${summary}`);
-  }
-  console.log(``);
-}
+    function cmdList(args) {
+      const queueName = args || "priority";
+      const items = readEvents(queueName, { cleared: false });
+      if (items.length === 0) {
+        return console.log(`   📭 "${queueName}" queue is empty.`);
+      }
+      console.log(`\n   📋 "${queueName}" queue (${items.length} pending):`);
+      for (const evt of items) {
+        const num = evt.seqNo ? `#${evt.seqNo}` : `#?`;
+        const desc = evt.data?.rule ? `Rule: "${evt.data.rule}" → tool: ${evt.data.tool}` : `${evt.source}/${evt.type}`;
+        const summary = evt.data?.originalEvent?.data?.card?.name
+          ? ` — card: "${evt.data.originalEvent.data.card.name}"`
+          : evt.data?.text
+            ? ` — "${evt.data.text.slice(0, 60)}"`
+            : evt.card?.name
+              ? ` — card: "${evt.card.name}"`
+              : "";
+        console.log(`   ${num}) ${desc}${summary}`);
+      }
+      console.log(``);
+    }
 
-// Marks an item as cleared by its sequential #
-// Example: "done 3" clears priority item #3
-function cmdDone(args) {
-  if (!args || !/^\d+$/.test(args)) {
-    return console.log(`   ⚠️  Usage: done <number>. Type "ls" to see item numbers.`);
-  }
-  const seqNo = parseInt(args, 10);
-  const found = markClearedByNumber(seqNo);
-  if (found) {
-    console.log(`   ✅ Item #${seqNo} marked as cleared.`);
-  } else {
-    console.log(`   ⚠️  No item found with #${seqNo}. Type "ls" to see items.`);
-  }
-}
+    function cmdDone(args) {
+      if (!args || !/^\d+$/.test(args)) {
+        return console.log(`   ⚠️  Usage: done <number>. Type "ls" to see item numbers.`);
+      }
+      const seqNo = parseInt(args, 10);
+      const found = markClearedByNumber(seqNo);
+      if (found) {
+        console.log(`   ✅ Item #${seqNo} marked as cleared.`);
+      } else {
+        console.log(`   ⚠️  No item found with #${seqNo}. Type "ls" to see items.`);
+      }
+    }
 
-// Prints the full JSON of a queue item for inspection
-// Useful for debugging: see all event fields, timestamps, flags
-function cmdPeek(args) {
-  if (!args || !/^\d+$/.test(args)) {
-    return console.log(`   ⚠️  Usage: peek <number>. Type "ls" to see item numbers.`);
-  }
-  const seqNo = parseInt(args, 10);
-  const evt = findEventByNumber(seqNo);
-  if (!evt) return console.log(`   ⚠️  No item found with #${seqNo}.`);
-  console.log(`\n   📄 Item #${seqNo}:`);
-  console.log(`      ${JSON.stringify(evt, null, 2).split("\n").join("\n      ")}`);
-  console.log(``);
-}
+    function cmdPeek(args) {
+      if (!args || !/^\d+$/.test(args)) {
+        return console.log(`   ⚠️  Usage: peek <number>. Type "ls" to see item numbers.`);
+      }
+      const seqNo = parseInt(args, 10);
+      const evt = findEventByNumber(seqNo);
+      if (!evt) return console.log(`   ⚠️  No item found with #${seqNo}.`);
+      console.log(`\n   📄 Item #${seqNo}:`);
+      console.log(`      ${JSON.stringify(evt, null, 2).split("\n").join("\n      ")}`);
+      console.log(``);
+    }
 
-// Shows today's task list from tasks/YYYY-MM-DD.md
-// Tasks are also shown in the periodic reminder
-function cmdTasks() {
-  const tasks = loadTaskList();
-  if (!tasks) return console.log(`   📭 No task file for today. Create tasks/YYYY-MM-DD.md`);
-  console.log(`\n   📋 TODAY'S TASKS:\n`);
-  for (const line of tasks.split("\n").filter((l) => l.trim())) {
-    console.log(`      ${line}`);
-  }
-  console.log(``);
-}
+    function cmdTasks() {
+      const tasks = loadTaskList();
+      if (!tasks) return console.log(`   📭 No task file for today. Create tasks/YYYY-MM-DD.md`);
+      console.log(`\n   📋 TODAY'S TASKS:\n`);
+      for (const line of tasks.split("\n").filter((l) => l.trim())) {
+        console.log(`      ${line}`);
+      }
+      console.log(``);
+    }
 
-// DANGER: removes ALL items from a queue. Use with care.
-function cmdClear(args) {
-  const queueName = args || "misc_notifications";
-  const items = readEvents(queueName);
-  if (items.length === 0) return console.log(`   "${queueName}" queue already empty.`);
-  clearEvents(queueName);
-  console.log(`   🗑️  Cleared all ${items.length} items from "${queueName}".`);
-}
+    function cmdClear(args) {
+      const queueName = args || "misc_notifications";
+      const items = readEvents(queueName);
+      if (items.length === 0) return console.log(`   "${queueName}" queue already empty.`);
+      clearEvents(queueName);
+      console.log(`   🗑️  Cleared all ${items.length} items from "${queueName}".`);
+    }
 
-function cmdReminder() {
-  printPriorityReminder();
-}
+    function cmdReminder() {
+      printPriorityReminder();
+    }
 
-rl.prompt();
-
-// Readline input handler — parses the command + arguments from each line
-rl.on("line", (input) => {
-  const trimmed = input.trim();
-  if (!trimmed) {
     rl.prompt();
-    return;
-  }
 
-  // Split on whitespace: first word = command, rest = arguments
-  const parts = trimmed.split(/\s+/);
-  const cmd = parts[0].toLowerCase();
-  const args = parts.slice(1).join(" ");
+    rl.on("line", (input) => {
+      const trimmed = input.trim();
+      if (!trimmed) {
+        rl.prompt();
+        return;
+      }
 
-  if (cmd in COMMANDS) {
-    COMMANDS[cmd].fn(args);
-  } else {
-    console.log(`   Unknown command "${cmd}". Type "help" for available commands.`);
-  }
+      const parts = trimmed.split(/\s+/);
+      const cmd = parts[0].toLowerCase();
+      const args = parts.slice(1).join(" ");
 
-  rl.prompt();
-});
+      if (cmd in COMMANDS) {
+        COMMANDS[cmd].fn(args);
+      } else {
+        console.log(`   Unknown command "${cmd}". Type "help" for available commands.`);
+      }
 
-rl.on("close", () => {
-  console.log("\n   Interactive terminal closed.");
-  process.exit(0);
-});
+      rl.prompt();
+    });
+
+    rl.on("close", () => {
+      console.log("\n   Interactive terminal closed.");
+      // Don't call process.exit() — under nohup stdin EOF would kill the server.
+      // The server keeps running; HTTP endpoints still work.
+    });
+  });
+}
+
+if (process.stdin.isTTY) {
+  setupReadline();
+} else {
+  console.log("   💬 No TTY stdin — interactive terminal disabled (running under nohup/background)");
+}
 
 export default app;

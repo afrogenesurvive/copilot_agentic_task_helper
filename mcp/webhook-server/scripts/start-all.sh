@@ -109,19 +109,32 @@ if [ -n "$EXISTING" ]; then
   fi
 fi
 
-cd "$WEBHOOK_DIR"
-node index.js &
+nohup node "$WEBHOOK_DIR/index.js" > "$WEBHOOK_DIR/server.log" 2>&1 &
 WEBHOOK_PID=$!
-cd "$PROJECT_DIR"
 
-# Wait for server to be ready
-for i in $(seq 1 10); do
+# Wait for server to be ready (up to 30s — first start may need time)
+echo "   Waiting for server to be ready..."
+SERVER_READY=false
+for i in $(seq 1 30); do
   if curl -sf "http://localhost:$PORT/health" &>/dev/null; then
+    SERVER_READY=true
     echo "   ✅ Webhook server is up (PID $WEBHOOK_PID)"
+    echo "   📄 Server logs: $WEBHOOK_DIR/server.log"
     break
   fi
   sleep 1
 done
+
+if [ "$SERVER_READY" = false ]; then
+  echo "   ❌ Webhook server failed to start within 30s. Check logs:"
+  tail -20 "$WEBHOOK_DIR/server.log" 2>/dev/null || true
+  echo ""
+  echo "   💡 Common causes: missing .env, missing dependencies, port conflict"
+  echo "   Run 'npm install' in project root and ensure .env is present."
+  kill $TUNNEL_PID 2>/dev/null
+  rm -f "$tmpfile"
+  exit 1
+fi
 echo ""
 
 # ═══════════════════════════════════════════════
@@ -273,9 +286,7 @@ if [ -z "${GMAIL_CLIENT_ID:-}" ] || [ -z "${GMAIL_CLIENT_SECRET:-}" ] || [ -z "$
   echo "   ⚠️  Gmail OAuth2 credentials not set — skipping"
 else
   echo "   Running check..."
-  cd "$WEBHOOK_DIR"
-  node scripts/check-gmail-watch.js 2>&1 || echo "   ⚠️  Could not check Gmail watch"
-  cd "$PROJECT_DIR"
+  node "$WEBHOOK_DIR/scripts/check-gmail-watch.js" 2>&1 || echo "   ⚠️  Could not check Gmail watch"
 fi
 echo ""
 
@@ -286,10 +297,8 @@ echo "☁️  [6/6] Updating GCloud Pub/Sub push endpoint..."
 
 SUBSCRIPTION="${GMAIL_PUBSUB_SUBSCRIPTION:-}"
 if [ -n "$SUBSCRIPTION" ]; then
-  cd "$WEBHOOK_DIR"
-  node scripts/update-pubsub-endpoint.js 2>&1 || \
+  node "$WEBHOOK_DIR/scripts/update-pubsub-endpoint.js" 2>&1 || \
     echo "   ⚠️  Pub/Sub update failed — check GOOGLE_APPLICATION_CREDENTIALS"
-  cd "$PROJECT_DIR"
 else
   echo "   ⚠️  GMAIL_PUBSUB_SUBSCRIPTION not set — skipping"
 fi
