@@ -35,6 +35,10 @@ function buildEventContext(event) {
     lines.push(`Requested tool: ${event.data.tool}`);
   }
 
+  if (event.approved || event.data?.approved) {
+    lines.push(`APPROVED: A human has reviewed and approved this event for action.`);
+  }
+
   if (event.data?.originalEvent?.data?.card?.id) {
     lines.push(`Card ID (Trello hex ID): ${event.data.originalEvent.data.card.id}`);
     if (event.data.originalEvent.data.card.name) {
