@@ -521,6 +521,30 @@ function escapeHtml(str) {
    ================================================================== */
 
 let statusPollTimer = null;
+let statusFailCount = 0;
+const STATUS_MAX_FAILURES = 5;
+
+/** Stop auto-polling for status and show a manual refresh button */
+function stopStatusPolling() {
+  if (statusPollTimer) {
+    clearInterval(statusPollTimer);
+    statusPollTimer = null;
+  }
+}
+
+/** Manually refresh status — resets failure count and resumes auto-polling on success */
+async function manualRefreshStatus() {
+  const btn = document.getElementById("status-retry-btn");
+  if (btn) {
+    btn.disabled = true;
+    btn.textContent = "Loading...";
+  }
+  await loadStatus();
+  if (btn) {
+    btn.disabled = false;
+    btn.textContent = "Get Status";
+  }
+}
 
 /** Fetch status data from the webhook server */
 async function fetchStatus() {
@@ -540,14 +564,28 @@ async function fetchStatus() {
 /** Render the status view */
 async function loadStatus() {
   const container = document.getElementById("status-container");
-  container.innerHTML = '<div class="loading">Loading status...</div>';
 
   const data = await fetchStatus();
 
   if (!data) {
-    container.innerHTML =
-      '<div class="empty-state">⚠️ Cannot reach webhook server. Make sure the server is running and WEBHOOK_BASE_URL is set in CONFIG.</div>';
+    statusFailCount++;
+    if (statusFailCount >= STATUS_MAX_FAILURES) {
+      stopStatusPolling();
+      container.innerHTML =
+        '<div class="empty-state">⚠️ Cannot reach webhook server after ' +
+        statusFailCount +
+        " attempts. Auto-polling stopped.</div>" +
+        '<button id="status-retry-btn" class="send-btn" style="margin:1rem auto;display:block" onclick="manualRefreshStatus()">Get Status</button>';
+    } else {
+      container.innerHTML = '<div class="loading">⏳ Retrying status (' + statusFailCount + "/" + STATUS_MAX_FAILURES + ")...</div>";
+    }
     return;
+  }
+
+  // Success — reset failure count and ensure polling is running
+  statusFailCount = 0;
+  if (!statusPollTimer) {
+    statusPollTimer = setInterval(loadStatus, 15000);
   }
 
   const html = [];

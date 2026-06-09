@@ -392,7 +392,7 @@ function setupReadline() {
       done: { desc: "Mark item cleared by #: done <seqNo>", fn: cmdDone },
       peek: { desc: "Show full details of an item by its #", fn: cmdPeek },
       tasks: { desc: "Show today's task list", fn: cmdTasks },
-      clear: { desc: "Clear all items from a queue (caution): clear [priority|misc_notifications]", fn: cmdClear },
+      clear: { desc: "Clear all items from a queue (caution): clear [priority|misc]", fn: cmdClear },
       reminder: { desc: "Force print the reminder now", fn: cmdReminder },
     };
 
@@ -405,8 +405,20 @@ function setupReadline() {
       console.log(`${"─".repeat(50)}\n`);
     }
 
+    // Queue name aliases so you can type "clear misc" instead of "clear misc_notifications"
+    function resolveQueueAlias(name) {
+      if (!name) return null;
+      const aliases = {
+        misc: "misc_notifications",
+        notifications: "misc_notifications",
+        priority: "priority",
+        pri: "priority",
+      };
+      return aliases[name.toLowerCase()] || name;
+    }
+
     function cmdList(args) {
-      const queueName = args || "priority";
+      const queueName = resolveQueueAlias(args) || "priority";
       const items = readEvents(queueName, { cleared: false });
       if (items.length === 0) {
         return console.log(`   📭 "${queueName}" queue is empty.`);
@@ -463,7 +475,7 @@ function setupReadline() {
     }
 
     function cmdClear(args) {
-      const queueName = args || "misc_notifications";
+      const queueName = resolveQueueAlias(args) || "misc_notifications";
       const items = readEvents(queueName);
       if (items.length === 0) return console.log(`   "${queueName}" queue already empty.`);
       clearEvents(queueName);

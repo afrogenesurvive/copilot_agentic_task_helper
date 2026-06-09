@@ -151,6 +151,16 @@ loadAll();
 // Compute next sequence number from existing events
 computeMaxSeqNo();
 
+// Assign seqNo to any events that don't have one (e.g., migrated from legacy queue.jsonl
+// before the seqNo feature was added, or events from older versions of the queue format).
+for (const name of Object.keys(QUEUES)) {
+  for (const evt of stores[name]) {
+    if (!evt.seqNo) {
+      evt.seqNo = nextSeqNo++;
+    }
+  }
+}
+
 function saveQueue(name) {
   try {
     fs.mkdirSync(QUEUE_DIR, { recursive: true });

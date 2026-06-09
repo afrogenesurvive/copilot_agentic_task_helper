@@ -35,12 +35,24 @@ function buildEventContext(event) {
     lines.push(`Requested tool: ${event.data.tool}`);
   }
 
-  if (event.data?.originalEvent?.data?.card?.name) {
-    lines.push(`Card: "${event.data.originalEvent.data.card.name}"`);
+  if (event.data?.originalEvent?.data?.card?.id) {
+    lines.push(`Card ID (Trello hex ID): ${event.data.originalEvent.data.card.id}`);
+    if (event.data.originalEvent.data.card.name) {
+      lines.push(`Card name: "${event.data.originalEvent.data.card.name}"`);
+    }
   }
 
-  if (event.data?.originalEvent?.data?.list?.name) {
-    lines.push(`List: "${event.data.originalEvent.data.list.name}"`);
+  if (event.data?.originalEvent?.data?.list?.id) {
+    lines.push(`List ID: ${event.data.originalEvent.data.list.id}`);
+    if (event.data.originalEvent.data.list.name) {
+      lines.push(`List name: "${event.data.originalEvent.data.list.name}"`);
+    }
+  }
+  if (event.data?.originalEvent?.data?.board?.id) {
+    lines.push(`Board ID: ${event.data.originalEvent.data.board.id}`);
+    if (event.data.originalEvent.data.board.name) {
+      lines.push(`Board name: "${event.data.originalEvent.data.board.name}"`);
+    }
   }
 
   if (event.data?.subject) {

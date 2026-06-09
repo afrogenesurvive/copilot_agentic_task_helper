@@ -305,7 +305,7 @@ fi
 
 echo ""
 echo "=========================================="
-echo "  ✅ All done!"
+echo "  ✅ All setup complete!"
 echo "  Tunnel:    $TUNNEL_URL"
 echo "  Health:    $TUNNEL_URL/health"
 echo "  Events:    $TUNNEL_URL/events"
@@ -313,16 +313,31 @@ echo "  Webhooks:  $TUNNEL_URL/webhooks/trello"
 echo "  Gmail:     $TUNNEL_URL/webhooks/gmail/push"
 echo "=========================================="
 echo ""
-echo "Press Ctrl+C to stop the tunnel"
+echo "🔄 Restarting webhook server in foreground (interactive mode)..."
+echo "   Type 'help' for commands, 'ls' to list queue items."
+echo "   Press Ctrl+C to stop everything."
+echo ""
 
-# Cleanup on exit
+# Kill the nohup'd server (we restart in foreground for the interactive terminal)
+kill $WEBHOOK_PID 2>/dev/null
+# Wait for port to be free
+for i in $(seq 1 10); do
+  if ! lsof -ti ":$PORT" &>/dev/null; then
+    break
+  fi
+  sleep 1
+done
+
+# Cleanup on exit — kills tunnel when user hits Ctrl+C
 cleanup() {
   echo ""
   echo "Shutting down tunnel..."
   kill $TUNNEL_PID 2>/dev/null
   rm -f "$tmpfile"
+  echo "Done."
   exit 0
 }
 trap cleanup INT TERM
 
-wait $TUNNEL_PID
+# Start server in foreground — interactive readline prompt works here
+node "$WEBHOOK_DIR/index.js"
