@@ -15,9 +15,13 @@ import { sanitizeObject } from "../../scripts/sanitize.mjs";
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const QUEUE_FILE = path.resolve(__dirname, "..", "..", "logs", "pending-tool-calls", "priority.jsonl");
+const TASKS_DIR = path.resolve(__dirname, "..", "..", "tasks");
 
 // In-memory set of event IDs currently being processed (lock)
 const processing = new Set();
+
+// In-memory set of task line indices currently being processed
+const taskProcessing = new Set();
 
 /**
  * Read all unactioned (not cleared) items from the priority queue.
@@ -107,4 +111,92 @@ export function acquireLock(eventId) {
  */
 export function releaseLock(eventId) {
   processing.delete(eventId);
+}
+
+/**
+ * Read all uncompleted tasks from today's task file (tasks/YYYY-MM-DD.md).
+ * Returns an array of { lineIndex, checked, text, raw } for unchecked items only.
+ * @returns {Array}
+ */
+export function readTasks() {
+  try {
+    const today = new Date().toISOString().slice(0, 10);
+    const taskFile = path.join(TASKS_DIR, `${today}.md`);
+    if (!fs.existsSync(taskFile)) return [];
+
+    const content = fs.readFileSync(taskFile, "utf8");
+    const lines = content.split("\n");
+    const tasks = [];
+
+    lines.forEach((line, lineIndex) => {
+      const match = line.match(/^-\s*\[([ x])\]\s*(.+)/);
+      if (match) {
+        tasks.push({
+          lineIndex,
+          checked: match[1] === "x",
+          text: match[2].trim(),
+          raw: line,
+        });
+      }
+    });
+
+    return tasks;
+  } catch (err) {
+    console.error("   ❌ [POLLER] Error reading tasks:", err.message);
+    return [];
+  }
+}
+
+/**
+ * Mark a task as completed ([ ] → [x]) by its line index in the task file.
+ * @param {number} lineIndex
+ * @returns {boolean} Success
+ */
+export function markTaskDone(lineIndex) {
+  try {
+    const today = new Date().toISOString().slice(0, 10);
+    const taskFile = path.join(TASKS_DIR, `${today}.md`);
+    if (!fs.existsSync(taskFile)) return false;
+
+    const content = fs.readFileSync(taskFile, "utf8");
+    const lines = content.split("\n");
+
+    const line = lines[lineIndex];
+    if (!line) return false;
+    if (!line.includes("- [ ]")) return false; // already done or not a task
+
+    lines[lineIndex] = line.replace("- [ ]", "- [x]");
+    fs.writeFileSync(taskFile, lines.join("\n"), "utf8");
+
+    taskProcessing.delete(lineIndex);
+    return true;
+  } catch (err) {
+    console.error("   ❌ [POLLER] Error marking task done:", err.message);
+    return false;
+  }
+}
+
+/**
+ * Acquire a processing lock for a task (prevents duplicate handling).
+ * @param {number} lineIndex
+ */
+export function acquireTaskLock(lineIndex) {
+  taskProcessing.add(lineIndex);
+}
+
+/**
+ * Release a processing lock for a task.
+ * @param {number} lineIndex
+ */
+export function releaseTaskLock(lineIndex) {
+  taskProcessing.delete(lineIndex);
+}
+
+/**
+ * Check if a task is currently locked (being processed).
+ * @param {number} lineIndex
+ * @returns {boolean}
+ */
+export function isTaskLocked(lineIndex) {
+  return taskProcessing.has(lineIndex);
 }

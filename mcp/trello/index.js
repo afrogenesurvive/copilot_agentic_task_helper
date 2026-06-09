@@ -140,6 +140,20 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
       summary = `${actions.length} actions`;
       break;
     }
+    case "trello_get_checklists": {
+      result = await handleGetChecklists(args);
+      const items = result.content?.[0]?.text ? JSON.parse(result.content[0].text) : [];
+      summary = `${items.length} checklists`;
+      break;
+    }
+    case "trello_create_checklist":
+      result = await handleCreateChecklist(args);
+      summary = `created checklist "${args.name}"`;
+      break;
+    case "trello_add_checklist_item":
+      result = await handleAddChecklistItem(args);
+      summary = `added item "${args.name}"`;
+      break;
     default:
       result = { content: [{ type: "text", text: `Unknown tool: ${name}` }], isError: true };
       summary = "unknown tool";
@@ -243,6 +257,47 @@ async function handleGetCardActions(args) {
     return { content: [safeJson(data)] }; // Card comments are user-generated — sanitize
   } catch (err) {
     return { content: [safeText(`Error getting card actions: ${err.message}`)], isError: true };
+  }
+}
+
+async function handleGetChecklists(args) {
+  const { cardId } = args;
+  if (!cardId) {
+    return { content: [safeText("Missing required parameter: cardId")], isError: true };
+  }
+  try {
+    const data = await trelloFetch(trelloUrl(`/cards/${cardId}/checklists`));
+    return { content: [safeJson(data)] };
+  } catch (err) {
+    return { content: [safeText(`Error getting checklists: ${err.message}`)], isError: true };
+  }
+}
+
+async function handleCreateChecklist(args) {
+  const { cardId, name } = args;
+  if (!cardId || !name) {
+    return { content: [safeText("Missing required parameters: cardId, name")], isError: true };
+  }
+  try {
+    const data = await trelloFetch(trelloUrl(`/cards/${cardId}/checklists`, { name }), { method: "POST" });
+    return { content: [safeJson({ id: data.id, name: data.name, idCard: data.idCard })] };
+  } catch (err) {
+    return { content: [safeText(`Error creating checklist: ${err.message}`)], isError: true };
+  }
+}
+
+async function handleAddChecklistItem(args) {
+  const { checklistId, name, checked } = args;
+  if (!checklistId || !name) {
+    return { content: [safeText("Missing required parameters: checklistId, name")], isError: true };
+  }
+  try {
+    const data = await trelloFetch(trelloUrl(`/checklists/${checklistId}/checkItems`, { name, checked: checked ? "true" : "false" }), {
+      method: "POST",
+    });
+    return { content: [safeJson({ id: data.id, name: data.name, state: data.state })] };
+  } catch (err) {
+    return { content: [safeText(`Error adding checklist item: ${err.message}`)], isError: true };
   }
 }
 

@@ -20,10 +20,41 @@ const client = new OpenAI({
 });
 
 /**
+ * Map MCP tool definitions to OpenAI's tool calling format.
+ */
+function mapTools(toolDefs) {
+  return toolDefs.map((t) => ({
+    type: "function",
+    function: {
+      name: t.name,
+      description: t.description,
+      parameters: t.inputSchema,
+    },
+  }));
+}
+
+/**
+ * Build a concise task summary for the model.
+ * @param {object} task — { lineIndex, text, raw }
+ * @returns {string}
+ */
+export function buildTaskContext(task) {
+  return [
+    `Task to complete: "${task.text}"`,
+    "",
+    "You are a daily task automation agent. Use available tools to make progress on this task.",
+    "If the task requires actions you can't take (file edits, deployments, environment changes), reply with '[skip]' to mark it as not actionable by automation.",
+    "If you can make progress (read queues, send notifications, comment on cards), do so now.",
+  ].join("\n");
+}
+
+/**
  * Build a concise human-readable summary of the event for the model.
  * Strips internal metadata (IDs, timestamps) so the model sees clean intent.
+ * @param {object} event — The queue event
+ * @returns {string}
  */
-function buildEventContext(event) {
+export function buildEventContext(event) {
   const lines = [`New ${event.source}/${event.type} event:`];
 
   if (event.data?.text) {
@@ -33,10 +64,6 @@ function buildEventContext(event) {
   if (event.data?.rule) {
     lines.push(`Matched rule: "${event.data.rule}"`);
     lines.push(`Requested tool: ${event.data.tool}`);
-  }
-
-  if (event.approved || event.data?.approved) {
-    lines.push(`APPROVED: A human has reviewed and approved this event for action.`);
   }
 
   if (event.data?.originalEvent?.data?.card?.id) {
@@ -71,34 +98,22 @@ function buildEventContext(event) {
 }
 
 /**
- * Map MCP tool definitions to OpenAI's tool calling format.
- */
-function mapTools(toolDefs) {
-  return toolDefs.map((t) => ({
-    type: "function",
-    function: {
-      name: t.name,
-      description: t.description,
-      parameters: t.inputSchema,
-    },
-  }));
-}
-
-/**
- * Call the DeepSeek V4 API with an event and tool definitions.
+ * Call the DeepSeek V4 API with an event or task context and tool definitions.
  * Uses the OpenAI SDK under the hood.
- * @param {object} event — The queue event
+ * @param {object|string} context — A queue event object OR a plain context string
  * @param {Array} toolDefs — Tool definitions from shared/tool-manifest.js
  * @returns {object|null} { name: string, arguments: object } or null if no tool call
  */
-export async function callModel(event, toolDefs) {
+export async function callModel(context, toolDefs) {
   if (!process.env.DEEPSEEK_API_KEY) {
     console.error("   ❌ [MODEL] DEEPSEEK_API_KEY not set in .env");
     return null;
   }
 
   const tools = mapTools(toolDefs);
-  const eventContext = buildEventContext(event);
+
+  // Support both event objects and plain context strings
+  const eventContext = typeof context === "string" ? context : buildEventContext(context);
   const model = "deepseek-v4-flash";
 
   try {
