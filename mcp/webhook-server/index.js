@@ -300,10 +300,72 @@ function loadTaskList() {
   }
 }
 
+/**
+ * Parse today's task file into structured task objects with line indices.
+ * @returns {Array} [{ lineIndex, checked, text, raw }]
+ */
+function readTasksDetailed() {
+  try {
+    const today = new Date().toISOString().slice(0, 10);
+    const taskFile = path.join(TASKS_DIR, `${today}.md`);
+    if (!fs.existsSync(taskFile)) return [];
+
+    const content = fs.readFileSync(taskFile, "utf8");
+    const lines = content.split("\n");
+    const tasks = [];
+
+    lines.forEach((line, lineIndex) => {
+      const match = line.match(/^-\s*\[([ x])\]\s*(.+)/);
+      if (match) {
+        tasks.push({
+          lineIndex,
+          checked: match[1] === "x",
+          text: match[2].trim(),
+          raw: line,
+        });
+      }
+    });
+
+    return tasks;
+  } catch {
+    return [];
+  }
+}
+
+/**
+ * Mark a task as completed by its 1-based index among all tasks.
+ * Returns the lineIndex if found, or -1 if not found.
+ * @param {number} taskNum — 1-based index of the task
+ * @returns {number} The line index of the marked task, or -1
+ */
+function markTaskDoneByNumber(taskNum) {
+  try {
+    const tasks = readTasksDetailed();
+    const idx = taskNum - 1;
+    if (idx < 0 || idx >= tasks.length) return -1;
+
+    const task = tasks[idx];
+    if (task.checked) return -2; // already done
+
+    const today = new Date().toISOString().slice(0, 10);
+    const taskFile = path.join(TASKS_DIR, `${today}.md`);
+    const content = fs.readFileSync(taskFile, "utf8");
+    const lines = content.split("\n");
+
+    lines[task.lineIndex] = lines[task.lineIndex].replace("- [ ]", "- [x]");
+    fs.writeFileSync(taskFile, lines.join("\n"), "utf8");
+
+    return task.lineIndex;
+  } catch {
+    return -1;
+  }
+}
+
 function printPriorityReminder() {
   const pending = getPriorityPending();
-  const tasks = loadTaskList();
-  if (pending.length === 0 && !tasks) return;
+  const tasks = readTasksDetailed();
+  const hasTasks = tasks.length > 0;
+  if (pending.length === 0 && !hasTasks) return;
 
   const line = "═".repeat(60);
   const now = new Date().toISOString();
@@ -329,12 +391,17 @@ function printPriorityReminder() {
     }
   }
 
-  // Non-queue task list
-  if (tasks) {
-    console.log(`\n   📋 TODAY'S TASKS:\n`);
-    const taskLines = tasks.split("\n").filter((l) => l.trim());
-    for (const taskLine of taskLines) {
-      console.log(`      ${taskLine}`);
+  // Non-queue task list (numbered)
+  if (hasTasks) {
+    const pendingTasks = tasks.filter((t) => !t.checked);
+    console.log(`\n   📋 TODAY'S TASKS (${pendingTasks.length} pending / ${tasks.length} total):\n`);
+    tasks.forEach((t, i) => {
+      const num = i + 1;
+      const status = t.checked ? "✅" : "⬜";
+      console.log(`   ${num}) ${status} ${t.text}`);
+    });
+    if (pendingTasks.length > 0) {
+      console.log(`\n   💡 Type "done-task <num>" or "done task <num>" to mark done`);
     }
   }
 
@@ -368,13 +435,17 @@ app.listen(PORT, () => {
  * without needing curl, HTTP requests, or file editing.
  *
  * Commands:
- *   help             — Show available commands
- *   ls [queue]       — List pending items with seq numbers
- *   done <number>    — Mark an item as cleared by its #
- *   peek <number>    — Show full JSON details of an item by its #
- *   tasks            — Show today's task list from tasks/YYYY-MM-DD.md
- *   clear [queue]    — Clear all items from a queue (caution)
- *   reminder         — Force print the reminder now
+ *   help                 — Show available commands
+ *   ls [queue]           — List pending items with seq numbers
+ *   done <number>        — Mark an item as cleared by its #
+ *   done task <number>   — Mark a task as completed by its number
+ *   execute <number>     — Process a queue event via DeepSeek inline
+ *   execute task <number>— Process a task via DeepSeek inline
+ *   peek <number>        — Show full JSON details of an item by its #
+ *   tasks                — Show today's task list from tasks/YYYY-MM-DD.md
+ *                        (numbered, with ✅/⬜ status)
+ *   clear [queue]        — Clear all items from a queue (caution)
+ *   reminder             — Force print the reminder now
  */
 
 let rl = null;
@@ -392,8 +463,10 @@ function setupReadline() {
     const COMMANDS = {
       help: { desc: "Show this help", fn: cmdHelp },
       ls: { desc: "List pending items: ls [priority|misc_notifications]", fn: cmdList },
-      done: { desc: "Mark item cleared by #: done <seqNo>", fn: cmdDone },
+      done: { desc: "Mark item cleared by #: done <seqNo> | done task <taskNum>", fn: cmdDone },
       execute: { desc: "Process an event via DeepSeek inline: execute <seqNo>", fn: cmdExecute },
+      "execute-task": { desc: "Process a task via DeepSeek inline: execute-task <taskNum>", fn: cmdExecuteTask },
+      "done-task": { desc: "Mark a task done by number: done-task <taskNum>", fn: cmdDoneTask },
       peek: { desc: "Show full details of an item by its #", fn: cmdPeek },
       tasks: { desc: "Show today's task list", fn: cmdTasks },
       clear: { desc: "Clear all items from a queue (caution): clear [priority|misc]", fn: cmdClear },
@@ -469,12 +542,16 @@ function setupReadline() {
     }
 
     function cmdTasks() {
-      const tasks = loadTaskList();
-      if (!tasks) return console.log(`   📭 No task file for today. Create tasks/YYYY-MM-DD.md`);
+      const tasks = readTasksDetailed();
+      if (tasks.length === 0) return console.log(`   📭 No task file for today. Create tasks/YYYY-MM-DD.md`);
       console.log(`\n   📋 TODAY'S TASKS:\n`);
-      for (const line of tasks.split("\n").filter((l) => l.trim())) {
-        console.log(`      ${line}`);
-      }
+      tasks.forEach((t, i) => {
+        const num = i + 1;
+        const status = t.checked ? "✅" : "⬜";
+        console.log(`   ${num}) ${status} ${t.text}`);
+      });
+      console.log(`\n   💡 Type "done-task <num>" to mark a task done`);
+      console.log(`   💡 Type "execute-task <num>" to process a task via DeepSeek`);
       console.log(``);
     }
 
@@ -691,6 +768,131 @@ function setupReadline() {
       printPriorityReminder();
     }
 
+    /** Mark a task done by 1-based number */
+    function cmdDoneTask(args) {
+      if (!args || !/^\d+$/.test(args)) {
+        return console.log(`   ⚠️  Usage: done-task <taskNum>. Type "tasks" to see task numbers.`);
+      }
+      const taskNum = parseInt(args, 10);
+      const result = markTaskDoneByNumber(taskNum);
+      if (result === -1) {
+        console.log(`   ⚠️  No task found with #${taskNum}. Type "tasks" to see tasks.`);
+      } else if (result === -2) {
+        console.log(`   ⚠️  Task #${taskNum} is already done.`);
+      } else {
+        console.log(`   ✅ Task #${taskNum} marked as done.`);
+      }
+    }
+
+    /** Execute a task via DeepSeek inline (like cmdExecute but for tasks) */
+    async function cmdExecuteTask(args) {
+      if (!args || !/^\d+$/.test(args)) {
+        return console.log(`   ⚠️  Usage: execute-task <taskNum>. Type "tasks" to see task numbers.`);
+      }
+
+      const taskNum = parseInt(args, 10);
+      const tasks = readTasksDetailed();
+      const idx = taskNum - 1;
+      if (idx < 0 || idx >= tasks.length) {
+        return console.log(`   ⚠️  No task found with #${taskNum}. Type "tasks" to see tasks.`);
+      }
+
+      const task = tasks[idx];
+      if (task.checked) {
+        return console.log(`   ⚠️  Task #${taskNum} is already done.`);
+      }
+
+      const apiKey = process.env.DEEPSEEK_API_KEY;
+      if (!apiKey) return console.log(`   ❌ DEEPSEEK_API_KEY not set in .env`);
+
+      console.log(`\n   🤖 [EXECUTE-TASK] Processing task #${taskNum}: "${task.text}"`);
+      console.log(`   📤 [EXECUTE-TASK] Sending to DeepSeek...`);
+
+      try {
+        const taskContext = [
+          `Task to complete: "${task.text}"`,
+          "",
+          "You are a daily task automation agent. Use available tools to make progress on this task.",
+          "If the task requires actions you can't take (file edits, deployments, environment changes), reply with '[skip]' to mark it as not actionable by automation.",
+          "If you can make progress (read queues, send notifications, comment on cards), do so now.",
+        ].join("\n");
+
+        const tools = mapTools(allTools);
+
+        const response = await fetch("https://api.deepseek.com/chat/completions", {
+          method: "POST",
+          headers: { "Content-Type": "application/json", Authorization: `Bearer ${apiKey}` },
+          body: JSON.stringify({
+            model: "deepseek-chat",
+            messages: [
+              {
+                role: "system",
+                content:
+                  "You are an autonomous task automation agent. Your job is to make progress on daily tasks. If you can take action with available tools, do so. Otherwise respond with '[skip]'.",
+              },
+              { role: "user", content: taskContext },
+            ],
+            tools,
+            tool_choice: "auto",
+            temperature: 0.1,
+          }),
+        });
+
+        if (!response.ok) {
+          const errText = await response.text();
+          throw new Error(`DeepSeek API ${response.status}: ${errText}`);
+        }
+
+        const data = await response.json();
+        const toolCall = data.choices?.[0]?.message?.tool_calls?.[0];
+        if (!toolCall) {
+          const reply = data.choices?.[0]?.message?.content || "(empty)";
+          const isSkip = reply.toLowerCase().includes("[skip]");
+          console.log(`   ⚠️  [EXECUTE-TASK] No tool call returned. Model said: "${reply.slice(0, 200)}"`);
+          if (isSkip) {
+            markTaskDoneByNumber(taskNum);
+            console.log(`   ⏭️  [EXECUTE-TASK] Task #${taskNum} marked as not automatable.`);
+          }
+          return;
+        }
+
+        let toolArgs;
+        try {
+          toolArgs = JSON.parse(toolCall.function.arguments);
+        } catch {
+          console.log(`   ❌ [EXECUTE-TASK] Invalid JSON in tool arguments: "${toolCall.function.arguments}"`);
+          return;
+        }
+
+        const toolName = toolCall.function.name;
+        console.log(`   🤖 [EXECUTE-TASK] DeepSeek chose: ${toolName}(${JSON.stringify(toolArgs)})`);
+
+        // Validate against allowlist
+        if (!EXECUTE_ALLOWLIST.has(toolName)) {
+          console.log(`   🛑 [EXECUTE-TASK] Tool "${toolName}" is not on the allowlist. Skipping.`);
+          markTaskDoneByNumber(taskNum);
+          return;
+        }
+
+        // Execute
+        console.log(`   🛠️  [EXECUTE-TASK] Executing ${toolName}...`);
+        const result = await executeTool(toolName, toolArgs);
+
+        if (result.ok) {
+          console.log(`   ✅ [EXECUTE-TASK] ${toolName} succeeded`);
+          if (result.result && typeof result.result === "object") {
+            const summary = JSON.stringify(result.result).slice(0, 300);
+            console.log(`   📄 [EXECUTE-TASK] Result: ${summary}`);
+          }
+        }
+
+        markTaskDoneByNumber(taskNum);
+        console.log(`   ✅ [EXECUTE-TASK] Task #${taskNum} processed and marked done.`);
+      } catch (err) {
+        console.log(`   ❌ [EXECUTE-TASK] Error: ${err.message}`);
+      }
+    }
+
     rl.prompt();
 
     rl.on("line", (input) => {
@@ -702,9 +904,13 @@ function setupReadline() {
 
       const parts = trimmed.split(/\s+/);
       const cmd = parts[0].toLowerCase();
+      const second = parts[1]?.toLowerCase();
       const args = parts.slice(1).join(" ");
 
-      if (cmd in COMMANDS) {
+      // Support compound commands like "execute task <N>" and "done task <N>"
+      if (second === "task" && COMMANDS[`${cmd}-task`]) {
+        COMMANDS[`${cmd}-task`].fn(parts.slice(2).join(" "));
+      } else if (cmd in COMMANDS) {
         COMMANDS[cmd].fn(args);
       } else {
         console.log(`   Unknown command "${cmd}". Type "help" for available commands.`);

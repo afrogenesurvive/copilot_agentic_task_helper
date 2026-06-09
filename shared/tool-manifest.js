@@ -101,6 +101,42 @@ export const trelloTools = [
       required: ["cardId"],
     },
   },
+  {
+    name: "trello_get_checklists",
+    description: "Get all checklists on a Trello card, including their items",
+    inputSchema: {
+      type: "object",
+      properties: {
+        cardId: { type: "string", description: "Card ID" },
+      },
+      required: ["cardId"],
+    },
+  },
+  {
+    name: "trello_create_checklist",
+    description: "Create a new checklist on a Trello card",
+    inputSchema: {
+      type: "object",
+      properties: {
+        cardId: { type: "string", description: "Card ID to add the checklist to" },
+        name: { type: "string", description: "Checklist name/title" },
+      },
+      required: ["cardId", "name"],
+    },
+  },
+  {
+    name: "trello_add_checklist_item",
+    description: "Add an item to a Trello checklist",
+    inputSchema: {
+      type: "object",
+      properties: {
+        checklistId: { type: "string", description: "Checklist ID to add the item to" },
+        name: { type: "string", description: "Item text" },
+        checked: { type: "boolean", description: "Whether the item should start checked (optional, default false)" },
+      },
+      required: ["checklistId", "name"],
+    },
+  },
 ];
 
 export const gmailTools = [

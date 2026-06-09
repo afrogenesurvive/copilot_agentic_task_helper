@@ -22,8 +22,18 @@ import fs from "fs";
 import path from "path";
 import readline from "readline";
 import { fileURLToPath } from "url";
-import { readPending, markCleared, acquireLock, releaseLock } from "./poller.js";
-import { callModel } from "./model-client.js";
+import {
+  readPending,
+  markCleared,
+  acquireLock,
+  releaseLock,
+  readTasks,
+  markTaskDone,
+  acquireTaskLock,
+  releaseTaskLock,
+  isTaskLocked,
+} from "./poller.js";
+import { callModel, buildTaskContext } from "./model-client.js";
 import { executeToolCall } from "./tool-executor.js";
 import { logAction } from "./logger.js";
 import { allTools } from "../../shared/tool-manifest.js";
@@ -56,6 +66,21 @@ function printQueueState(label) {
           ? ` — card: "${item.card.name}"`
           : "";
     console.log(`      ${num}) ${desc}${summary}`);
+  }
+}
+
+function printTaskState(label) {
+  const tasks = readTasks();
+  const pending = tasks.filter((t) => !t.checked);
+  const done = tasks.filter((t) => t.checked);
+  if (tasks.length === 0) {
+    console.log(`   📭 [TASKS] ${label} — no task file for today`);
+    return;
+  }
+  console.log(`   📋 [TASKS] ${label} — ${done.length}/${tasks.length} done, ${pending.length} pending`);
+  for (const t of tasks) {
+    const status = t.checked ? "✅" : "⬜";
+    console.log(`      ${status} ${t.text}`);
   }
 }
 
@@ -129,20 +154,127 @@ async function processEvent(event) {
   }
 }
 
+/**
+ * Process a task from the daily task list by sending it to DeepSeek.
+ * The model decides if it can take action (read queues, comment, etc.)
+ * or marks the task as not automatable.
+ */
+async function processTask(task) {
+  const tag = task.lineIndex;
+
+  console.log(`\n   ╔══════════════════════════════════════════════╗`);
+  console.log(`   ║       🔄 PROCESSING TASK                       ║`);
+  console.log(`   ╚══════════════════════════════════════════════╝`);
+  console.log(`   📋 [RUNNER] Task: "${task.text}"`);
+
+  // Show task state before
+  printTaskState("before");
+
+  // Acquire lock
+  acquireTaskLock(task.lineIndex);
+
+  try {
+    // Build task context and send to DeepSeek
+    console.log(`   🤖 [RUNNER] Asking DeepSeek V4...`);
+    const taskContext = buildTaskContext(task);
+    const decision = await callModel(taskContext, allTools);
+
+    if (!decision) {
+      console.log(`   ⏭️  [RUNNER] No decision — marking task as skipped`);
+      logAction({
+        eventType: "task",
+        taskText: task.text,
+        action: "skipped",
+        reason: "model returned no decision",
+      });
+      markTaskDone(task.lineIndex);
+      printTaskState("after");
+      return;
+    }
+
+    // Check if the model explicitly said to skip
+    if (decision.skip) {
+      console.log(`   ⏭️  [RUNNER] Model indicated task is not automatable — marking done`);
+      logAction({
+        eventType: "task",
+        taskText: task.text,
+        action: "skipped",
+        reason: "not automatable",
+      });
+      markTaskDone(task.lineIndex);
+      printTaskState("after");
+      return;
+    }
+
+    // Taking action
+    console.log(`\n   ╔══════════════════════════════════════════════╗`);
+    console.log(`   ║        🛠️  TAKING ACTION                       ║`);
+    console.log(`   ╚══════════════════════════════════════════════╝`);
+    console.log(`   🎯 [RUNNER] ${decision.name}`);
+    console.log(`   📝 [RUNNER] Params: ${JSON.stringify(decision.arguments)}`);
+
+    const result = await executeToolCall(decision.name, decision.arguments);
+
+    // Log the outcome
+    logAction({
+      eventType: "task",
+      taskText: task.text,
+      toolName: decision.name,
+      toolArgs: decision.arguments,
+      toolResult: result.ok ? "success" : "failed",
+      error: result.error || null,
+      action: result.ok ? "processed" : "failed",
+    });
+
+    // Mark task done after processing (or even if failed — avoid re-trying bad tasks)
+    if (result.ok) {
+      console.log(`\n   ✅ [RUNNER] Task "${task.text}" processed successfully`);
+    } else {
+      console.log(`   ❌ [RUNNER] Task failed: ${result.error}`);
+    }
+    markTaskDone(task.lineIndex);
+
+    // Show task state after
+    printTaskState("after");
+  } catch (err) {
+    console.error(`   ❌ [RUNNER] Unexpected error processing task: ${err.message}`);
+    logAction({
+      eventType: "task",
+      taskText: task.text,
+      action: "failed",
+      error: err.message,
+    });
+    releaseTaskLock(task.lineIndex);
+    printTaskState("after");
+  }
+}
+
 async function mainLoop() {
   if (!ENABLED) {
     console.log(`   ⏸️  [RUNNER] Disabled (AGENT_RUNNER_ENABLED=false)`);
     return;
   }
 
+  // First check the priority queue
   const pending = readPending();
-  if (pending.length === 0) return;
+  if (pending.length > 0) {
+    console.log(`\n   🔔 [RUNNER] ${pending.length} pending item(s) detected in priority queue`);
+    const event = pending[0];
+    await processEvent(event);
+    return;
+  }
 
-  console.log(`\n   🔔 [RUNNER] ${pending.length} pending item(s) detected in priority queue`);
+  // Queue empty — check for uncompleted tasks
+  const tasks = readTasks();
+  const pendingTasks = tasks.filter((t) => !t.checked);
+  if (pendingTasks.length === 0) return;
 
-  // Process one item per tick to keep the loop responsive
-  const event = pending[0];
-  await processEvent(event);
+  // Skip tasks already being processed by another cycle
+  const availableTask = pendingTasks.find((t) => !isTaskLocked(t.lineIndex));
+  if (!availableTask) return;
+
+  console.log(`\n   🔔 [RUNNER] ${pendingTasks.length} uncompleted task(s) in daily task list`);
+  await processTask(availableTask);
 }
 
 // ── Startup ──
@@ -191,12 +323,27 @@ rl.on("line", (input) => {
       const num = item.seqNo ? `#${item.seqNo}` : `#?`;
       console.log(`      ${num}) ${item.source}/${item.type}`);
     }
+    // Also show task state
+    const allTasks = readTasks();
+    if (allTasks.length > 0) {
+      const pending = allTasks.filter((t) => !t.checked);
+      const done = allTasks.filter((t) => t.checked);
+      console.log(`   📋 Tasks: ${done.length}/${allTasks.length} done, ${pending.length} pending`);
+      for (const t of allTasks) {
+        const status = t.checked ? "✅" : "⬜";
+        console.log(`      ${status} ${t.text}`);
+      }
+    }
     rl.prompt();
   } else if (cmd === "help") {
     console.log(`   Available commands:`);
     console.log(`   stop/exit/quit  — Shut down the runner`);
-    console.log(`   status          — Show pending queue items`);
+    console.log(`   status          — Show pending queue items and tasks`);
+    console.log(`   tasks           — Show task list with status`);
     console.log(`   help            — Show this help`);
+    rl.prompt();
+  } else if (cmd === "tasks") {
+    printTaskState("current");
     rl.prompt();
   } else if (cmd) {
     console.log(`   Unknown command. Type "help" for options.`);
