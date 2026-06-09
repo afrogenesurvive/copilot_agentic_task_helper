@@ -35,6 +35,8 @@ import path from "path";
 import { fileURLToPath } from "url";
 import { trelloHandler } from "./handlers/trello.js";
 import { gmailHandler } from "./handlers/gmail.js";
+import { google } from "googleapis";
+import { OAuth2Client } from "google-auth-library";
 import {
   enqueueEvent,
   readEvents,
@@ -46,6 +48,7 @@ import {
   findEventByNumber,
   markClearedByNumber,
 } from "./lib/event-queue.js";
+import { allTools } from "../../shared/tool-manifest.js";
 
 const app = express();
 const PORT = parseInt(process.env.WEBHOOK_PORT || "3199", 10);
@@ -390,6 +393,7 @@ function setupReadline() {
       help: { desc: "Show this help", fn: cmdHelp },
       ls: { desc: "List pending items: ls [priority|misc_notifications]", fn: cmdList },
       done: { desc: "Mark item cleared by #: done <seqNo>", fn: cmdDone },
+      execute: { desc: "Process an event via DeepSeek inline: execute <seqNo>", fn: cmdExecute },
       peek: { desc: "Show full details of an item by its #", fn: cmdPeek },
       tasks: { desc: "Show today's task list", fn: cmdTasks },
       clear: { desc: "Clear all items from a queue (caution): clear [priority|misc]", fn: cmdClear },
@@ -480,6 +484,207 @@ function setupReadline() {
       if (items.length === 0) return console.log(`   "${queueName}" queue already empty.`);
       clearEvents(queueName);
       console.log(`   🗑️  Cleared all ${items.length} items from "${queueName}".`);
+    }
+
+    // ── Tool allowlist (same as agent runner) ──
+    const EXECUTE_ALLOWLIST = new Set([
+      "trello_add_comment",
+      "trello_get_card",
+      "trello_list_cards",
+      "trello_get_lists",
+      "trello_get_card_actions",
+      "gmail_list_messages",
+      "gmail_get_message",
+    ]);
+
+    /** Build event context for DeepSeek */
+    function buildEventContext(event) {
+      const lines = [`New ${event.source}/${event.type} event:`];
+      if (event.data?.text) lines.push(`Message: "${event.data.text.slice(0, 500)}"`);
+      if (event.data?.rule) {
+        lines.push(`Matched rule: "${event.data.rule}"`);
+        lines.push(`Requested tool: ${event.data.tool}`);
+      }
+      if (event.data?.originalEvent?.data?.card?.id) {
+        lines.push(`Card ID (Trello hex ID): ${event.data.originalEvent.data.card.id}`);
+        if (event.data.originalEvent.data.card.name) lines.push(`Card name: "${event.data.originalEvent.data.card.name}"`);
+      }
+      if (event.data?.originalEvent?.data?.list?.id) {
+        lines.push(`List ID: ${event.data.originalEvent.data.list.id}`);
+        if (event.data.originalEvent.data.list.name) lines.push(`List name: "${event.data.originalEvent.data.list.name}"`);
+      }
+      if (event.data?.originalEvent?.data?.board?.id) {
+        lines.push(`Board ID: ${event.data.originalEvent.data.board.id}`);
+        if (event.data.originalEvent.data.board.name) lines.push(`Board name: "${event.data.originalEvent.data.board.name}"`);
+      }
+      if (event.data?.subject) lines.push(`Subject: "${event.data.subject}"`);
+      if (event.data?.direction) lines.push(`Direction: ${event.data.direction}`);
+      return lines.join("\n");
+    }
+
+    /** Map tool manifest to OpenAI function format */
+    function mapTools(tools) {
+      return tools.map((t) => ({
+        type: "function",
+        function: { name: t.name, description: t.description, parameters: t.inputSchema },
+      }));
+    }
+
+    /** Get authenticated Gmail client */
+    function getGmailClient() {
+      const { GMAIL_CLIENT_ID, GMAIL_CLIENT_SECRET, GMAIL_REFRESH_TOKEN } = process.env;
+      if (!GMAIL_CLIENT_ID || !GMAIL_CLIENT_SECRET || !GMAIL_REFRESH_TOKEN) return null;
+      const oauth2 = new OAuth2Client(GMAIL_CLIENT_ID, GMAIL_CLIENT_SECRET);
+      oauth2.setCredentials({ refresh_token: GMAIL_REFRESH_TOKEN });
+      return google.gmail({ version: "v1", auth: oauth2 });
+    }
+
+    /** Execute a validated tool call against Trello/Gmail API */
+    async function executeTool(toolName, args) {
+      const { TRELLO_KEY, TRELLO_TOKEN } = process.env;
+      const trelloUrl = (path, params = {}) =>
+        `https://api.trello.com/1${path}?${new URLSearchParams({ key: TRELLO_KEY, token: TRELLO_TOKEN, ...params })}`;
+
+      switch (toolName) {
+        case "trello_add_comment": {
+          const res = await fetch(trelloUrl(`/cards/${args.cardId}/actions/comments`, { text: args.text }), { method: "POST" });
+          if (!res.ok) throw new Error(`Trello API ${res.status}: ${await res.text()}`);
+          return { ok: true, tool: toolName, result: "Comment added" };
+        }
+        case "trello_get_card": {
+          const res = await fetch(trelloUrl(`/cards/${args.cardId}`, { fields: "name,desc,idList,idBoard,due" }));
+          if (!res.ok) throw new Error(`Trello API ${res.status}: ${await res.text()}`);
+          return { ok: true, tool: toolName, result: await res.json() };
+        }
+        case "trello_list_cards": {
+          const res = await fetch(trelloUrl(`/lists/${args.listId}/cards`, { fields: "name,id,idList,due" }));
+          if (!res.ok) throw new Error(`Trello API ${res.status}: ${await res.text()}`);
+          return { ok: true, tool: toolName, result: await res.json() };
+        }
+        case "trello_get_lists": {
+          const res = await fetch(trelloUrl(`/boards/${args.boardId}/lists`, { fields: "name,id" }));
+          if (!res.ok) throw new Error(`Trello API ${res.status}: ${await res.text()}`);
+          return { ok: true, tool: toolName, result: await res.json() };
+        }
+        case "trello_get_card_actions": {
+          const res = await fetch(trelloUrl(`/cards/${args.cardId}/actions`, { filter: args.filter || "commentCard" }));
+          if (!res.ok) throw new Error(`Trello API ${res.status}: ${await res.text()}`);
+          return { ok: true, tool: toolName, result: await res.json() };
+        }
+        case "gmail_list_messages": {
+          const gmail = getGmailClient();
+          if (!gmail) throw new Error("Gmail auth not configured (check GMAIL_CLIENT_ID/TOKEN in .env)");
+          const userId = process.env.GMAIL_USER || "me";
+          const res = await gmail.users.messages.list({ userId, q: args.query || "", maxResults: args.maxResults || 10 });
+          return { ok: true, tool: toolName, result: res.data.messages || [] };
+        }
+        case "gmail_get_message": {
+          const gmail = getGmailClient();
+          if (!gmail) throw new Error("Gmail auth not configured (check GMAIL_CLIENT_ID/TOKEN in .env)");
+          const userId = process.env.GMAIL_USER || "me";
+          const res = await gmail.users.messages.get({
+            userId,
+            id: args.id,
+            format: args.format || "metadata",
+            metadataHeaders: ["From", "To", "Subject", "Date"],
+          });
+          return { ok: true, tool: toolName, result: res.data };
+        }
+        default:
+          throw new Error(`Tool "${toolName}" not supported in execute flow`);
+      }
+    }
+
+    /** Execute a queue event via DeepSeek inline */
+    async function cmdExecute(args) {
+      if (!args || !/^\d+$/.test(args)) {
+        return console.log(`   ⚠️  Usage: execute <number>. Type "ls" to see item numbers.`);
+      }
+
+      const seqNo = parseInt(args, 10);
+      const event = findEventByNumber(seqNo);
+      if (!event) return console.log(`   ⚠️  No item found with #${seqNo}. Type "ls" to see items.`);
+      if (event.cleared) return console.log(`   ⚠️  Item #${seqNo} is already cleared.`);
+
+      const apiKey = process.env.DEEPSEEK_API_KEY;
+      if (!apiKey) return console.log(`   ❌ DEEPSEEK_API_KEY not set in .env`);
+
+      console.log(`\n   🤖 [EXECUTE] Processing #${seqNo}: ${event.source}/${event.type}`);
+      console.log(`   📤 [EXECUTE] Sending to DeepSeek...`);
+
+      try {
+        const eventContext = buildEventContext(event);
+        const tools = mapTools(allTools);
+
+        const response = await fetch("https://api.deepseek.com/chat/completions", {
+          method: "POST",
+          headers: { "Content-Type": "application/json", Authorization: `Bearer ${apiKey}` },
+          body: JSON.stringify({
+            model: "deepseek-chat",
+            messages: [
+              {
+                role: "system",
+                content:
+                  "You are an autonomous business workflow agent. Your job is to process incoming events and decide what action to take. Choose ONE tool and provide ALL required parameters. Respond only with a tool call — no explanatory text.",
+              },
+              { role: "user", content: eventContext },
+            ],
+            tools,
+            tool_choice: "auto",
+            temperature: 0.1,
+          }),
+        });
+
+        if (!response.ok) {
+          const errText = await response.text();
+          throw new Error(`DeepSeek API ${response.status}: ${errText}`);
+        }
+
+        const data = await response.json();
+        const toolCall = data.choices?.[0]?.message?.tool_calls?.[0];
+        if (!toolCall) {
+          const reply = data.choices?.[0]?.message?.content || "(empty)";
+          console.log(`   ⚠️ [EXECUTE] No tool call returned — model said: "${reply.slice(0, 200)}"`);
+          console.log(`   ⏭️  [EXECUTE] Marking #${seqNo} as skipped.`);
+          markClearedByNumber(seqNo);
+          return;
+        }
+
+        let toolArgs;
+        try {
+          toolArgs = JSON.parse(toolCall.function.arguments);
+        } catch {
+          console.log(`   ❌ [EXECUTE] Invalid JSON in tool arguments: "${toolCall.function.arguments}"`);
+          return;
+        }
+
+        const toolName = toolCall.function.name;
+        console.log(`   🤖 [EXECUTE] DeepSeek chose: ${toolName}(${JSON.stringify(toolArgs)})`);
+
+        // Validate against allowlist
+        if (!EXECUTE_ALLOWLIST.has(toolName)) {
+          console.log(`   🛑 [EXECUTE] Tool "${toolName}" is not on the allowlist. Skipping.`);
+          markClearedByNumber(seqNo);
+          return;
+        }
+
+        // Execute
+        console.log(`   🛠️  [EXECUTE] Executing ${toolName}...`);
+        const result = await executeTool(toolName, toolArgs);
+
+        if (result.ok) {
+          console.log(`   ✅ [EXECUTE] ${toolName} succeeded`);
+          if (result.result && typeof result.result === "object") {
+            const summary = JSON.stringify(result.result).slice(0, 300);
+            console.log(`   📄 [EXECUTE] Result: ${summary}`);
+          }
+        }
+
+        markClearedByNumber(seqNo);
+        console.log(`   ✅ [EXECUTE] Item #${seqNo} processed and cleared.`);
+      } catch (err) {
+        console.log(`   ❌ [EXECUTE] Error: ${err.message}`);
+      }
     }
 
     function cmdReminder() {
