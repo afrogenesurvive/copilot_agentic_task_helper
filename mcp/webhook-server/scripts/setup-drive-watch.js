@@ -62,8 +62,14 @@ export async function startDriveWatch(overrides = {}) {
   const address = `${baseUrl.replace(/\/$/, "")}/webhooks/drive/push`;
   console.log(`   🔄 [DRIVE WATCH] Setting up with address: ${address}`);
 
+  // First, get the current start page token — this is REQUIRED as a valid
+  // starting point for the watch. The hardcoded "1" does not work.
+  const tokenRes = await drive.changes.getStartPageToken({});
+  const pageToken = tokenRes.data.startPageToken;
+  console.log(`   🔄 [DRIVE WATCH] Using page token: ${pageToken}`);
+
   const res = await drive.changes.watch({
-    pageToken: "1",
+    pageToken,
     requestBody: {
       id: `drive-watch-${Date.now()}`,
       type: "web_hook",

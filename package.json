@@ -12,6 +12,8 @@
     "mcp:webhook": "node mcp/webhook-server/index.js",
     "setup:drive-watch": "node mcp/webhook-server/scripts/setup-drive-watch.js",
     "setup:calendar-watch": "node mcp/webhook-server/scripts/setup-calendar-watch.js",
+    "setup:calendar-ref": "node scripts/setup-calendar-ref.js",
+    "setup:drive-ref": "node scripts/setup-drive-ref.js",
     "setup:gmail-auth": "node scripts/gmail-auth.mjs",
     "setup:gmail-watch": "node mcp/webhook-server/scripts/setup-gmail-watch.js",
     "setup:trello-webhook": "node mcp/webhook-server/scripts/setup-trello-webhook.js",
@@ -23,6 +25,8 @@
     "webhook:setup": "bash mcp/webhook-server/scripts/start-webhook.sh",
     "webhook:tunnel": "bash mcp/webhook-server/scripts/setup-tunnel.sh",
     "webhook:restart": "bash mcp/webhook-server/scripts/restart-webhook.sh",
+    "webhook:restart:quick": "bash mcp/webhook-server/scripts/restart-webhook.sh --quick",
+    "webhook:dev": "WEBHOOK_DEV_WATCH=true bash -c 'while true; do node mcp/webhook-server/index.js; echo; echo \"⚡ Restarting...\"; sleep 1; done'",
     "webhook:start-all": "bash mcp/webhook-server/scripts/start-all.sh",
     "runner:start": "node mcp/agent-runner/index.js",
     "runner:stop": "kill $(cat mcp/agent-runner/.runner.pid 2>/dev/null) 2>/dev/null; echo 'Runner stopped'",
@@ -35,5 +39,3 @@
     "node-fetch": "^3.3.2"
   }
 }
-http://localhost:64068/?iss=https://accounts.google.com&code=4/0AdkVLPwXsKf9gXVBPMhOnTzOsAZHmVhSCdpd8gGNCtWGZ-FkPsy-Qe2_kRcktxmywqMu1g&scope=https://www.googleapis.com/auth/drive.readonly%20https://www.googleapis.com/auth/calendar.events.readonly%20https://www.googleapis.com/auth/calendar.events%20https://www.googleapis.com/auth/gmail.modify
-http://localhost:64108/?iss=https://accounts.google.com&code=4/0AdkVLPwiY7-Lx-aTBaWQ6FC-9EefJ8assjvFs_GBR6eZWUJFYDVq7a6YpaQpAGqzys4rOw&scope=https://www.googleapis.com/auth/drive.readonly%20https://www.googleapis.com/auth/calendar.events.readonly%20https://www.googleapis.com/auth/calendar.events%20https://www.googleapis.com/auth/gmail.modify

@@ -17,8 +17,12 @@ async function main() {
   if (status) {
     const expiresAt = new Date(parseInt(status.expiration, 10));
     const remaining = expiresAt - Date.now();
-    console.log(`   Watch: email=${status.email}, historyId=${status.historyId}`);
-    console.log(`   Expires: ${expiresAt.toISOString()} (${Math.round(remaining / 1000 / 60)}m remaining)`);
+    console.log(`Existing Gmail watch found:`);
+    console.log(`   Email:     ${status.email}`);
+    console.log(`   History:   ${status.historyId}`);
+    console.log(`   Expires:   ${expiresAt.toISOString()} (${Math.round(remaining / 1000 / 60)}m remaining)`);
+    console.log(`   Topic:     ${status.topicName}`);
+    console.log(``);
 
     if (remaining < 60 * 60 * 1000) {
       console.log(`   → Watch expiring soon, renewing...`);
