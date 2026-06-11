@@ -1,0 +1,16 @@
+{
+  "name": "web-search-mcp-server",
+  "version": "1.0.0",
+  "private": true,
+  "type": "module",
+  "description": "MCP server for web search and light web scraping — DuckDuckGo search + cheerio page extraction",
+  "main": "index.js",
+  "scripts": {
+    "start": "node index.js"
+  },
+  "dependencies": {
+    "@modelcontextprotocol/sdk": "^1.0.0",
+    "cheerio": "^1.0.0-rc.12",
+    "dotenv": "^16.4.0"
+  }
+}
