@@ -491,9 +491,34 @@ function printPriorityReminder() {
 const reminderInterval = setInterval(printPriorityReminder, REMINDER_INTERVAL);
 console.log(`   ⏰ [REMINDER] Priority queue reminder active every ${REMINDER_INTERVAL / 1000}s`);
 
+/* ── Dev auto-reload — watches source files, exits on change ──
+ *
+ * When WEBHOOK_DEV_WATCH=true, watches the webhook-server directory.
+ * On any file change, gracefully shuts down so the calling shell
+ * loop (npm run webhook:dev) can restart instantly.
+ *
+ * Webhook registrations (Trello, Gmail Pub/Sub) are NOT re-initialized
+ * on restart — they're set up once by start-all.sh and persist at the
+ * Trello/Google end regardless of this server's uptime.
+ */
+
+if (process.env.WEBHOOK_DEV_WATCH) {
+  const watchDir = path.resolve(__dirname);
+  console.log(`   👀 [WATCH] Watching for file changes (auto-restart on save)...`);
+  let restartTimer = null;
+  fs.watch(watchDir, { recursive: true }, (eventType, filename) => {
+    if (!filename || filename.includes("node_modules") || filename.startsWith(".")) return;
+    if (restartTimer) clearTimeout(restartTimer);
+    restartTimer = setTimeout(() => {
+      console.log(`\n   🔄 [WATCH] ${filename} changed — restarting...\n`);
+      server.close(() => process.exit(0));
+    }, 300);
+  });
+}
+
 /* ── Start server ── */
 
-app.listen(PORT, () => {
+const server = app.listen(PORT, () => {
   console.log(`\n${"=".repeat(50)}`);
   console.log(`   🌐 Webhook server — http://localhost:${PORT}`);
   console.log(`   📋 Events:  /events | Priority: /events/priority`);

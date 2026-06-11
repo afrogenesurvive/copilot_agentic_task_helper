@@ -155,6 +155,46 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
         summary = "done";
       }
       break;
+    case "drive_create_file":
+      result = await handleCreateFile(args);
+      try {
+        const d = JSON.parse(result.content?.[0]?.text || "{}");
+        summary = `"${d.name}" created (${d.mimeType})`;
+      } catch {
+        summary = "done";
+      }
+      break;
+    case "drive_update_file":
+      result = await handleUpdateFile(args);
+      try {
+        const d = JSON.parse(result.content?.[0]?.text || "{}");
+        summary = `"${d.name}" updated`;
+      } catch {
+        summary = "done";
+      }
+      break;
+    case "drive_move_file":
+      result = await handleMoveFile(args);
+      try {
+        const d = JSON.parse(result.content?.[0]?.text || "{}");
+        summary = `"${d.name}" moved`;
+      } catch {
+        summary = "done";
+      }
+      break;
+    case "drive_create_folder":
+      result = await handleCreateFolder(args);
+      try {
+        const d = JSON.parse(result.content?.[0]?.text || "{}");
+        summary = `folder "${d.name}" created`;
+      } catch {
+        summary = "done";
+      }
+      break;
+    case "drive_delete_file":
+      result = await handleDeleteFile(args);
+      summary = "trashed";
+      break;
     default:
       result = { content: [safeText(`Unknown tool: ${name}`)], isError: true };
       summary = "unknown tool";
@@ -165,9 +205,60 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
 
 /* ── Tool handlers ── */
 
+/**
+ * Resolve a folder name, path (e.g. "Projects/Client"), or ID to a Drive folder ID.
+ *
+ * Looks up known directory paths from safe/drive-directories.json.
+ * Supports:
+ *   - "root" → "root"
+ *   - A path like "Projects/Reports" → folder ID
+ *   - A folder name (if unique) → folder ID
+ *   - An existing folder ID → returned as-is
+ */
+function resolveFolderId(folderId) {
+  if (!folderId || folderId === "root") return "root";
+
+  // Try loading the directory reference file
+  try {
+    const refPath = new URL("../../safe/drive-directories.json", import.meta.url);
+    const ref = JSON.parse(fs.readFileSync(refPath, "utf8"));
+
+    // Try exact path match first
+    if (ref.byPath && ref.byPath[folderId]) {
+      return ref.byPath[folderId];
+    }
+
+    // Try direct ID lookup (already an ID)
+    if (ref.byId && ref.byId[folderId]) {
+      return folderId;
+    }
+
+    // Try searching by folder name (if it's a simple name like "Projects")
+    // Return the first match
+    if (ref.byId) {
+      for (const [id, info] of Object.entries(ref.byId)) {
+        if (info.name === folderId) {
+          return id;
+        }
+      }
+    }
+  } catch {
+    // File doesn't exist or is invalid — just use the provided value
+  }
+
+  // Not found in reference — assume it's already an ID
+  return folderId;
+}
+
 async function handleListFiles(args) {
   const pageSize = Math.min(args.pageSize || 20, 100);
-  const folderId = args.folderId || "root";
+  const inputFolder = args.folderId || "root";
+  const folderId = resolveFolderId(inputFolder);
+
+  // Log if the name was resolved to a different ID
+  if (folderId !== inputFolder) {
+    console.error(`[mcp] drive/list_files resolved "${inputFolder}" → ${folderId}`);
+  }
 
   try {
     const query = folderId === "root" ? `'root' in parents and trashed = false` : `'${folderId}' in parents and trashed = false`;
@@ -256,6 +347,188 @@ async function handleSearchFiles(args) {
     return { content: [safeJson(files)] }; // Search results sanitized
   } catch (err) {
     return { content: [safeText(`Error searching files: ${err.message}`)], isError: true };
+  }
+}
+
+/* ── Create File ── */
+
+async function handleCreateFile(args) {
+  const { name, mimeType, content, parentFolderId, description } = args;
+  if (!name) {
+    return { content: [safeText("Missing required parameter: name")], isError: true };
+  }
+
+  const resolvedParent = resolveFolderId(parentFolderId || "root");
+  const effectiveMimeType = mimeType || "application/vnd.google-apps.document";
+
+  try {
+    // Create the file metadata
+    const fileMetadata = {
+      name,
+      description: description || "",
+      mimeType: effectiveMimeType,
+      parents: resolvedParent === "root" ? [] : [resolvedParent],
+    };
+
+    // For Google-native formats, just create with metadata
+    const isGoogleFormat = effectiveMimeType.startsWith("application/vnd.google-apps");
+
+    if (isGoogleFormat || !content) {
+      const res = await drive.files.create({
+        requestBody: fileMetadata,
+        fields: "id,name,mimeType,size,createdTime,modifiedTime,parents,webViewLink,description,ownedByMe",
+      });
+      return { content: [safeJson(formatFile(res.data))] };
+    }
+
+    // For non-Google formats with content, upload with media
+    const res = await drive.files.create({
+      requestBody: fileMetadata,
+      media: { mimeType: effectiveMimeType, body: content },
+      fields: "id,name,mimeType,size,createdTime,modifiedTime,parents,webViewLink,description,ownedByMe",
+    });
+    return { content: [safeJson(formatFile(res.data))] };
+  } catch (err) {
+    return { content: [safeText(`Error creating file: ${err.message}`)], isError: true };
+  }
+}
+
+/* ── Update File ── */
+
+async function handleUpdateFile(args) {
+  const { fileId, name, description, content } = args;
+  if (!fileId) {
+    return { content: [safeText("Missing required parameter: fileId")], isError: true };
+  }
+
+  try {
+    // Update metadata
+    const metadata = {};
+    if (name !== undefined) metadata.name = name;
+    if (description !== undefined) metadata.description = description;
+
+    if (Object.keys(metadata).length > 0) {
+      await drive.files.update({
+        fileId,
+        requestBody: metadata,
+        fields: "id,name,mimeType,description",
+      });
+    }
+
+    // Update content if provided (for text-based files)
+    if (content !== undefined) {
+      // Get the current mimeType to pass it back
+      const info = await drive.files.get({
+        fileId,
+        fields: "id,name,mimeType",
+      });
+      await drive.files.update({
+        fileId,
+        media: { mimeType: info.data.mimeType, body: content },
+        fields: "id,name,mimeType,size",
+      });
+    }
+
+    // Fetch the final state
+    const res = await drive.files.get({
+      fileId,
+      fields: "id,name,mimeType,size,createdTime,modifiedTime,parents,webViewLink,description,ownedByMe,lastModifyingUser",
+    });
+    return { content: [safeJson(formatFile(res.data))] };
+  } catch (err) {
+    return { content: [safeText(`Error updating file: ${err.message}`)], isError: true };
+  }
+}
+
+/* ── Move File ── */
+
+async function handleMoveFile(args) {
+  const { fileId, newParentFolderId, newName } = args;
+  if (!fileId) {
+    return { content: [safeText("Missing required parameter: fileId")], isError: true };
+  }
+  if (!newParentFolderId) {
+    return { content: [safeText("Missing required parameter: newParentFolderId")], isError: true };
+  }
+
+  const resolvedParent = resolveFolderId(newParentFolderId);
+  if (resolvedParent === "root" && newParentFolderId !== "root") {
+    // Allow explicit "root"
+  }
+
+  try {
+    // Get current parents
+    const file = await drive.files.get({
+      fileId,
+      fields: "id,name,parents",
+    });
+
+    const currentParents = file.data.parents || [];
+    const allParents = currentParents.join(",");
+
+    // Update metadata (rename if requested)
+    const metadata = {};
+    if (newName !== undefined) metadata.name = newName;
+
+    // Move by removing from current parents and adding to new parent
+    const res = await drive.files.update({
+      fileId,
+      addParents: resolvedParent === "root" ? "" : resolvedParent,
+      removeParents: allParents,
+      requestBody: Object.keys(metadata).length > 0 ? metadata : undefined,
+      fields: "id,name,mimeType,parents,webViewLink",
+    });
+
+    return { content: [safeJson(formatFile(res.data))] };
+  } catch (err) {
+    return { content: [safeText(`Error moving file: ${err.message}`)], isError: true };
+  }
+}
+
+/* ── Create Folder ── */
+
+async function handleCreateFolder(args) {
+  const { name, parentFolderId } = args;
+  if (!name) {
+    return { content: [safeText("Missing required parameter: name")], isError: true };
+  }
+
+  const resolvedParent = resolveFolderId(parentFolderId || "root");
+
+  try {
+    const fileMetadata = {
+      name,
+      mimeType: "application/vnd.google-apps.folder",
+      parents: resolvedParent === "root" ? [] : [resolvedParent],
+    };
+
+    const res = await drive.files.create({
+      requestBody: fileMetadata,
+      fields: "id,name,mimeType,createdTime,parents,webViewLink",
+    });
+    return { content: [safeJson(formatFile(res.data))] };
+  } catch (err) {
+    return { content: [safeText(`Error creating folder: ${err.message}`)], isError: true };
+  }
+}
+
+/* ── Delete File ── */
+
+async function handleDeleteFile(args) {
+  const { fileId } = args;
+  if (!fileId) {
+    return { content: [safeText("Missing required parameter: fileId")], isError: true };
+  }
+
+  try {
+    await drive.files.update({
+      fileId,
+      requestBody: { trashed: true },
+      fields: "id,name",
+    });
+    return { content: [safeText(`File "${fileId}" moved to trash`)] };
+  } catch (err) {
+    return { content: [safeText(`Error deleting file: ${err.message}`)], isError: true };
   }
 }
 

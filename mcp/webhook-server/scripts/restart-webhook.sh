@@ -1,17 +1,20 @@
 #!/bin/bash
 #
-# restart-webhook.sh — Restart webhook server & re-establish webhooks
+# restart-webhook.sh — Restart webhook server
 #
-# Kills the running webhook server (port 3199), starts a fresh one,
-# then checks Trello webhook registrations and re-registers any that
-# are missing. Does NOT touch the Cloudflare tunnel.
+# Kills the running webhook server (port 3199) and starts a fresh one.
+# By default also re-checks Trello webhooks. Pass --quick to skip.
+# Does NOT touch the Cloudflare tunnel.
 #
 # Usage:
-#   ./mcp/webhook-server/scripts/restart-webhook.sh
-#   npm run webhook:restart
+#   npm run webhook:restart           # full (checks Trello webhooks)
+#   npm run webhook:restart -- --quick  # quick restart, no webhook checks
+#
+# For auto-restart on code changes during development:
+#   npm run webhook:dev
 #
 # Prerequisites:
-#   - .env file with TRELLO_KEY, TRELLO_TOKEN, TRELLO_WEBHOOK_MODEL_IDS, etc.
+#   - .env file with credentials
 #
 
 set -uo pipefail
@@ -21,10 +24,24 @@ PROJECT_DIR="$(cd "$SCRIPT_DIR/../../.." && pwd)"
 ENV_FILE="$PROJECT_DIR/.env"
 PORT="${WEBHOOK_PORT:-3199}"
 
+# Parse flags
+SKIP_CHECKS=false
+for arg in "$@"; do
+  case "$arg" in
+    --quick|--skip-checks) SKIP_CHECKS=true ;;
+  esac
+done
+
 # Load env vars for direct use in this script
-export "$(grep -v '^\s*#' "$ENV_FILE" | grep -v '^\s*$' | xargs)"
+# Using `set -a` then source to handle vars with spaces/special chars properly
+set -a
+source "$ENV_FILE" 2>/dev/null || export "$(grep -v '^\s*#' "$ENV_FILE" | grep -v '^\s*$' | xargs)"
+set +a
 
 echo "🔄 Restarting webhook server..."
+if [ "$SKIP_CHECKS" = true ]; then
+  echo "   ⏭️  Quick mode — will skip Trello webhook checks"
+fi
 
 # ── Step 1: Kill existing webhook server ──
 PID=$(lsof -ti:"$PORT" 2>/dev/null)
@@ -62,7 +79,15 @@ for i in $(seq 1 15); do
   sleep 1
 done
 
-# ── Step 3: Check and re-establish Trello webhooks ──
+# ── Step 3: Check and re-establish Trello webhooks (skip if --quick) ──
+if [ "$SKIP_CHECKS" = true ]; then
+  echo "   ⏭️  Skipping Trello webhook checks (--quick)"
+  echo ""
+  echo "✅ Webhook server restarted (quick mode)"
+  echo "   Tunnel is unaffected"
+  exit 0
+fi
+
 echo "   → Checking Trello webhook registrations..."
 TRELLO_KEY="${TRELLO_KEY:-}"
 TRELLO_TOKEN="${TRELLO_TOKEN:-}"

@@ -50,7 +50,7 @@ echo ""
 # ═══════════════════════════════════════════════
 # STEP 1: Start Cloudflare Tunnel
 # ═══════════════════════════════════════════════
-echo "🚇 [1/6] Starting Cloudflare Tunnel on port $PORT..."
+echo "🚇 [1/8] Starting Cloudflare Tunnel on port $PORT..."
 
 tmpfile=$(mktemp)
 cloudflared tunnel --url "http://localhost:$PORT" > "$tmpfile" 2>&1 &
@@ -81,7 +81,7 @@ echo ""
 # ═══════════════════════════════════════════════
 # STEP 2: Update .env with tunnel URL
 # ═══════════════════════════════════════════════
-echo "📝 [2/6] Updating WEBHOOK_BASE_URL in .env..."
+echo "📝 [2/8] Updating WEBHOOK_BASE_URL in .env..."
 if grep -q '^WEBHOOK_BASE_URL=' "$ENV_FILE"; then
   sed -i '' "s|^WEBHOOK_BASE_URL=.*|WEBHOOK_BASE_URL=$TUNNEL_URL|" "$ENV_FILE"
 else
@@ -94,7 +94,7 @@ echo ""
 # ═══════════════════════════════════════════════
 # STEP 3: Start Webhook Server
 # ═══════════════════════════════════════════════
-echo "🌐 [3/6] Starting webhook server on port $PORT..."
+echo "🌐 [3/8] Starting webhook server on port $PORT..."
 
 # Kill existing if any (fresh start ensures clean state)
 EXISTING=$(lsof -ti ":$PORT" 2>/dev/null)
@@ -140,7 +140,7 @@ echo ""
 # ═══════════════════════════════════════════════
 # STEP 4: Register Trello Webhooks
 # ═══════════════════════════════════════════════
-echo "📡 [4/6] Checking Trello webhooks..."
+echo "📡 [4/8] Checking Trello webhooks..."
 
 TRELLO_KEY="${TRELLO_KEY:-}"
 TRELLO_TOKEN="${TRELLO_TOKEN:-}"
@@ -278,9 +278,33 @@ fi
 echo ""
 
 # ═══════════════════════════════════════════════
-# STEP 5: Start/Renew Gmail Watch
+# STEP 5.5: Start/Renew Drive Watch
 # ═══════════════════════════════════════════════
-echo "📧 [5/6] Checking Gmail Pub/Sub watch..."
+echo "📁 [5.5/8] Setting up Google Drive change watch..."
+
+if [ -z "${GMAIL_CLIENT_ID:-}" ] || [ -z "${GMAIL_CLIENT_SECRET:-}" ] || [ -z "${GMAIL_REFRESH_TOKEN:-}" ]; then
+  echo "   ⚠️  Google OAuth2 credentials not set — skipping Drive watch"
+else
+  node "$WEBHOOK_DIR/scripts/setup-drive-watch.js" 2>&1 || echo "   ⚠️  Could not set up Drive watch"
+fi
+echo ""
+
+# ═══════════════════════════════════════════════
+# STEP 5.7: Start/Renew Calendar Watch
+# ═══════════════════════════════════════════════
+echo "📅 [5.7/8] Setting up Google Calendar change watch..."
+
+if [ -z "${GMAIL_CLIENT_ID:-}" ] || [ -z "${GMAIL_CLIENT_SECRET:-}" ] || [ -z "${GMAIL_REFRESH_TOKEN:-}" ]; then
+  echo "   ⚠️  Google OAuth2 credentials not set — skipping Calendar watch"
+else
+  node "$WEBHOOK_DIR/scripts/setup-calendar-watch.js" 2>&1 || echo "   ⚠️  Could not set up Calendar watch"
+fi
+echo ""
+
+# ═══════════════════════════════════════════════
+# STEP 6: Start/Renew Gmail Watch
+# ═══════════════════════════════════════════════
+echo "📧 [6/8] Checking Gmail services Pub/Sub watch..."
 
 if [ -z "${GMAIL_CLIENT_ID:-}" ] || [ -z "${GMAIL_CLIENT_SECRET:-}" ] || [ -z "${GMAIL_REFRESH_TOKEN:-}" ]; then
   echo "   ⚠️  Gmail OAuth2 credentials not set — skipping"
@@ -291,9 +315,9 @@ fi
 echo ""
 
 # ═══════════════════════════════════════════════
-# STEP 6: Update GCloud Pub/Sub push endpoint
+# STEP 7: Update GCloud Pub/Sub push endpoint
 # ═══════════════════════════════════════════════
-echo "☁️  [6/6] Updating GCloud Pub/Sub push endpoint..."
+echo "☁️  [7/8] Updating GCloud Pub/Sub push endpoint..."
 
 SUBSCRIPTION="${GMAIL_PUBSUB_SUBSCRIPTION:-}"
 if [ -n "$SUBSCRIPTION" ]; then
@@ -302,14 +326,31 @@ if [ -n "$SUBSCRIPTION" ]; then
 else
   echo "   ⚠️  GMAIL_PUBSUB_SUBSCRIPTION not set — skipping"
 fi
-
 echo ""
+
+# ═══════════════════════════════════════════════
+# STEP 8: Build reference maps (calendars + drive directories)
+# ═══════════════════════════════════════════════
+echo "🗂️  [8/8] Building reference maps for calendar names and drive paths..."
+
+PROJECT_DIR="$(cd "$SCRIPT_DIR/../../.." && pwd)"
+
+if [ -n "${GMAIL_CLIENT_ID:-}" ] && [ -n "${GMAIL_CLIENT_SECRET:-}" ] && [ -n "${GMAIL_REFRESH_TOKEN:-}" ]; then
+  node "$PROJECT_DIR/scripts/setup-calendar-ref.js" 2>&1 || echo "   ⚠️  Could not build calendar reference"
+  node "$PROJECT_DIR/scripts/setup-drive-ref.js" 2>&1 || echo "   ⚠️  Could not build drive directory reference"
+else
+  echo "   ⚠️  Google OAuth2 credentials not set — skipping"
+fi
+echo ""
+
 echo "=========================================="
 echo "  ✅ All setup complete!"
 echo "  Tunnel:    $TUNNEL_URL"
 echo "  Health:    $TUNNEL_URL/health"
 echo "  Events:    $TUNNEL_URL/events"
-echo "  Webhooks:  $TUNNEL_URL/webhooks/trello"
+echo "  Trello:    $TUNNEL_URL/webhooks/trello"
+echo "  Drive:     $TUNNEL_URL/webhooks/drive/push"
+echo "  Calendar:  $TUNNEL_URL/webhooks/calendar/push"
 echo "  Gmail:     $TUNNEL_URL/webhooks/gmail/push"
 echo "=========================================="
 echo ""

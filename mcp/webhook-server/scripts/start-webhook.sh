@@ -120,7 +120,7 @@ fi
 echo ""
 
 # ── 3. Check Gmail Pub/Sub watch ──
-echo "📧 Checking Gmail Pub/Sub watch..."
+echo "📧 Checking Google services Pub/Sub watch..."
 
 if [ -z "${GMAIL_CLIENT_ID:-}" ] || [ -z "${GMAIL_CLIENT_SECRET:-}" ] || [ -z "${GMAIL_REFRESH_TOKEN:-}" ]; then
   echo "⚠️  Gmail OAuth2 credentials not set — skipping Gmail watch check"
