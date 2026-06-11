@@ -9,6 +9,7 @@
     "mcp:trello": "node mcp/trello/index.js",
     "mcp:drive": "node mcp/drive/index.js",
     "mcp:calendar": "node mcp/calendar/index.js",
+    "mcp:web-search": "node mcp/web-search/index.js",
     "mcp:webhook": "node mcp/webhook-server/index.js",
     "setup:drive-watch": "node mcp/webhook-server/scripts/setup-drive-watch.js",
     "setup:calendar-watch": "node mcp/webhook-server/scripts/setup-calendar-watch.js",

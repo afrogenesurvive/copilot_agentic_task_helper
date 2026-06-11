@@ -555,5 +555,33 @@ export const calendarTools = [
   },
 ];
 
+export const webSearchTools = [
+  {
+    name: "web_search",
+    description:
+      "Search the web using DuckDuckGo. Returns a list of results with title, URL, and snippet for each. No API key required. Good for finding current information, news, documentation, and general web content.",
+    inputSchema: {
+      type: "object",
+      properties: {
+        query: { type: "string", description: "Search query" },
+        maxResults: { type: "number", description: "Maximum results to return (default 10, max 20)", default: 10 },
+      },
+      required: ["query"],
+    },
+  },
+  {
+    name: "web_fetch",
+    description:
+      "Fetch a web page and extract its main readable content. Returns the page title, URL, and clean text content (HTML stripped). Good for reading articles, documentation, or any web page.",
+    inputSchema: {
+      type: "object",
+      properties: {
+        url: { type: "string", description: "Full URL (including https://) of the page to fetch" },
+      },
+      required: ["url"],
+    },
+  },
+];
+
 /** Combined list of all tools for use by the agent runner */
-export const allTools = [...trelloTools, ...gmailTools, ...driveTools, ...calendarTools];
+export const allTools = [...trelloTools, ...gmailTools, ...driveTools, ...calendarTools, ...webSearchTools];
