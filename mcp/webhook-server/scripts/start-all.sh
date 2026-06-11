@@ -329,18 +329,8 @@ fi
 echo ""
 
 # ═══════════════════════════════════════════════
-# STEP 8: Build reference maps (calendars + drive directories)
+# STEP 8 completed
 # ═══════════════════════════════════════════════
-echo "🗂️  [8/8] Building reference maps for calendar names and drive paths..."
-
-PROJECT_DIR="$(cd "$SCRIPT_DIR/../../.." && pwd)"
-
-if [ -n "${GMAIL_CLIENT_ID:-}" ] && [ -n "${GMAIL_CLIENT_SECRET:-}" ] && [ -n "${GMAIL_REFRESH_TOKEN:-}" ]; then
-  node "$PROJECT_DIR/scripts/setup-calendar-ref.js" 2>&1 || echo "   ⚠️  Could not build calendar reference"
-  node "$PROJECT_DIR/scripts/setup-drive-ref.js" 2>&1 || echo "   ⚠️  Could not build drive directory reference"
-else
-  echo "   ⚠️  Google OAuth2 credentials not set — skipping"
-fi
 echo ""
 
 echo "=========================================="
