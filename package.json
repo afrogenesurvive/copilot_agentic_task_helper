@@ -7,7 +7,11 @@
     "logs:view": "cat logs/2026-05-31.log",
     "mcp:gmail": "node mcp/gmail/index.js",
     "mcp:trello": "node mcp/trello/index.js",
+    "mcp:drive": "node mcp/drive/index.js",
+    "mcp:calendar": "node mcp/calendar/index.js",
     "mcp:webhook": "node mcp/webhook-server/index.js",
+    "setup:drive-watch": "node mcp/webhook-server/scripts/setup-drive-watch.js",
+    "setup:calendar-watch": "node mcp/webhook-server/scripts/setup-calendar-watch.js",
     "setup:gmail-auth": "node scripts/gmail-auth.mjs",
     "setup:gmail-watch": "node mcp/webhook-server/scripts/setup-gmail-watch.js",
     "setup:trello-webhook": "node mcp/webhook-server/scripts/setup-trello-webhook.js",
@@ -31,3 +35,5 @@
     "node-fetch": "^3.3.2"
   }
 }
+http://localhost:64068/?iss=https://accounts.google.com&code=4/0AdkVLPwXsKf9gXVBPMhOnTzOsAZHmVhSCdpd8gGNCtWGZ-FkPsy-Qe2_kRcktxmywqMu1g&scope=https://www.googleapis.com/auth/drive.readonly%20https://www.googleapis.com/auth/calendar.events.readonly%20https://www.googleapis.com/auth/calendar.events%20https://www.googleapis.com/auth/gmail.modify
+http://localhost:64108/?iss=https://accounts.google.com&code=4/0AdkVLPwiY7-Lx-aTBaWQ6FC-9EefJ8assjvFs_GBR6eZWUJFYDVq7a6YpaQpAGqzys4rOw&scope=https://www.googleapis.com/auth/drive.readonly%20https://www.googleapis.com/auth/calendar.events.readonly%20https://www.googleapis.com/auth/calendar.events%20https://www.googleapis.com/auth/gmail.modify

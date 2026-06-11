@@ -30,11 +30,14 @@ import express from "express";
 import cors from "cors";
 import rateLimit from "express-rate-limit";
 import "dotenv/config";
+import crypto from "crypto";
 import fs from "fs";
 import path from "path";
 import { fileURLToPath } from "url";
 import { trelloHandler } from "./handlers/trello.js";
 import { gmailHandler } from "./handlers/gmail.js";
+import { drivePushHandler } from "./handlers/drive.js";
+import { calendarPushHandler } from "./handlers/calendar.js";
 import { google } from "googleapis";
 import { OAuth2Client } from "google-auth-library";
 import {
@@ -51,6 +54,17 @@ import {
 import { allTools } from "../../shared/tool-manifest.js";
 
 const app = express();
+
+// Trust proxy configuration.
+// By default trusts the first hop (enough for a single tunnel like ngrok).
+// For production, set TRUST_PROXY to a comma-separated list of IPs/CIDR ranges:
+//   "1"                     — trust the first hop (default)
+//   "loopback"              — trust 127.0.0.1/8, ::1
+//   "uniquelocal"           — trust private IP ranges (RFC 1918)
+//   "173.245.48.0/20,103.21.244.0/22"  — Cloudflare IP ranges
+//   "false"                 — disable (not recommended behind a tunnel)
+app.set("trust proxy", process.env.TRUST_PROXY || 1);
+
 const PORT = parseInt(process.env.WEBHOOK_PORT || "3199", 10);
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
@@ -60,15 +74,69 @@ const TASKS_DIR = path.resolve(__dirname, "..", "..", "tasks");
 /* ── Middleware ──
  *
  * Standard Express middleware stack:
- *   - CORS: allows cross-origin requests from webapp/Netlify
+ *   - CORS: restricted to known origins (CORS_ORIGINS env var, comma-separated)
+ *   - Security headers: set manually (no helmet dependency)
+ *   - HTTPS redirect: when behind a proxy terminating TLS
  *   - JSON body parser: parses Trello/Gmail webhook payloads (limit 1MB)
  *   - URL-encoded: handles form data if needed
  *   - Request logger: shows every incoming request in the terminal for debugging
+ *   - Rate limit: 100 requests per minute per IP
  */
 
-app.use(cors());
+const CORS_ORIGINS = (process.env.CORS_ORIGINS || "http://localhost:3199").split(",").map((s) => s.trim());
+app.use(cors({ origin: CORS_ORIGINS, credentials: true }));
+
+// ── Security headers (no helmet dependency) ──
+app.use((_req, res, next) => {
+  res.setHeader("X-Content-Type-Options", "nosniff");
+  res.setHeader("X-Frame-Options", "DENY");
+  res.setHeader("X-XSS-Protection", "0"); // modern browsers ignore this; set for legacy
+  res.setHeader("Referrer-Policy", "no-referrer");
+  res.setHeader("Strict-Transport-Security", "max-age=31536000; includeSubDomains");
+  res.setHeader("Permissions-Policy", "camera=(), microphone=(), geolocation=()");
+  next();
+});
+
+// ── HTTPS redirect when behind a proxy that terminates TLS ──
+app.use((req, res, next) => {
+  const proto = req.headers["x-forwarded-proto"] || "";
+  if (proto === "http") {
+    return res.redirect(301, `https://${req.headers["host"]}${req.url}`);
+  }
+  next();
+});
+
 app.use(express.json({ limit: "1mb" }));
 app.use(express.urlencoded({ extended: true }));
+
+// ── API token authentication middleware ──
+// All endpoints except /health, /webhooks/* are protected.
+// Clients must send:  Authorization: Bearer <WEBHOOK_API_TOKEN>
+const API_TOKEN = process.env.WEBHOOK_API_TOKEN || "";
+function requireAuth(req, res, next) {
+  // Skip auth for webhook callbacks and health check
+  if (req.path === "/health" || req.path.startsWith("/webhooks/")) {
+    return next();
+  }
+  if (!API_TOKEN) {
+    // No token configured — skip auth check (development mode)
+    return next();
+  }
+  const header = req.headers["authorization"];
+  if (!header || !header.startsWith("Bearer ")) {
+    return res.status(401).json({ error: "Missing or invalid Authorization header. Use: Bearer <token>" });
+  }
+  const token = header.slice(7);
+  // Constant-time comparison to prevent timing attacks
+  if (token.length !== API_TOKEN.length) {
+    return res.status(401).json({ error: "Invalid token" });
+  }
+  if (!crypto.timingSafeEqual(Buffer.from(token), Buffer.from(API_TOKEN))) {
+    return res.status(401).json({ error: "Invalid token" });
+  }
+  next();
+}
+app.use(requireAuth);
 
 // Request logging — shows every request coming through the tunnel
 app.use((req, res, next) => {
@@ -104,6 +172,14 @@ app.post("/webhooks/trello", trelloHandler);
 
 app.post("/webhooks/gmail/push", gmailHandler);
 app.get("/webhooks/gmail/push", gmailHandler);
+
+/* ── Google Drive push notifications ── */
+
+app.post("/webhooks/drive/push", drivePushHandler);
+
+/* ── Google Calendar push notifications ── */
+
+app.post("/webhooks/calendar/push", calendarPushHandler);
 
 /* ── Event queue endpoints (dual-queue aware) ──
  *

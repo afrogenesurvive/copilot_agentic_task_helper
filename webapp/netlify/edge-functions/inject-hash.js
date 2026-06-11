@@ -89,6 +89,12 @@ export default async (request, context) => {
     modified = modified.replaceAll("__WEBHOOK_BASE_URL__", webhookUrl);
   }
 
+  // ── Webhook server API token (for authenticated requests) ──
+  const webhookToken = Deno.env.get("WEBHOOK_API_TOKEN") || "";
+  if (modified.includes("__WEBHOOK_API_TOKEN__")) {
+    modified = modified.replaceAll("__WEBHOOK_API_TOKEN__", webhookToken);
+  }
+
   // No placeholders found — pass through unchanged
   if (modified === original) {
     return response;
