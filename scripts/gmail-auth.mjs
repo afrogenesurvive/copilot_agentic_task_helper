@@ -1,17 +1,17 @@
 #!/usr/bin/env node
 
 /**
- * gmail-auth.mjs — Get a new Gmail OAuth2 refresh token
+ * google-auth.mjs — Get a unified Google OAuth2 refresh token
  *
- * Opens your browser for Google OAuth2 consent, then prints
- * the refresh token so you can add it to .env as GMAIL_REFRESH_TOKEN.
+ * Requests scopes for Gmail, Drive, and Calendar so all MCP servers
+ * (Gmail, Drive, Calendar) can share one refresh token.
  *
  * Usage:
  *   node scripts/gmail-auth.mjs
  *
  * Prerequisites:
  *   - safe/gmail-oauth2.json with your OAuth2 client credentials
- *   - Gmail API enabled in Google Cloud Console
+ *   - Gmail API, Drive API, and Calendar API enabled in Google Cloud Console
  */
 
 import fs from "fs";
@@ -23,7 +23,12 @@ import { google } from "googleapis";
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const ROOT = path.resolve(__dirname, "..");
 
-const SCOPES = ["https://www.googleapis.com/auth/gmail.modify"];
+const SCOPES = [
+  "https://www.googleapis.com/auth/gmail.modify",
+  "https://www.googleapis.com/auth/drive.readonly",
+  "https://www.googleapis.com/auth/calendar.events.readonly",
+  "https://www.googleapis.com/auth/calendar.events",
+];
 const CREDENTIALS_PATH = path.join(ROOT, "safe", "gmail-oauth2.json");
 const TOKEN_PATH = path.join(ROOT, "tokens", "gmail-token.json");
 
@@ -36,9 +41,9 @@ async function main() {
     process.exit(1);
   }
 
-  console.log("🔑 Starting Gmail OAuth2 authorization...");
+  console.log("🔑 Starting Google OAuth2 authorization (Gmail + Drive + Calendar)...");
   console.log(`   Credentials: ${CREDENTIALS_PATH}`);
-  console.log(`   Scopes:      ${SCOPES[0]}`);
+  console.log(`   Scopes:      ${SCOPES.join(", ")}`);
   console.log("");
 
   // Run the OAuth consent flow (opens browser)

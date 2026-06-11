@@ -183,5 +183,99 @@ export const gmailTools = [
   },
 ];
 
+export const driveTools = [
+  {
+    name: "drive_list_files",
+    description: "List files and folders in a Google Drive folder (default: root). Returns metadata for each file.",
+    inputSchema: {
+      type: "object",
+      properties: {
+        folderId: { type: "string", description: "Folder ID to list contents of (omit or 'root' for root)" },
+        pageSize: { type: "number", description: "Max results (default 20, max 100)", default: 20 },
+      },
+    },
+  },
+  {
+    name: "drive_get_file",
+    description: "Get detailed info about a Drive file, including content (for text/docs) or metadata only.",
+    inputSchema: {
+      type: "object",
+      properties: {
+        fileId: { type: "string", description: "Drive file ID" },
+        includeContent: { type: "boolean", description: "Include file content (default true). Set false for large files.", default: true },
+      },
+      required: ["fileId"],
+    },
+  },
+  {
+    name: "drive_search_files",
+    description: "Search Drive files by name query. Returns matching file metadata.",
+    inputSchema: {
+      type: "object",
+      properties: {
+        query: { type: "string", description: "Search query (matched against file name)" },
+        pageSize: { type: "number", description: "Max results (default 20, max 100)", default: 20 },
+      },
+      required: ["query"],
+    },
+  },
+];
+
+export const calendarTools = [
+  {
+    name: "calendar_list_events",
+    description: "List upcoming events from Google Calendar. Filters by date range and optional search query.",
+    inputSchema: {
+      type: "object",
+      properties: {
+        calendarId: { type: "string", description: "Calendar ID (default: 'primary')" },
+        maxResults: { type: "number", description: "Max results (default 20, max 100)", default: 20 },
+        timeMin: { type: "string", description: "Start of date range (ISO 8601, default: now)" },
+        timeMax: { type: "string", description: "End of date range (ISO 8601, optional)" },
+        query: { type: "string", description: "Free-text search in event title/description (optional)" },
+        singleEvents: { type: "boolean", description: "Expand recurring events into instances (default true)", default: true },
+      },
+    },
+  },
+  {
+    name: "calendar_get_event",
+    description: "Get detailed info about a specific Calendar event by its event ID.",
+    inputSchema: {
+      type: "object",
+      properties: {
+        calendarId: { type: "string", description: "Calendar ID (default: 'primary')" },
+        eventId: { type: "string", description: "Calendar event ID" },
+      },
+      required: ["eventId"],
+    },
+  },
+  {
+    name: "calendar_create_event",
+    description: "Create a new event on Google Calendar. Requires start and end date/time.",
+    inputSchema: {
+      type: "object",
+      properties: {
+        calendarId: { type: "string", description: "Calendar ID (default: 'primary')" },
+        summary: { type: "string", description: "Event title" },
+        description: { type: "string", description: "Event description (optional)" },
+        location: { type: "string", description: "Event location (optional)" },
+        start: { type: "string", description: "Start date/time as ISO 8601 string, e.g. '2026-06-10T14:00:00-05:00' or '2026-06-10'" },
+        end: { type: "string", description: "End date/time as ISO 8601 string" },
+        attendees: {
+          type: "array",
+          items: { type: "string" },
+          description: "Attendee email addresses (optional)",
+        },
+        recurrence: {
+          type: "array",
+          items: { type: "string" },
+          description: "RRULE strings for recurring events, e.g. ['RRULE:FREQ=WEEKLY;BYDAY=MO'] (optional)",
+        },
+      },
+      required: ["summary", "start", "end"],
+    },
+  },
+];
+
 /** Combined list of all tools for use by the agent runner */
-export const allTools = [...trelloTools, ...gmailTools];
+export const allTools = [...trelloTools, ...gmailTools, ...driveTools, ...calendarTools];

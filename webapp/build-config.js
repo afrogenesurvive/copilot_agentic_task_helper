@@ -16,5 +16,11 @@ let content = fs.readFileSync(appJsPath, "utf8");
 const adminHash = process.env.USER_ADMIN_HASH || "";
 content = content.replace("__ADMIN_HASH__", adminHash);
 
+const webhookToken = process.env.WEBHOOK_API_TOKEN || "";
+content = content.replace("__WEBHOOK_API_TOKEN__", webhookToken);
+
+const webhookUrl = process.env.WEBHOOK_BASE_URL || "";
+content = content.replace("__WEBHOOK_BASE_URL__", webhookUrl);
+
 fs.writeFileSync(appJsPath, content, "utf8");
-console.log(`[build-config] Injected USER_ADMIN_HASH into app.js`);
+console.log(`[build-config] Injected USER_ADMIN_HASH, WEBHOOK_API_TOKEN, WEBHOOK_BASE_URL into app.js`);

@@ -1,0 +1,17 @@
+{
+  "name": "drive-mcp-server",
+  "version": "1.0.0",
+  "private": true,
+  "type": "module",
+  "description": "MCP server for Google Drive API access — list, search, and read files",
+  "main": "index.js",
+  "scripts": {
+    "start": "node index.js"
+  },
+  "dependencies": {
+    "@modelcontextprotocol/sdk": "^1.0.0",
+    "googleapis": "^144.0.0",
+    "google-auth-library": "^9.0.0",
+    "dotenv": "^16.4.0"
+  }
+}

@@ -41,6 +41,9 @@ const CONFIG = {
   // When running locally, this is the tunnel URL or localhost.
   // When deployed, set this to your tunnel URL.
   WEBHOOK_BASE_URL: "__WEBHOOK_BASE_URL__", // e.g. "https://your-tunnel.ngrok.app" or "http://localhost:3199"
+
+  // Webhook server API token (Authorization: Bearer <token>)
+  WEBHOOK_API_TOKEN: "__WEBHOOK_API_TOKEN__",
 };
 
 /* ==================================================================
@@ -549,11 +552,14 @@ async function manualRefreshStatus() {
 /** Fetch status data from the webhook server */
 async function fetchStatus() {
   const base = CONFIG.WEBHOOK_BASE_URL || "http://localhost:3199";
+  const headers = {
+    Authorization: `Bearer ${CONFIG.WEBHOOK_API_TOKEN}`,
+  };
   try {
     const [queueRes, tasksRes, rulesRes] = await Promise.all([
-      fetch(`${base}/api/queue-status`).then((r) => r.json()),
-      fetch(`${base}/api/tasks`).then((r) => r.json()),
-      fetch(`${base}/api/rules`).then((r) => r.json()),
+      fetch(`${base}/api/queue-status`, { headers }).then((r) => r.json()),
+      fetch(`${base}/api/tasks`, { headers }).then((r) => r.json()),
+      fetch(`${base}/api/rules`, { headers }).then((r) => r.json()),
     ]);
     return { queue: queueRes, tasks: tasksRes, rules: rulesRes };
   } catch {
