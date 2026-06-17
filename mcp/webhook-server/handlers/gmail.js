@@ -20,7 +20,28 @@ import { sanitizeObject } from "../../../scripts/sanitize.mjs";
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const LOG_DIR = path.resolve(__dirname, "..", "..", "..", "logs", "webhook");
+const RAW_DIR = path.resolve(LOG_DIR, "raw");
 const NOTIFY_DIR = path.resolve(__dirname, "..", "..", "..", "logs", "notifications", "gmail");
+
+/**
+ * Log the full raw webhook body before any sanitization or processing.
+ * Provides a forensic audit trail in logs/webhook/raw/YYYY-MM-DD.jsonl.
+ */
+function logRawBody(source, body) {
+  const ts = new Date().toISOString();
+  const day = ts.slice(0, 10);
+  const entry = {
+    ts,
+    source,
+    body: typeof body === "object" ? body : { raw: String(body) },
+  };
+  try {
+    fs.mkdirSync(RAW_DIR, { recursive: true });
+    fs.appendFileSync(path.join(RAW_DIR, `${day}.jsonl`), JSON.stringify(entry) + "\n");
+  } catch (err) {
+    console.error(`   ❌ [RAW] Failed to log raw body: ${err.message}`);
+  }
+}
 
 function logVerbose(entry) {
   const ts = new Date().toISOString();
@@ -132,8 +153,13 @@ export async function gmailHandler(req, res) {
   if (!body || !body.message) {
     console.log(`⚠️  [GMAIL] Unexpected body format`);
     logVerbose({ type: "invalid_body", source: "gmail", body: JSON.stringify(body).slice(0, 500) });
+    // Still dump raw body for forensic audit even if unexpected format
+    if (body) logRawBody("gmail", body);
     return res.status(400).json({ error: "Expected Pub/Sub message format" });
   }
+
+  // Dump raw webhook body for forensic audit (before any sanitization)
+  logRawBody("gmail", body);
 
   // Gmail Cloud Pub/Sub sends push notifications with base64-encoded JSON.
   // The decoded payload contains { emailAddress, historyId }.
@@ -170,14 +196,17 @@ export async function gmailHandler(req, res) {
     ts,
     source: "gmail",
     type: "new_message",
-    data: sanitizeObject({
-      direction,
-      from: details.from,
-      to: details.to,
-      subject: details.subject,
-      date: details.date,
-      snippet: details.snippet,
-    }),
+    data: sanitizeObject(
+      {
+        direction,
+        from: details.from,
+        to: details.to,
+        subject: details.subject,
+        date: details.date,
+        snippet: details.snippet,
+      },
+      { auditSource: "webhook/gmail" },
+    ),
   };
   // Strip undefined fields
   Object.keys(entry.data).forEach((k) => entry.data[k] === undefined && delete entry.data[k]);
@@ -195,17 +224,20 @@ export async function gmailHandler(req, res) {
   const event = {
     source: "gmail",
     type: "new_message",
-    data: sanitizeObject({
-      direction,
-      emailAddress,
-      historyId,
-      messageId: body.message.messageId,
-      publishTime: body.message.publishTime,
-      ...(details.from && { from: details.from }),
-      ...(details.to && { to: details.to }),
-      ...(details.subject && { subject: details.subject }),
-      ...(details.messageId && { gmailMessageId: details.messageId }),
-    }),
+    data: sanitizeObject(
+      {
+        direction,
+        emailAddress,
+        historyId,
+        messageId: body.message.messageId,
+        publishTime: body.message.publishTime,
+        ...(details.from && { from: details.from }),
+        ...(details.to && { to: details.to }),
+        ...(details.subject && { subject: details.subject }),
+        ...(details.messageId && { gmailMessageId: details.messageId }),
+      },
+      { auditSource: "webhook/gmail" },
+    ),
   };
 
   enqueueEvent(event, "misc_notifications");

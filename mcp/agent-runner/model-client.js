@@ -12,7 +12,39 @@
  *   AGENT_MODEL      — Model name (default: "deepseek-chat")
  */
 
+import fs from "fs";
+import path from "path";
+import { fileURLToPath } from "url";
 import OpenAI from "openai";
+
+const __dirname = path.dirname(fileURLToPath(import.meta.url));
+const PROMPT_LOG_DIR = path.resolve(__dirname, "..", "..", "logs", "agent-runner", "prompts");
+
+/**
+ * Log the full prompt sent to DeepSeek for audit/review.
+ * Writes to logs/agent-runner/prompts/YYYY-MM-DD.jsonl.
+ * Only active when AGENT_RUNNER_VERBOSE=true is set.
+ */
+function logPrompt(systemMessage, userContext, tools) {
+  if (process.env.AGENT_RUNNER_VERBOSE !== "true") return;
+  const ts = new Date().toISOString();
+  const day = ts.slice(0, 10);
+  const entry = {
+    ts,
+    type: "model_prompt",
+    systemMessage,
+    userContext,
+    toolCount: tools.length,
+    toolNames: tools.map((t) => t.function?.name || t.name),
+    model: process.env.AGENT_MODEL || "deepseek-v4-flash",
+  };
+  try {
+    fs.mkdirSync(PROMPT_LOG_DIR, { recursive: true });
+    fs.appendFileSync(path.join(PROMPT_LOG_DIR, `${day}.jsonl`), JSON.stringify(entry) + "\n");
+  } catch (err) {
+    console.error(`   ❌ [MODEL] Failed to log prompt: ${err.message}`);
+  }
+}
 
 const client = new OpenAI({
   apiKey: process.env.DEEPSEEK_API_KEY || "",
@@ -114,7 +146,31 @@ export async function callModel(context, toolDefs) {
 
   // Support both event objects and plain context strings
   const eventContext = typeof context === "string" ? context : buildEventContext(context);
-  const model = "deepseek-v4-flash";
+  const model = process.env.AGENT_MODEL || "deepseek-v4-flash";
+
+  const systemMessage = [
+    "You are an autonomous business workflow agent. Your job is to process incoming events",
+    "and decide what action to take. You have a full set of tools available (Trello, Gmail, Web Search).",
+    "",
+    "Context rules:",
+    "- Frontdesk events (chat messages): only read & comment tools allowed",
+    "- Non-frontdesk events: all tools available including create/update",
+    "",
+    "Available tools:",
+    "- Trello: trello_add_comment, trello_get_card, trello_list_cards, trello_get_lists, trello_get_card_actions, trello_get_checklists, trello_create_card, trello_update_card, trello_create_checklist, trello_add_checklist_item",
+    "- Gmail: gmail_list_messages, gmail_get_message, gmail_send_message",
+    "- Web: web_search (search the web), web_fetch (fetch a URL and read content)",
+    "",
+    "Rules:",
+    "- Choose ONE tool and provide ALL required parameters",
+    "- If the event is a frontdesk message, reply helpfully but don't make up information",
+    "- If you're unsure, use trello_add_comment to ask for clarification",
+    "- Never make up card IDs, list IDs, or other identifiers",
+    "- Respond only with a tool call — no explanatory text",
+  ].join("\n");
+
+  // Log the full prompt for audit when AGENT_RUNNER_VERBOSE=true
+  logPrompt(systemMessage, eventContext, tools);
 
   try {
     const response = await client.chat.completions.create({
@@ -122,26 +178,7 @@ export async function callModel(context, toolDefs) {
       messages: [
         {
           role: "system",
-          content: [
-            "You are an autonomous business workflow agent. Your job is to process incoming events",
-            "and decide what action to take. You have a full set of tools available (Trello, Gmail, Web Search).",
-            "",
-            "Context rules:",
-            "- Frontdesk events (chat messages): only read & comment tools allowed",
-            "- Non-frontdesk events: all tools available including create/update",
-            "",
-            "Available tools:",
-            "- Trello: trello_add_comment, trello_get_card, trello_list_cards, trello_get_lists, trello_get_card_actions, trello_get_checklists, trello_create_card, trello_update_card, trello_create_checklist, trello_add_checklist_item",
-            "- Gmail: gmail_list_messages, gmail_get_message, gmail_send_message",
-            "- Web: web_search (search the web), web_fetch (fetch a URL and read content)",
-            "",
-            "Rules:",
-            "- Choose ONE tool and provide ALL required parameters",
-            "- If the event is a frontdesk message, reply helpfully but don't make up information",
-            "- If you're unsure, use trello_add_comment to ask for clarification",
-            "- Never make up card IDs, list IDs, or other identifiers",
-            "- Respond only with a tool call — no explanatory text",
-          ].join("\n"),
+          content: systemMessage,
         },
         {
           role: "user",

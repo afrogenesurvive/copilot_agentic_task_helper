@@ -15,7 +15,7 @@ import { StdioServerTransport } from "@modelcontextprotocol/sdk/server/stdio.js"
 import { CallToolRequestSchema, ListToolsRequestSchema } from "@modelcontextprotocol/sdk/types.js";
 import fetch from "node-fetch";
 import "dotenv/config";
-import { sanitizeObject, logInjectionWarning } from "../../scripts/sanitize.mjs";
+import { sanitizeObject } from "../../scripts/sanitize.mjs";
 import { trelloTools } from "../../shared/tool-manifest.js";
 
 const TRELLO_KEY = process.env.TRELLO_KEY || "";
@@ -60,7 +60,7 @@ function safeText(text) {
  * Sanitize and stringify an API response object.
  */
 function safeJson(data) {
-  const sanitized = sanitizeObject(data);
+  const sanitized = sanitizeObject(data, { auditSource: "mcp/trello" });
   return { type: "text", text: JSON.stringify(sanitized, null, 2) };
 }
 

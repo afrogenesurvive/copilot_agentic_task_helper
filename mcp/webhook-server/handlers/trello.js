@@ -17,9 +17,31 @@ import { sanitizeObject } from "../../../scripts/sanitize.mjs";
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const LOG_DIR = path.resolve(__dirname, "..", "..", "..", "logs", "webhook");
+const RAW_DIR = path.resolve(LOG_DIR, "raw");
 const NOTIFY_DIR = path.resolve(__dirname, "..", "..", "..", "logs", "notifications", "trello");
 const FRONTDESK_UNAUTHORIZED_DIR = path.resolve(__dirname, "..", "..", "..", "logs", "frontdesk", "unauthorized");
 const SESSION_LOG_DIR = path.resolve(__dirname, "..", "..", "..", "logs", "frontdesk", "sessions");
+
+/**
+ * Log the full raw webhook body before any sanitization or processing.
+ * Provides a forensic audit trail in logs/webhook/raw/YYYY-MM-DD.jsonl
+ * so you can cross-reference sanitized data against the original.
+ */
+function logRawBody(source, body) {
+  const ts = new Date().toISOString();
+  const day = ts.slice(0, 10);
+  const entry = {
+    ts,
+    source,
+    body: typeof body === "object" ? body : { raw: String(body) },
+  };
+  try {
+    fs.mkdirSync(RAW_DIR, { recursive: true });
+    fs.appendFileSync(path.join(RAW_DIR, `${day}.jsonl`), JSON.stringify(entry) + "\n");
+  } catch (err) {
+    console.error(`   ❌ [RAW] Failed to log raw body: ${err.message}`);
+  }
+}
 
 function logError(msg) {
   const ts = new Date().toISOString();
@@ -44,13 +66,16 @@ function logNotification(body) {
     ts,
     source: "trello",
     type: action.type || "unknown",
-    data: sanitizeObject({
-      board: model.name || d.board?.name,
-      list: d.list?.name,
-      card: d.card?.name,
-      checklist: d.checklist?.name,
-      checkItem: d.checkItem?.name,
-    }),
+    data: sanitizeObject(
+      {
+        board: model.name || d.board?.name,
+        list: d.list?.name,
+        card: d.card?.name,
+        checklist: d.checklist?.name,
+        checkItem: d.checkItem?.name,
+      },
+      { auditSource: "webhook/trello" },
+    ),
   };
 
   // Strip undefined fields
@@ -79,6 +104,9 @@ export function trelloHandler(req, res) {
     logError("Empty body received from Trello webhook");
     return res.status(400).json({ error: "Empty body" });
   }
+
+  // Dump raw webhook body for forensic audit (before any sanitization)
+  logRawBody("trello", body);
 
   const action = body.action;
   const model = body.model;
@@ -111,9 +139,9 @@ export function trelloHandler(req, res) {
   const event = {
     source: "trello",
     type: action?.type || "unknown",
-    data: sanitizeObject(action?.data || {}),
+    data: sanitizeObject(action?.data || {}, { auditSource: "webhook/trello" }),
     board: model?.name || action?.data?.board?.name,
-    card: sanitizeObject(action?.data?.card || {}),
+    card: sanitizeObject(action?.data?.card || {}, { auditSource: "webhook/trello" }),
     list: action?.data?.list,
     timestamp: action?.date || ts,
   };

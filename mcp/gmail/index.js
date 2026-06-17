@@ -109,7 +109,7 @@ function safeText(text) {
  * Sanitize and stringify an API response object (subject, body, sender, etc.).
  */
 function safeJson(data) {
-  const sanitized = sanitizeObject(data);
+  const sanitized = sanitizeObject(data, { auditSource: "mcp/gmail" });
   return { type: "text", text: JSON.stringify(sanitized, null, 2) };
 }
 

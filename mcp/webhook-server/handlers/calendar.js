@@ -22,8 +22,29 @@ import { sanitizeObject } from "../../../scripts/sanitize.mjs";
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const LOG_DIR = path.resolve(__dirname, "..", "..", "..", "logs", "webhook");
+const RAW_DIR = path.resolve(LOG_DIR, "raw");
 const NOTIFY_DIR = path.resolve(__dirname, "..", "..", "..", "logs", "notifications", "calendar");
 const EVENT_STATE_PATH = path.resolve(__dirname, "..", "..", "..", "logs", "notifications", ".calendar-event-state.json");
+
+/**
+ * Log the full raw webhook body before any sanitization or processing.
+ * Provides a forensic audit trail in logs/webhook/raw/YYYY-MM-DD.jsonl.
+ */
+function logRawBody(source, body) {
+  const ts = new Date().toISOString();
+  const day = ts.slice(0, 10);
+  const entry = {
+    ts,
+    source,
+    body: typeof body === "object" ? body : { raw: String(body) },
+  };
+  try {
+    fs.mkdirSync(RAW_DIR, { recursive: true });
+    fs.appendFileSync(path.join(RAW_DIR, `${day}.jsonl`), JSON.stringify(entry) + "\n");
+  } catch (err) {
+    console.error(`   ❌ [RAW] Failed to log raw body: ${err.message}`);
+  }
+}
 
 function logVerbose(entry) {
   const ts = new Date().toISOString();
@@ -427,6 +448,16 @@ export async function calendarPushHandler(req, res) {
   const body = req.body || {};
   const headers = req.headers || {};
 
+  // Dump raw webhook body for forensic audit (before any sanitization)
+  logRawBody("calendar", {
+    headers: {
+      "x-goog-channel-id": headers["x-goog-channel-id"],
+      "x-goog-resource-id": headers["x-goog-resource-id"],
+      "x-goog-resource-state": headers["x-goog-resource-state"],
+    },
+    body,
+  });
+
   // Calendar HTTP headers carry channel metadata
   const channelId = headers["x-goog-channel-id"] || "?";
   const resourceId = headers["x-goog-resource-id"] || "?";
@@ -452,44 +483,47 @@ export async function calendarPushHandler(req, res) {
     ts,
     source: "calendar",
     type: resourceState === "sync" ? "sync" : "change",
-    data: sanitizeObject({
-      channelId,
-      resourceId,
-      resourceState,
-      eventCount: details.count || undefined,
-      isInitialSync: details.isInitialSync || undefined,
-      changeTypes: details.changeCounts || undefined, // <-- NEW: change type breakdown
-      events: details.events
-        ? details.events.slice(0, 20).map((e) => ({
-            id: e.id,
-            changeType: e.changeType,
-            diffs: e.diffs, // <-- NEW: human-readable change descriptions
-            summary: e.summary,
-            description: e.description,
-            status: e.status,
-            start: e.start,
-            end: e.end,
-            allDay: e.allDay,
-            location: e.location,
-            created: e.created,
-            updated: e.updated,
-            recurring: e.recurring,
-            recurrenceRule: e.recurrenceRule,
-            sequence: e.sequence,
-            organizer: e.organizer,
-            creator: e.creator,
-            attendees: e.attendees,
-            responses: e.responses,
-            link: e.link,
-            conference: e.conference,
-            attachments: e.attachments,
-            transparency: e.transparency,
-            visibility: e.visibility,
-            guestsCanModify: e.guestsCanModify,
-            locked: e.locked,
-          }))
-        : undefined,
-    }),
+    data: sanitizeObject(
+      {
+        channelId,
+        resourceId,
+        resourceState,
+        eventCount: details.count || undefined,
+        isInitialSync: details.isInitialSync || undefined,
+        changeTypes: details.changeCounts || undefined,
+        events: details.events
+          ? details.events.slice(0, 20).map((e) => ({
+              id: e.id,
+              changeType: e.changeType,
+              diffs: e.diffs,
+              summary: e.summary,
+              description: e.description,
+              status: e.status,
+              start: e.start,
+              end: e.end,
+              allDay: e.allDay,
+              location: e.location,
+              created: e.created,
+              updated: e.updated,
+              recurring: e.recurring,
+              recurrenceRule: e.recurrenceRule,
+              sequence: e.sequence,
+              organizer: e.organizer,
+              creator: e.creator,
+              attendees: e.attendees,
+              responses: e.responses,
+              link: e.link,
+              conference: e.conference,
+              attachments: e.attachments,
+              transparency: e.transparency,
+              visibility: e.visibility,
+              guestsCanModify: e.guestsCanModify,
+              locked: e.locked,
+            }))
+          : undefined,
+      },
+      { auditSource: "webhook/calendar" },
+    ),
   };
   Object.keys(entry.data).forEach((k) => entry.data[k] === undefined && delete entry.data[k]);
   logNotification(entry);
@@ -507,28 +541,31 @@ export async function calendarPushHandler(req, res) {
   const event = {
     source: "calendar",
     type: resourceState === "sync" ? "sync" : "change",
-    data: sanitizeObject({
-      channelId,
-      resourceId,
-      resourceState,
-      eventCount: details.count || 0,
-      isInitialSync: details.isInitialSync || false,
-      changeTypes: details.changeCounts || {},
-      events: details.events
-        ? details.events.slice(0, 20).map((e) => ({
-            id: e.id,
-            changeType: e.changeType,
-            diffs: e.diffs,
-            summary: e.summary,
-            status: e.status,
-            start: e.start,
-            end: e.end,
-            allDay: e.allDay,
-            location: e.location,
-            sequence: e.sequence,
-          }))
-        : [],
-    }),
+    data: sanitizeObject(
+      {
+        channelId,
+        resourceId,
+        resourceState,
+        eventCount: details.count || 0,
+        isInitialSync: details.isInitialSync || false,
+        changeTypes: details.changeCounts || {},
+        events: details.events
+          ? details.events.slice(0, 20).map((e) => ({
+              id: e.id,
+              changeType: e.changeType,
+              diffs: e.diffs,
+              summary: e.summary,
+              status: e.status,
+              start: e.start,
+              end: e.end,
+              allDay: e.allDay,
+              location: e.location,
+              sequence: e.sequence,
+            }))
+          : [],
+      },
+      { auditSource: "webhook/calendar" },
+    ),
   };
 
   enqueueEvent(event, "misc_notifications");

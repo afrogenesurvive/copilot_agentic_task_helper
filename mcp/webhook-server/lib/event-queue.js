@@ -87,7 +87,7 @@ function loadAll() {
           try {
             const parsed = JSON.parse(line);
             parsed._reloaded = true;
-            stores[name].push(sanitizeObject(parsed));
+            stores[name].push(sanitizeObject(parsed, { auditSource: "event-queue/reload" }));
           } catch {
             /* skip malformed */
           }
@@ -107,7 +107,7 @@ function loadAll() {
           const parsed = JSON.parse(line);
           parsed._reloaded = true;
           parsed._migrated = true;
-          const sanitized = sanitizeObject(parsed);
+          const sanitized = sanitizeObject(parsed, { auditSource: "event-queue/migration" });
           // Tool dispatch events go to priority, everything else to misc
           if (parsed.source === "tool_dispatch") {
             stores.priority.push(sanitized);
@@ -137,7 +137,7 @@ function saveAll() {
   try {
     fs.mkdirSync(QUEUE_DIR, { recursive: true });
     for (const name of Object.keys(QUEUES)) {
-      const sanitized = stores[name].map((e) => sanitizeObject(e));
+      const sanitized = stores[name].map((e) => sanitizeObject(e, { auditSource: "event-queue/saveAll" }));
       const content = sanitized.map((e) => JSON.stringify(e)).join("\n") + "\n";
       fs.writeFileSync(queueFilePath(name), content, "utf8");
     }
@@ -164,7 +164,7 @@ for (const name of Object.keys(QUEUES)) {
 function saveQueue(name) {
   try {
     fs.mkdirSync(QUEUE_DIR, { recursive: true });
-    const sanitized = stores[name].map((e) => sanitizeObject(e));
+    const sanitized = stores[name].map((e) => sanitizeObject(e, { auditSource: "event-queue/saveQueue" }));
     const content = sanitized.map((e) => JSON.stringify(e)).join("\n") + "\n";
     fs.writeFileSync(queueFilePath(name), content, "utf8");
   } catch (err) {
@@ -182,7 +182,7 @@ export function enqueueEvent(event, queueName = "misc_notifications") {
   const name = QUEUES[queueName] ? queueName : "misc_notifications";
   const id = `${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
   const seqNo = nextSeqNo++;
-  const sanitized = sanitizeObject(event);
+  const sanitized = sanitizeObject(event, { auditSource: "event-queue/enqueue" });
   const entry = { id, seqNo, ...sanitized, queuedAt: new Date().toISOString(), _queue: name };
   stores[name].push(entry);
   saveQueue(name);

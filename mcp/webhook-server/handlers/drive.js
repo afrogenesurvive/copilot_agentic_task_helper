@@ -24,7 +24,28 @@ import { sanitizeObject } from "../../../scripts/sanitize.mjs";
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const LOG_DIR = path.resolve(__dirname, "..", "..", "..", "logs", "webhook");
+const RAW_DIR = path.resolve(LOG_DIR, "raw");
 const NOTIFY_DIR = path.resolve(__dirname, "..", "..", "..", "logs", "notifications", "drive");
+
+/**
+ * Log the full raw webhook body before any sanitization or processing.
+ * Provides a forensic audit trail in logs/webhook/raw/YYYY-MM-DD.jsonl.
+ */
+function logRawBody(source, body) {
+  const ts = new Date().toISOString();
+  const day = ts.slice(0, 10);
+  const entry = {
+    ts,
+    source,
+    body: typeof body === "object" ? body : { raw: String(body) },
+  };
+  try {
+    fs.mkdirSync(RAW_DIR, { recursive: true });
+    fs.appendFileSync(path.join(RAW_DIR, `${day}.jsonl`), JSON.stringify(entry) + "\n");
+  } catch (err) {
+    console.error(`   ❌ [RAW] Failed to log raw body: ${err.message}`);
+  }
+}
 
 function logVerbose(entry) {
   const ts = new Date().toISOString();
@@ -194,6 +215,17 @@ export async function drivePushHandler(req, res) {
   const body = req.body || {};
   const headers = req.headers || {};
 
+  // Dump raw webhook body for forensic audit (before any sanitization)
+  logRawBody("drive", {
+    headers: {
+      "x-goog-channel-id": headers["x-goog-channel-id"],
+      "x-goog-resource-id": headers["x-goog-resource-id"],
+      "x-goog-resource-state": headers["x-goog-resource-state"],
+      "x-goog-changed": headers["x-goog-changed"],
+    },
+    body,
+  });
+
   // Drive HTTP headers carry channel metadata
   const channelId = headers["x-goog-channel-id"] || "?";
   const resourceId = headers["x-goog-resource-id"] || "?";
@@ -221,39 +253,42 @@ export async function drivePushHandler(req, res) {
     ts,
     source: "drive",
     type: resourceState === "sync" ? "sync" : "change",
-    data: sanitizeObject({
-      channelId,
-      resourceId,
-      resourceState,
-      changed: changed || undefined,
-      changeCount: details.count || undefined,
-      changeTypes: details.changeCounts || undefined, // <-- NEW: change class breakdown
-      files: details.changes
-        ? details.changes.slice(0, 20).map((f) => ({
-            fileId: f.fileId,
-            changeClass: f.changeClass, // <-- NEW: "deleted" or "modified"
-            name: f.name,
-            mimeType: f.mimeType,
-            size: f.size,
-            removed: f.removed,
-            trashed: f.trashed, // <-- NEW
-            changeType: f.changeType,
-            directory: f.directory,
-            modifiedTime: f.modifiedTime,
-            createdTime: f.createdTime,
-            lastModifiedBy: f.lastModifiedBy,
-            lastModifiedByEmail: f.lastModifiedByEmail, // <-- NEW
-            owners: f.owners, // <-- NEW: richer owner data
-            shared: f.shared,
-            webViewLink: f.webViewLink,
-            version: f.version, // <-- NEW
-            md5Checksum: f.md5Checksum, // <-- NEW
-            capabilities: f.capabilities, // <-- NEW
-            viewedByMe: f.viewedByMe, // <-- NEW
-            viewedByMeTime: f.viewedByMeTime, // <-- NEW
-          }))
-        : undefined,
-    }),
+    data: sanitizeObject(
+      {
+        channelId,
+        resourceId,
+        resourceState,
+        changed: changed || undefined,
+        changeCount: details.count || undefined,
+        changeTypes: details.changeCounts || undefined,
+        files: details.changes
+          ? details.changes.slice(0, 20).map((f) => ({
+              fileId: f.fileId,
+              changeClass: f.changeClass,
+              name: f.name,
+              mimeType: f.mimeType,
+              size: f.size,
+              removed: f.removed,
+              trashed: f.trashed,
+              changeType: f.changeType,
+              directory: f.directory,
+              modifiedTime: f.modifiedTime,
+              createdTime: f.createdTime,
+              lastModifiedBy: f.lastModifiedBy,
+              lastModifiedByEmail: f.lastModifiedByEmail,
+              owners: f.owners,
+              shared: f.shared,
+              webViewLink: f.webViewLink,
+              version: f.version,
+              md5Checksum: f.md5Checksum,
+              capabilities: f.capabilities,
+              viewedByMe: f.viewedByMe,
+              viewedByMeTime: f.viewedByMeTime,
+            }))
+          : undefined,
+      },
+      { auditSource: "webhook/drive" },
+    ),
   };
   // Strip undefined keys
   Object.keys(entry.data).forEach((k) => entry.data[k] === undefined && delete entry.data[k]);
@@ -271,15 +306,20 @@ export async function drivePushHandler(req, res) {
   const event = {
     source: "drive",
     type: resourceState === "sync" ? "sync" : "change",
-    data: sanitizeObject({
-      channelId,
-      resourceId,
-      resourceState,
-      changed,
-      changeCount: details.count || 0,
-      changeTypes: details.changeCounts || {},
-      changes: details.changes ? details.changes.slice(0, 20) : [],
-    }),
+    data: sanitizeObject(
+      {
+        channelId,
+        resourceId,
+        resourceState,
+        changed,
+        changeCount: details.count || 0,
+        changeTypes: details.changeCounts || {},
+        changes: details.changes
+          ? details.changes.slice(0, 20).map((f) => ({ fileId: f.fileId, name: f.name, mimeType: f.mimeType, removed: f.removed }))
+          : [],
+      },
+      { auditSource: "webhook/drive" },
+    ),
   };
 
   enqueueEvent(event, "misc_notifications");

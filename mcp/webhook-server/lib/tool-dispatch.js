@@ -109,7 +109,7 @@ export function dispatch(event) {
     const params = {};
     if (rule.params) {
       for (const [key, value] of Object.entries(rule.params)) {
-        params[key] = typeof value === "string" ? sanitizeObject(interpolate(value, event)) : value;
+        params[key] = typeof value === "string" ? sanitizeObject(interpolate(value, event), { auditSource: "tool-dispatch/interpolate" }) : value;
       }
     }
 
@@ -121,7 +121,7 @@ export function dispatch(event) {
         data: {
           rule: rule.name, // Human-readable rule name (e.g., "Frontdesk input")
           tool: rule.tool, // MCP tool to call (e.g., "trello_add_comment")
-          params: sanitizeObject(params), // Pre-interpolated params for the tool
+          params: sanitizeObject(params, { auditSource: "tool-dispatch/enqueue" }), // Pre-interpolated params for the tool
           originalEvent: { source: event.source, type: event.type, data: event.data },
         },
       },
