@@ -30,7 +30,7 @@ function safeText(text) {
 }
 
 function safeJson(data) {
-  const sanitized = sanitizeObject(data);
+  const sanitized = sanitizeObject(data, { auditSource: "mcp/web-search" });
   return { type: "text", text: JSON.stringify(sanitized, null, 2) };
 }
 
