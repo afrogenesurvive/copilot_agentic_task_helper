@@ -154,6 +154,10 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
       result = await handleAddChecklistItem(args);
       summary = `added item "${args.name}"`;
       break;
+    case "trello_create_list":
+      result = await handleCreateList(args);
+      summary = `created list "${args.name}"`;
+      break;
     default:
       result = { content: [{ type: "text", text: `Unknown tool: ${name}` }], isError: true };
       summary = "unknown tool";
@@ -298,6 +302,19 @@ async function handleAddChecklistItem(args) {
     return { content: [safeJson({ id: data.id, name: data.name, state: data.state })] };
   } catch (err) {
     return { content: [safeText(`Error adding checklist item: ${err.message}`)], isError: true };
+  }
+}
+
+async function handleCreateList(args) {
+  const { boardId, name } = args;
+  if (!boardId || !name) {
+    return { content: [safeText("Missing required parameters: boardId, name")], isError: true };
+  }
+  try {
+    const data = await trelloFetch(trelloUrl(`/boards/${boardId}/lists`, { name }), { method: "POST" });
+    return { content: [safeJson({ id: data.id, name: data.name })] };
+  } catch (err) {
+    return { content: [safeText(`Error creating list: ${err.message}`)], isError: true };
   }
 }
 
