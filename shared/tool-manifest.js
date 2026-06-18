@@ -62,7 +62,7 @@ export const trelloTools = [
   },
   {
     name: "trello_update_card",
-    description: "Update a Trello card's fields (name, desc, pos, etc.)",
+    description: "Update a Trello card's fields (name, desc, pos, idList, closed). Use idList to move a card to a different list.",
     inputSchema: {
       type: "object",
       properties: {
@@ -71,6 +71,7 @@ export const trelloTools = [
         desc: { type: "string", description: "New description (optional)" },
         pos: { type: "string", description: "Position: 'top', 'bottom', or a number (optional)" },
         closed: { type: "boolean", description: "Archive/unarchive card (optional)" },
+        idList: { type: "string", description: "Move card to a different list by providing the target list ID (optional)" },
       },
       required: ["cardId"],
     },
@@ -135,6 +136,18 @@ export const trelloTools = [
         checked: { type: "boolean", description: "Whether the item should start checked (optional, default false)" },
       },
       required: ["checklistId", "name"],
+    },
+  },
+  {
+    name: "trello_create_list",
+    description: "Create a new list on a Trello board",
+    inputSchema: {
+      type: "object",
+      properties: {
+        boardId: { type: "string", description: "Board ID to create the list on" },
+        name: { type: "string", description: "List name" },
+      },
+      required: ["boardId", "name"],
     },
   },
 ];
