@@ -1,16 +1,18 @@
 #!/usr/bin/env node
 
 /**
- * Agent Runner — Autonomous queue processor
+ * Agent Runner — Autonomous queue processor (watch mode)
  *
- * Polls the priority queue, sends events to DeepSeek V4 with tool
- * definitions from the shared manifest, validates the model's chosen
- * tool against the allowlist, executes it, and marks the event cleared.
+ * Listens for trigger file changes from the webhook server, then processes
+ * priority queue items via DeepSeek V4. No polling — event-driven.
  *
  * Usage:
  *   node mcp/agent-runner/index.js             # Start in foreground
  *   AGENT_RUNNER_ENABLED=false node ...        # Dry run (no processing)
- *   AGENT_POLL_INTERVAL=10000 node ...         # Custom poll interval
+ *
+ * On startup, the runner checks the queue once. After that, it sits idle
+ * until the webhook server touches .runner-trigger (on every priority
+ * enqueue). A slow fallback timer checks for daily tasks only.
  *
  * Toggle from chat:
  *   Start: node mcp/agent-runner/index.js &
@@ -43,8 +45,15 @@ const PID_FILE = path.resolve(__dirname, ".runner.pid");
 
 // ── Config ──
 
-const POLL_INTERVAL = parseInt(process.env.AGENT_POLL_INTERVAL || "5000", 10);
 const ENABLED = process.env.AGENT_RUNNER_ENABLED !== "false";
+
+// Trigger file path — the webhook server touches this whenever it
+// enqueues a priority item, waking the runner up (no polling).
+const TRIGGER_FILE = path.resolve(__dirname, "..", "..", "logs", "pending-tool-calls", ".runner-trigger");
+
+// Slow fallback for daily task checking only (queue triggered via fs.watch).
+// Default: every 60 seconds. Set to 0 to disable fallback entirely.
+const TASK_CHECK_INTERVAL = parseInt(process.env.AGENT_TASK_INTERVAL || "60000", 10);
 
 // ── Helpers ──
 
@@ -261,9 +270,16 @@ async function processTask(task) {
   }
 }
 
+// Guard to prevent concurrent mainLoop runs
+let isProcessing = false;
+
 async function mainLoop() {
+  if (isProcessing) return;
+  isProcessing = true;
+
   if (!ENABLED) {
     console.log(`   ⏸️  [RUNNER] Disabled (AGENT_RUNNER_ENABLED=false)`);
+    isProcessing = false;
     return;
   }
 
@@ -273,20 +289,28 @@ async function mainLoop() {
     console.log(`\n   🔔 [RUNNER] ${pending.length} pending item(s) detected in priority queue`);
     const event = pending[0];
     await processEvent(event);
+    isProcessing = false;
     return;
   }
 
   // Queue empty — check for uncompleted tasks
   const tasks = readTasks();
   const pendingTasks = tasks.filter((t) => !t.checked);
-  if (pendingTasks.length === 0) return;
+  if (pendingTasks.length === 0) {
+    isProcessing = false;
+    return;
+  }
 
   // Skip tasks already being processed by another cycle
   const availableTask = pendingTasks.find((t) => !isTaskLocked(t.lineIndex));
-  if (!availableTask) return;
+  if (!availableTask) {
+    isProcessing = false;
+    return;
+  }
 
   console.log(`\n   🔔 [RUNNER] ${pendingTasks.length} uncompleted task(s) in daily task list`);
   await processTask(availableTask);
+  isProcessing = false;
 }
 
 // ── Startup ──
@@ -296,7 +320,8 @@ function printBanner() {
   console.log(`\n${line}`);
   console.log(`   🤖 Agent Runner`);
   console.log(`   📡 DeepSeek V4`);
-  console.log(`   📋 Polling queue every ${POLL_INTERVAL / 1000}s`);
+  console.log(`   � Watch mode (triggered by webhook server via .runner-trigger)`);
+  console.log(`   📋 Task fallback: every ${TASK_CHECK_INTERVAL / 1000}s (AGENT_TASK_INTERVAL)`);
   console.log(`   🛡️  ${allTools.length} tools available (allowlist restricts to safe subset)`);
   console.log(`${line}\n`);
 
@@ -306,10 +331,42 @@ function printBanner() {
 
 printBanner();
 
-// Start the polling loop
-const interval = setInterval(mainLoop, POLL_INTERVAL);
+// ── Trigger file watcher (event-driven) ──
+// The webhook server touches .runner-trigger whenever it enqueues
+// a priority item. We watch it instead of polling the JSONL file.
 
-// Run once immediately
+// Ensure the trigger file exists (fs.watch will fail if it doesn't)
+try {
+  if (!fs.existsSync(TRIGGER_FILE)) {
+    fs.writeFileSync(TRIGGER_FILE, "");
+  }
+} catch {
+  /* ignore */
+}
+
+// Debounce timer for fs.watch (macOS can fire multiple rapid events)
+let watchTimer = null;
+
+const triggerWatcher = fs.watch(TRIGGER_FILE, () => {
+  if (watchTimer) clearTimeout(watchTimer);
+  watchTimer = setTimeout(() => mainLoop(), 100);
+});
+
+// ── Fallback timer for daily tasks ──
+// Priority queue changes are triggered via fs.watch above, but daily
+// task file changes aren't tracked. This slow fallback picks up tasks.
+let taskTimer = null;
+if (TASK_CHECK_INTERVAL > 0) {
+  taskTimer = setInterval(() => {
+    // Only bother if the queue is empty (otherwise mainLoop already runs)
+    const pending = readPending();
+    if (pending.length === 0) {
+      mainLoop();
+    }
+  }, TASK_CHECK_INTERVAL);
+}
+
+// Run once immediately on startup (handles backlog + tasks)
 mainLoop();
 
 // ── Interactive terminal ──
@@ -369,7 +426,9 @@ rl.on("line", (input) => {
 
 function shutdown() {
   console.log(`\n   ⏹️  [RUNNER] Shutting down...`);
-  clearInterval(interval);
+  if (watchTimer) clearTimeout(watchTimer);
+  triggerWatcher.close();
+  if (taskTimer) clearInterval(taskTimer);
   rl.close();
   try {
     fs.unlinkSync(PID_FILE);

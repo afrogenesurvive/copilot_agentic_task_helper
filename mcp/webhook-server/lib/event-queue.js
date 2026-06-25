@@ -31,6 +31,10 @@ import { sanitizeObject } from "../../../scripts/sanitize.mjs";
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const QUEUE_DIR = path.resolve(__dirname, "..", "..", "..", "logs", "pending-tool-calls");
 
+// Trigger file — when a priority item is enqueued, this file is touched so
+// the agent runner (watch mode) can react immediately instead of polling.
+const TRIGGER_FILE = path.resolve(QUEUE_DIR, ".runner-trigger");
+
 // Named queue definitions — each gets its own JSONL file on disk for crash recovery.
 // - priority:            urgent items needing attention (tool dispatch + authorized frontdesk)
 // - misc_notifications:  everything else (raw webhooks, daily review fodder)
@@ -173,6 +177,19 @@ function saveQueue(name) {
 }
 
 /**
+ * Signal the agent runner that new priority items are available.
+ * Touches the .runner-trigger file so an fs.watch-based runner
+ * can react immediately instead of polling.
+ */
+function signalAgentRunner() {
+  try {
+    fs.writeFileSync(TRIGGER_FILE, String(Date.now()));
+  } catch {
+    // Runner may not be running — that's fine
+  }
+}
+
+/**
  * Add an event to a named queue.
  * @param {object} event — Event object with source, type, data, etc.
  * @param {string} [queueName] — Queue name: 'priority' or 'misc_notifications' (default)
@@ -187,6 +204,10 @@ export function enqueueEvent(event, queueName = "misc_notifications") {
   stores[name].push(entry);
   saveQueue(name);
   console.log(`   📋 [QUEUE] Enqueued #${seqNo} → "${name}" (${event.source}/${event.type})`);
+  // Notify the agent runner if this was a priority queue item
+  if (name === "priority") {
+    signalAgentRunner();
+  }
   return id;
 }
 
