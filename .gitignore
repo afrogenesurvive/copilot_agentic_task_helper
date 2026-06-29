@@ -16,8 +16,12 @@ logs/
 
 # ── Build output & local data ──
 safe/
+tokens/
 dist/
 build/
+
+# ── Transcription Agent Service (self-contained, gitignored) ──
+transcription-agent/
 .next/
 
 # ── Runner ──
