@@ -19,19 +19,46 @@ import "dotenv/config";
 import { sanitizeObject } from "../../scripts/sanitize.mjs";
 import { gmailTools } from "../../shared/tool-manifest.js";
 
-/* ── Auth ── */
+/* ── Auth (multi-account support) ── */
 
-function getAuthClient() {
-  const { GMAIL_CLIENT_ID, GMAIL_CLIENT_SECRET, GMAIL_REFRESH_TOKEN } = process.env;
-  if (!GMAIL_CLIENT_ID || !GMAIL_CLIENT_SECRET || !GMAIL_REFRESH_TOKEN) {
-    throw new Error("Missing Gmail OAuth2 credentials in environment");
+/**
+ * Map of userId → { gmail, userEmail }
+ * Supports:
+ *   "default"           → GMAIL_USER (michael.grandison@gmail.com)
+ *   "entclinicmobay"     → GMAIL_USER_2 (entclinicmobay@gmail.com)
+ */
+const clients = new Map();
+
+function getGmailClient(userId = "default") {
+  if (clients.has(userId)) return clients.get(userId);
+
+  const { GMAIL_CLIENT_ID, GMAIL_CLIENT_SECRET } = process.env;
+  if (!GMAIL_CLIENT_ID || !GMAIL_CLIENT_SECRET) {
+    throw new Error("Missing Gmail OAuth2 credentials (GMAIL_CLIENT_ID, GMAIL_CLIENT_SECRET) in environment");
   }
-  const oauth2 = new OAuth2Client(GMAIL_CLIENT_ID, GMAIL_CLIENT_SECRET);
-  oauth2.setCredentials({ refresh_token: GMAIL_REFRESH_TOKEN });
-  return oauth2;
-}
 
-const gmail = google.gmail({ version: "v1", auth: getAuthClient() });
+  let refreshToken, userEmail;
+  if (userId === "default") {
+    refreshToken = process.env.GMAIL_REFRESH_TOKEN;
+    userEmail = process.env.GMAIL_USER || "me";
+  } else if (userId === "entclinicmobay") {
+    refreshToken = process.env.GMAIL_REFRESH_TOKEN_2;
+    userEmail = process.env.GMAIL_USER_2 || "me";
+  } else {
+    throw new Error(`Unknown Gmail userId: "${userId}". Supported: "default", "entclinicmobay"`);
+  }
+
+  if (!refreshToken) {
+    throw new Error(`Missing GMAIL_REFRESH_TOKEN${userId !== "default" ? "_2" : ""} in environment for userId "${userId}"`);
+  }
+
+  const oauth2 = new OAuth2Client(GMAIL_CLIENT_ID, GMAIL_CLIENT_SECRET);
+  oauth2.setCredentials({ refresh_token: refreshToken });
+  const gmail = google.gmail({ version: "v1", auth: oauth2 });
+  const client = { gmail, userEmail };
+  clients.set(userId, client);
+  return client;
+}
 
 /* ── Helpers ── */
 
@@ -197,14 +224,15 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
 async function handleListMessages(args) {
   const query = args.query || "";
   const maxResults = Math.min(args.maxResults || 10, 100);
-  const userId = process.env.GMAIL_USER || "me";
+  const userId = args.userId || "default";
+  const { gmail, userEmail } = getGmailClient(userId);
 
   try {
-    const res = await gmail.users.messages.list({ userId, q: query, maxResults });
+    const res = await gmail.users.messages.list({ userId: userEmail, q: query, maxResults });
     const messages = res.data.messages || [];
     const detailed = await Promise.all(
       messages.map(async (m) => {
-        const detail = await gmail.users.messages.get({ userId, id: m.id, format: "metadata" });
+        const detail = await gmail.users.messages.get({ userId: userEmail, id: m.id, format: "metadata" });
         return formatMessage(detail.data, "metadata");
       }),
     );
@@ -220,11 +248,12 @@ async function handleGetMessage(args) {
     return { content: [safeText("Missing required parameter: id")], isError: true };
   }
   const format = args.format || "full";
-  const userId = process.env.GMAIL_USER || "me";
+  const userId = args.userId || "default";
+  const { gmail, userEmail } = getGmailClient(userId);
 
   try {
     const res = await gmail.users.messages.get({
-      userId,
+      userId: userEmail,
       id,
       format: format === "metadata" ? "metadata" : "full",
     });
@@ -239,10 +268,11 @@ async function handleSendMessage(args) {
   if (!to || !subject || !body) {
     return { content: [safeText("Missing required parameters: to, subject, body")], isError: true };
   }
-  const userId = process.env.GMAIL_USER || "me";
+  const userId = args.userId || "default";
+  const { gmail, userEmail } = getGmailClient(userId);
 
   try {
-    const from = userId;
+    const from = userEmail;
     const mime = [
       `From: ${from}`,
       `To: ${to}`,
@@ -254,7 +284,7 @@ async function handleSendMessage(args) {
       body,
     ].join("\r\n");
     const encoded = Buffer.from(mime).toString("base64").replace(/\+/g, "-").replace(/\//g, "_").replace(/=+$/, "");
-    const res = await gmail.users.messages.send({ userId, requestBody: { raw: encoded } });
+    const res = await gmail.users.messages.send({ userId: userEmail, requestBody: { raw: encoded } });
     return { content: [safeJson({ id: res.data.id, threadId: res.data.threadId })] }; // Sanitize defensively
   } catch (err) {
     return { content: [safeText(`Error sending message: ${err.message}`)], isError: true };
