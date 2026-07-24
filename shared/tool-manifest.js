@@ -155,18 +155,24 @@ export const trelloTools = [
 export const gmailTools = [
   {
     name: "gmail_list_messages",
-    description: "List Gmail messages matching a search query",
+    description: "List Gmail messages matching a search query. Supports multiple Gmail accounts via the userId parameter.",
     inputSchema: {
       type: "object",
       properties: {
         query: { type: "string", description: "Gmail search query (same as search box syntax)" },
         maxResults: { type: "number", description: "Max results (default 10, max 100)", default: 10 },
+        userId: {
+          type: "string",
+          description:
+            "Gmail account to use. 'default' (michael.grandison@gmail.com) or 'entclinicmobay' (entclinicmobay@gmail.com). Default: 'default'.",
+          default: "default",
+        },
       },
     },
   },
   {
     name: "gmail_get_message",
-    description: "Get a Gmail message by ID with full body content",
+    description: "Get a Gmail message by ID with full body content. Supports multiple Gmail accounts via the userId parameter.",
     inputSchema: {
       type: "object",
       properties: {
@@ -177,19 +183,31 @@ export const gmailTools = [
           description: "'full' returns decoded body + headers; 'metadata' returns headers + snippet",
           default: "full",
         },
+        userId: {
+          type: "string",
+          description:
+            "Gmail account to use. 'default' (michael.grandison@gmail.com) or 'entclinicmobay' (entclinicmobay@gmail.com). Default: 'default'.",
+          default: "default",
+        },
       },
       required: ["id"],
     },
   },
   {
     name: "gmail_send_message",
-    description: "Send a plain text email",
+    description: "Send a plain text email. Supports multiple Gmail accounts via the userId parameter.",
     inputSchema: {
       type: "object",
       properties: {
         to: { type: "string", description: "Recipient email address" },
         subject: { type: "string", description: "Email subject" },
         body: { type: "string", description: "Email body text" },
+        userId: {
+          type: "string",
+          description:
+            "Gmail account to use. 'default' (michael.grandison@gmail.com) or 'entclinicmobay' (entclinicmobay@gmail.com). Default: 'default'.",
+          default: "default",
+        },
       },
       required: ["to", "subject", "body"],
     },
@@ -596,5 +614,93 @@ export const webSearchTools = [
   },
 ];
 
+export const sheetsTools = [
+  {
+    name: "sheets_get_values",
+    description: "Read cell values from a Google Sheet by range. Returns a 2D array of values. Example range: 'Sheet1!A1:G50'.",
+    inputSchema: {
+      type: "object",
+      properties: {
+        spreadsheetId: { type: "string", description: "Google Sheet ID (from the sheet's URL)" },
+        range: { type: "string", description: "A1 notation range, e.g. 'Sheet1!A1:G100' or 'Sheet1!A:A'" },
+      },
+      required: ["spreadsheetId", "range"],
+    },
+  },
+  {
+    name: "sheets_update_values",
+    description: "Write values to a range in a Google Sheet. Provide a 2D array of values. Replaces existing content in the range.",
+    inputSchema: {
+      type: "object",
+      properties: {
+        spreadsheetId: { type: "string", description: "Google Sheet ID" },
+        range: { type: "string", description: "A1 notation range to write to, e.g. 'Sheet1!A2:G10'" },
+        values: {
+          type: "array",
+          items: { type: "array", items: { type: ["string", "number", "null"] } },
+          description: "2D array of values to write. Each inner array is a row.",
+        },
+      },
+      required: ["spreadsheetId", "range", "values"],
+    },
+  },
+  {
+    name: "sheets_insert_rows",
+    description: "Insert blank rows at a specific position in a Google Sheet. Use startIndex=1 to insert after the header row (top of data).",
+    inputSchema: {
+      type: "object",
+      properties: {
+        spreadsheetId: { type: "string", description: "Google Sheet ID" },
+        sheetId: {
+          type: "number",
+          description: "Sheet grid ID (0 for the first sheet). Get from sheets_get_metadata.",
+        },
+        startIndex: {
+          type: "number",
+          description: "0-based row index where to insert. 0 = top of sheet. 1 = after first row.",
+        },
+        numRows: { type: "number", description: "Number of rows to insert", default: 1 },
+      },
+      required: ["spreadsheetId", "sheetId", "startIndex"],
+    },
+  },
+  {
+    name: "sheets_copy_paste_format",
+    description:
+      "Copy formatting (fonts, fills, borders, alignment) from a source range to a target range in a Google Sheet. Useful for applying template formatting to new rows.",
+    inputSchema: {
+      type: "object",
+      properties: {
+        spreadsheetId: { type: "string", description: "Google Sheet ID" },
+        sourceSheetId: { type: "number", description: "Sheet grid ID of the source (0 for first sheet)" },
+        sourceStartRow: { type: "number", description: "0-based start row of source range" },
+        sourceEndRow: { type: "number", description: "0-based end row of source range (exclusive)" },
+        sourceStartCol: { type: "number", description: "0-based start column of source range", default: 0 },
+        sourceEndCol: { type: "number", description: "0-based end column of source range (exclusive)", default: 7 },
+        targetSheetId: { type: "number", description: "Sheet grid ID of the target (0 for first sheet)" },
+        targetStartRow: { type: "number", description: "0-based start row of target range" },
+        pasteType: {
+          type: "string",
+          enum: ["PASTE_FORMAT", "PASTE_NORMAL", "PASTE_VALUES", "PASTE_FORMULA"],
+          description: "What to paste. Default: 'PASTE_FORMAT' (formatting only).",
+          default: "PASTE_FORMAT",
+        },
+      },
+      required: ["spreadsheetId", "sourceSheetId", "sourceStartRow", "sourceEndRow", "targetSheetId", "targetStartRow"],
+    },
+  },
+  {
+    name: "sheets_get_metadata",
+    description: "Get metadata about a Google Sheet: sheet names, grid IDs, row/column counts, and frozen row/column info.",
+    inputSchema: {
+      type: "object",
+      properties: {
+        spreadsheetId: { type: "string", description: "Google Sheet ID" },
+      },
+      required: ["spreadsheetId"],
+    },
+  },
+];
+
 /** Combined list of all tools for use by the agent runner */
-export const allTools = [...trelloTools, ...gmailTools, ...driveTools, ...calendarTools, ...webSearchTools];
+export const allTools = [...trelloTools, ...gmailTools, ...driveTools, ...calendarTools, ...webSearchTools, ...sheetsTools];
