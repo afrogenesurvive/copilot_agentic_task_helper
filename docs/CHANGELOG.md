@@ -1,5 +1,16 @@
 # Changelog
 
+## [main-2] — 2026-07-26
+
+### Added
+
+- **`safe/repo_master_list.md`**: Created comprehensive inventory of all 46 repos for account `afrogenesurvive` with license and visibility info.
+
+### Changed
+
+- **40 repo licenses updated** via GitHub API — 22 repos set to MIT, 17 to Apache-2.0, 1 changed from MIT→Apache-2.0, 1 changed from Apache-2.0→MIT.
+- **`safe/repo_master_list.md`**: Updated to reflect current license states after all changes applied.
+
 ## [main-1] — 2026-07-24
 
 ### Added
