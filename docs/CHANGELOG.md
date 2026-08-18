@@ -1,5 +1,12 @@
 # Changelog
 
+## [main-3] — 2026-08-18
+
+### Changed
+
+- **Prompt-injection sanitization plumbing**: The sanitizer now loads via a tracked stub module backed by a local (untracked) implementation. All MCP servers and webhook handlers were updated to use the new module — no functional change.
+- **Repository history**: Removed the original `scripts/sanitize.mjs` module from all commit history (history rewritten and force-pushed to `main`).
+
 ## [main-2] — 2026-07-26
 
 ### Added
