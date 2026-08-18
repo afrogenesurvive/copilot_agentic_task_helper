@@ -26,7 +26,7 @@
 import fs from "fs";
 import path from "path";
 import { fileURLToPath } from "url";
-import { sanitizeObject } from "../../../scripts/sanitize.mjs";
+import { sanitizeObject } from "../../../scripts/sanitize.stub.mjs";
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const QUEUE_DIR = path.resolve(__dirname, "..", "..", "..", "logs", "pending-tool-calls");

@@ -16,7 +16,7 @@ import { google } from "googleapis";
 import { OAuth2Client } from "google-auth-library";
 import { enqueueEvent } from "../lib/event-queue.js";
 import { dispatch } from "../lib/tool-dispatch.js";
-import { sanitizeObject } from "../../../scripts/sanitize.mjs";
+import { sanitizeObject } from "../../../scripts/sanitize.stub.mjs";
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const LOG_DIR = path.resolve(__dirname, "..", "..", "..", "logs", "webhook");

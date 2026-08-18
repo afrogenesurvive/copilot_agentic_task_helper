@@ -14,7 +14,7 @@ import { StdioServerTransport } from "@modelcontextprotocol/sdk/server/stdio.js"
 import { CallToolRequestSchema, ListToolsRequestSchema } from "@modelcontextprotocol/sdk/types.js";
 import * as cheerio from "cheerio";
 import "dotenv/config";
-import { sanitizeObject } from "../../scripts/sanitize.mjs";
+import { sanitizeObject } from "../../scripts/sanitize.stub.mjs";
 
 /* ── Tool call logger ── */
 

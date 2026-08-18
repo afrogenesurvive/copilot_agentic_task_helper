@@ -56,3 +56,6 @@ AGENTS.md
 copilot-instructions.md
 
 assets/private
+
+# ── Local-only files (kept private, not committed) ──
+scripts/sanitize.private.mjs

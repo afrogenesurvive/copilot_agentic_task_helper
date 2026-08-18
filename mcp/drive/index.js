@@ -17,7 +17,7 @@ import { CallToolRequestSchema, ListToolsRequestSchema } from "@modelcontextprot
 import { google } from "googleapis";
 import { OAuth2Client } from "google-auth-library";
 import "dotenv/config";
-import { sanitizeObject } from "../../scripts/sanitize.mjs";
+import { sanitizeObject } from "../../scripts/sanitize.stub.mjs";
 import { driveTools } from "../../shared/tool-manifest.js";
 
 /* ── Auth (reuses Gmail OAuth2 credentials with combined scopes) ── */
