@@ -14,7 +14,7 @@ import fs from "fs";
 import path from "path";
 import { fileURLToPath } from "url";
 import { enqueueEvent } from "./event-queue.js";
-import { sanitizeObject } from "../../../scripts/sanitize.mjs";
+import { sanitizeObject } from "../../../scripts/sanitize.stub.mjs";
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const RULES_FILE = path.resolve(__dirname, "..", "..", "..", "safe", "webhook-tool-rules.json");
