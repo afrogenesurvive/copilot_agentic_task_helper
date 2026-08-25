@@ -531,3 +531,89 @@ header h1 {
     padding: 1.5rem;
   }
 }
+
+/* ── Frontdesk v2 additions ── */
+
+.form-group textarea#license {
+  width: 100%;
+  padding: 0.65rem 0.75rem;
+  background: var(--bg);
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  color: var(--text);
+  font-size: 0.85rem;
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+  resize: vertical;
+  outline: none;
+  transition: border-color 0.2s;
+}
+
+.form-group textarea#license:focus {
+  border-color: var(--accent);
+}
+
+.login-card .hint,
+.status-section .hint {
+  color: var(--text-muted);
+  font-size: 0.78rem;
+  line-height: 1.4;
+  margin-top: 0.75rem;
+}
+
+#mode-badge {
+  font-size: 0.72rem;
+  font-weight: 600;
+  padding: 0.25rem 0.5rem;
+  border-radius: 999px;
+}
+
+#mode-badge.mode-online {
+  color: var(--success);
+  background: rgba(46, 204, 113, 0.12);
+}
+
+#mode-badge.mode-offline {
+  color: var(--warning);
+  background: rgba(243, 156, 18, 0.12);
+}
+
+#offline-banner {
+  background: rgba(243, 156, 18, 0.15);
+  color: var(--warning);
+  font-size: 0.82rem;
+  padding: 0.5rem 1rem;
+  border-bottom: 1px solid var(--border);
+}
+
+#account-view {
+  flex: 1;
+  overflow-y: auto;
+  padding: 1rem;
+}
+
+#account-container {
+  max-width: 620px;
+  margin: 0 auto;
+}
+
+.btn-link {
+  display: inline-block;
+  margin-top: 0.5rem;
+  padding: 0.5rem 1rem;
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  color: var(--text);
+  text-decoration: none;
+  font-weight: 600;
+  font-size: 0.85rem;
+}
+
+.btn-link:hover {
+  border-color: var(--accent);
+  color: var(--accent);
+}
+
+.message.pending {
+  opacity: 0.75;
+}

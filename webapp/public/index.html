@@ -3,42 +3,41 @@
   <head>
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-    <title>Collaborator Chat</title>
+    <title>Frontdesk</title>
     <link rel="stylesheet" href="style.css" />
   </head>
   <body>
     <!-- Login Screen -->
     <div id="login-screen">
       <div class="login-card">
-        <h1>🤝 Collaborator Chat</h1>
-        <p class="subtitle">Remote Trello-powered chat</p>
+        <h1>🤝 Frontdesk</h1>
+        <p class="subtitle">End-to-end encrypted collaborator chat</p>
         <div class="form-group">
-          <label for="username">Username</label>
-          <input type="text" id="username" placeholder="Enter username" autocomplete="username" />
-        </div>
-        <div class="form-group">
-          <label for="password">Password</label>
-          <input type="password" id="password" placeholder="Enter password" autocomplete="current-password" />
+          <label for="license">License key</label>
+          <textarea id="license" rows="3" placeholder="Paste your TA1… license key" autocomplete="off" spellcheck="false"></textarea>
         </div>
         <button id="login-btn">Log In</button>
         <p id="login-error" class="hidden error"></p>
+        <p class="hint">Messages are encrypted with this key. It is only sent to the server once, to verify your login.</p>
       </div>
     </div>
 
     <!-- App Screen -->
     <div id="app-screen" class="hidden">
       <header>
-        <h1>🤝 Collaborator Chat</h1>
+        <h1>🤝 Frontdesk</h1>
         <div class="header-right">
+          <span id="mode-badge" class="mode-online">● online</span>
           <span id="session-timer" class="session-ok"></span>
           <button id="logout-btn">Log Out</button>
         </div>
       </header>
 
+      <div id="offline-banner" class="hidden">📡 Tunnel offline — your messages are queued and will be delivered when it returns.</div>
+
       <nav class="tabs">
         <button id="tab-chat" class="active">💬 Chat</button>
-        <button id="tab-reports">📊 Reports</button>
-        <button id="tab-status">📋 Status</button>
+        <button id="tab-account">👤 Account</button>
       </nav>
 
       <!-- Chat View -->
@@ -52,21 +51,36 @@
         </div>
       </div>
 
-      <!-- Reports View -->
-      <div id="reports-view" class="hidden">
-        <div id="reports-container">
-          <div class="empty-state">Loading reports...</div>
-        </div>
-      </div>
+      <!-- Account View -->
+      <div id="account-view" class="hidden">
+        <div id="account-container">
+          <div class="status-section">
+            <h3>Account</h3>
+            <p><strong>Seat:</strong> <span id="acct-sub">—</span></p>
+            <p><strong>Connection:</strong> <span id="acct-mode">—</span></p>
+            <p><strong>Session expires:</strong> <span id="acct-expires">—</span></p>
+          </div>
 
-      <!-- Status View -->
-      <div id="status-view" class="hidden">
-        <div id="status-container">
-          <div class="empty-state">Loading status...</div>
+          <div class="status-section">
+            <h3>Accounts used for you</h3>
+            <p><strong>Google:</strong> <span id="google-status">Not connected yet.</span></p>
+            <p><strong>Trello:</strong> <span id="acct-trello">Default (agent .env)</span></p>
+            <a id="google-connect" class="btn-link" href="#">🔗 Connect Google</a>
+            <p class="hint">Approving the consent screen binds that Google account to your license key, so the agent uses it when acting for you (Gmail / Drive / Calendar).</p>
+          </div>
+
+          <div class="status-section">
+            <h3>Security</h3>
+            <p class="hint">
+              All messages are end-to-end encrypted (ECDH → AES-256-GCM) between this browser and the agent.
+              Your license key contains your private keys — the server only sees them once at login to verify possession.
+            </p>
+          </div>
         </div>
       </div>
     </div>
 
+    <script src="crypto.js"></script>
     <script src="app.js"></script>
   </body>
 </html>

@@ -1,21 +1,20 @@
 /**
  * Netlify Function: /api/config
  *
- * Serves Trello + login configuration from Netlify environment variables
- * to the client-side app. The app fetches this on startup and merges the
- * values into its CONFIG object.
+ * Serves the frontdesk runtime config to the client-side app. Mirrors the
+ * webhook-server's /api/config route so the webapp is host-agnostic (Netlify
+ * or tunnel). NO secrets are served — Trello API key/token and user hashes
+ * never reach the browser (the trello-proxy function holds them server-side).
  *
- * Required env vars (set in Netlify UI or via netlify env:import):
- *   TRELLO_API_KEY, TRELLO_API_TOKEN
+ * Required env vars (set in Netlify UI):
+ *   WEBHOOK_BASE_URL            — the tunnel URL (backend)
+ *   FRONTDESK_AGENT_PUBKEY      — agent X25519 public key (encryption peer)
  *   TRELLO_BOARD_ID
  *   TRELLO_LIST_FRONTEDESK_INPUT, TRELLO_LIST_FRONTEDESK_OUTPUT
- *   USER_<name>_HASH  — any number of user login hashes
- *
- * See webapp/.env for the full list.
+ *   FRONTDESK_SESSION_TTL       — optional (default 7200)
  */
 
-// Netlify Functions use CommonJS exports.handler for .js files
-exports.handler = async function (event, context) {
+exports.handler = async function (event) {
   if (event.httpMethod !== "GET") {
     return {
       statusCode: 405,
@@ -23,22 +22,15 @@ exports.handler = async function (event, context) {
     };
   }
 
-  // Collect all USER_<name>_HASH vars dynamically
-  const userHashes = {};
-  for (const [key, value] of Object.entries(process.env)) {
-    const match = key.match(/^USER_(.+)_HASH$/);
-    if (match && value) {
-      userHashes[key] = value;
-    }
-  }
-
   const config = {
-    TRELLO_API_KEY: process.env.TRELLO_API_KEY || "",
-    TRELLO_API_TOKEN: process.env.TRELLO_API_TOKEN || "",
+    TRELLO_API_KEY: "",
+    TRELLO_API_TOKEN: "",
     TRELLO_BOARD_ID: process.env.TRELLO_BOARD_ID || "",
     TRELLO_LIST_FRONTEDESK_INPUT: process.env.TRELLO_LIST_FRONTEDESK_INPUT || "",
     TRELLO_LIST_FRONTEDESK_OUTPUT: process.env.TRELLO_LIST_FRONTEDESK_OUTPUT || "",
-    ...userHashes,
+    WEBHOOK_BASE_URL: process.env.WEBHOOK_BASE_URL || "",
+    FRONTDESK_AGENT_PUBKEY: process.env.FRONTDESK_AGENT_PUBKEY || "",
+    FRONTDESK_SESSION_TTL: process.env.FRONTDESK_SESSION_TTL || "7200",
   };
 
   return {

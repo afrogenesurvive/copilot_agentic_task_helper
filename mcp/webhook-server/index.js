@@ -52,6 +52,17 @@ import {
   markClearedByNumber,
 } from "./lib/event-queue.js";
 import { allTools } from "../../shared/tool-manifest.js";
+import {
+  verifyLogin,
+  getSession,
+  sendMessage,
+  pollReplies,
+  postReply,
+  logSession,
+} from "./lib/frontdesk.js";
+import { startGoogleOAuth, handleGoogleOAuthCallback } from "./lib/oauth.js";
+import { getSeatAccounts } from "../../scripts/frontdesk-accounts.mjs";
+import { log as logEvent } from "../../shared/logger.mjs";
 
 const app = express();
 
@@ -109,13 +120,20 @@ app.use((req, res, next) => {
 app.use(express.json({ limit: "1mb" }));
 app.use(express.urlencoded({ extended: true }));
 
+// ── Static webapp (tunnel-served copy; same files as the Netlify host) ──
+// Served before requireAuth so the public UI doesn't need the API token.
+app.use(express.static(path.resolve(__dirname, "..", "..", "webapp", "public")));
+
 // ── API token authentication middleware ──
 // All endpoints except /health, /webhooks/* are protected.
 // Clients must send:  Authorization: Bearer <WEBHOOK_API_TOKEN>
 const API_TOKEN = process.env.WEBHOOK_API_TOKEN || "";
+// Paths exempt from the static API-token auth. Frontdesk endpoints use their own
+// session tokens; OAuth + config + static webapp are public.
+const PUBLIC_PREFIXES = ["/api/license/verify", "/api/frontdesk/", "/api/session-log", "/api/config", "/oauth/"];
 function requireAuth(req, res, next) {
-  // Skip auth for webhook callbacks and health check
-  if (req.path === "/health" || req.path.startsWith("/webhooks/")) {
+  // Skip auth for webhook callbacks, health check, and public frontdesk paths
+  if (req.path === "/health" || req.path.startsWith("/webhooks/") || PUBLIC_PREFIXES.some((p) => req.path.startsWith(p))) {
     return next();
   }
   if (!API_TOKEN) {
@@ -144,6 +162,7 @@ app.use((req, res, next) => {
   const ip = req.headers["x-forwarded-for"] || req.ip || "unknown";
   const ua = (req.headers["user-agent"] || "unknown").slice(0, 80);
   console.log(`🌐 [HTTP] ${req.method} ${req.path} — ${ip}`);
+  logEvent({ source: "webhook", subSource: "http", level: "debug", message: `${req.method} ${req.path}`, data: { method: req.method, path: req.path, ip } });
   next();
 });
 
@@ -304,6 +323,100 @@ app.get("/tool-logs", (req, res) => {
     return res.status(500).json({ error: err.message });
   }
 });
+
+/* ── Frontdesk v2 API (license auth + E2E encryption) ──
+ *
+ * Public routes (exempt from requireAuth above); session tokens are validated
+ * inside the handlers. /api/frontdesk/reply is internal (agent runner) and
+ * requires the WEBHOOK_API_TOKEN bearer header.
+ */
+
+// POST /api/license/verify — license key login → session token
+app.post("/api/license/verify", (req, res) => {
+  const { license } = req.body || {};
+  const out = verifyLogin(license);
+  res.status(out.ok ? 200 : 401).json(out);
+});
+
+// POST /api/frontdesk/send — encrypted message → priority queue
+app.post("/api/frontdesk/send", (req, res) => {
+  const session = getSession(req.body?.token);
+  if (!session) return res.status(401).json({ ok: false, error: "invalid_session" });
+  const out = sendMessage(session, req.body?.envelope || req.body);
+  res.status(out.ok ? 200 : 400).json(out);
+});
+
+// GET /api/frontdesk/poll?token=...&since=... — this seat's encrypted replies
+app.get("/api/frontdesk/poll", (req, res) => {
+  const session = getSession(req.query?.token);
+  const out = pollReplies(session, req.query?.since);
+  res.status(out.ok ? 200 : 401).json(out);
+});
+
+// POST /api/frontdesk/reply — internal; the agent runner posts a reply for a seat
+app.post("/api/frontdesk/reply", (req, res) => {
+  if (API_TOKEN) {
+    const header = req.headers["authorization"] || "";
+    const provided = header.startsWith("Bearer ") ? header.slice(7) : "";
+    const buf = Buffer.from(provided);
+    const ref = Buffer.from(API_TOKEN);
+    if (!buf.length || buf.length !== ref.length || !crypto.timingSafeEqual(buf, ref)) {
+      return res.status(401).json({ ok: false, error: "invalid_token" });
+    }
+  }
+  const { sub, text } = req.body || {};
+  const out = postReply({ sub, text });
+  res.status(out.ok ? 200 : 400).json(out);
+});
+
+// POST /api/session-log — frontdesk login/logout events (direct local write)
+app.post("/api/session-log", (req, res) => {
+  const session = getSession(req.body?.token);
+  if (!session && !req.body?.user) return res.status(401).json({ ok: false, error: "invalid_session" });
+  const { user, action, userAgent, timezone, language } = req.body || {};
+  const ip = req.headers["x-forwarded-for"]?.split(",")[0]?.trim() || req.ip || "unknown";
+  const out = logSession({ user: user || session.sub, action: action || "login", ip, userAgent, timezone, language });
+  res.status(200).json(out);
+});
+
+// GET /api/frontdesk/account — the Google/Trello accounts bound to this seat
+app.get("/api/frontdesk/account", (req, res) => {
+  const session = getSession(req.query?.token);
+  if (!session) return res.status(401).json({ ok: false, error: "invalid_session" });
+  const a = getSeatAccounts(session.sub);
+  res.json({
+    ok: true,
+    sub: session.sub,
+    google: a.google ? { connected: true, user: a.google.user || null } : { connected: false },
+    trello: a.trello ? { configured: true } : { configured: false },
+  });
+});
+
+// GET /api/config — runtime config for the webapp (no secrets; same keys as Netlify fn)
+app.get("/api/config", (_req, res) => {
+  res.json({
+    TRELLO_API_KEY: "",
+    TRELLO_API_TOKEN: "",
+    TRELLO_BOARD_ID: process.env.TRELLO_BOARD_ID || "",
+    TRELLO_LIST_FRONTEDESK_INPUT: process.env.TRELLO_LIST_FRONTEDESK_INPUT || "",
+    TRELLO_LIST_FRONTEDESK_OUTPUT: process.env.TRELLO_LIST_FRONTEDESK_OUTPUT || "",
+    WEBHOOK_BASE_URL: process.env.WEBHOOK_BASE_URL || `http://localhost:${PORT}`,
+    FRONTDESK_AGENT_PUBKEY: process.env.FRONTDESK_AGENT_PUBKEY || "",
+    FRONTDESK_SESSION_TTL: process.env.FRONTDESK_SESSION_TTL || "7200",
+  });
+});
+
+// GET /oauth/google/start — consent link (requires a frontdesk session token)
+app.get("/oauth/google/start", (req, res) => {
+  const session = getSession(req.query?.token);
+  if (!session) return res.status(401).type("html").send("Unauthorized — log in to the frontdesk first.");
+  const out = startGoogleOAuth(session);
+  if (out.error) return res.status(500).type("html").send(out.error);
+  res.redirect(302, out.url);
+});
+
+// GET /oauth/google/callback — Google redirect; writes GMAIL_* to .env
+app.get("/oauth/google/callback", handleGoogleOAuthCallback);
 
 /* ── Live tool call tail in terminal ──
  *
@@ -524,6 +637,7 @@ const server = app.listen(PORT, () => {
   console.log(`   📋 Events:  /events | Priority: /events/priority`);
   console.log(`   📊 Status:  /api/queue-status | /api/tasks | /api/rules`);
   console.log(`   🤖 Tool logs: /tool-logs`);
+  console.log(`   💬 Frontdesk v2: /api/license/verify | /api/frontdesk/send|poll|reply | /oauth/google/*`);
   console.log(`   ⏰ Reminder: every ${REMINDER_INTERVAL / 60000}m`);
   console.log(`   💬 Terminal: type "help" for commands`);
   console.log(`${"=".repeat(50)}\n`);

@@ -113,11 +113,12 @@ async function processEvent(event) {
 
   // Detect frontdesk events — these are restricted to read-only + commenting
   const isFrontdesk =
-    event.source === "trello" &&
-    (event.type === "commentCard" || event.type === "createCard") &&
-    (event.data?.originalEvent?.data?.list?.name === "frontdesk_input" ||
-      event.data?.originalEvent?.data?.list?.name === "frontdesk_output" ||
-      event.data?.rule?.toLowerCase().includes("frontdesk"));
+    event.source === "frontdesk" ||
+    (event.source === "trello" &&
+      (event.type === "commentCard" || event.type === "createCard") &&
+      (event.data?.originalEvent?.data?.list?.name === "frontdesk_input" ||
+        event.data?.originalEvent?.data?.list?.name === "frontdesk_output" ||
+        event.data?.rule?.toLowerCase().includes("frontdesk")));
 
   if (isFrontdesk) {
     console.log(`   🔒 [RUNNER] Frontdesk event detected — read-only + commenting only`);
@@ -143,7 +144,7 @@ async function processEvent(event) {
     console.log(`   🎯 [RUNNER] ${decision.name}`);
     console.log(`   📝 [RUNNER] Params: ${JSON.stringify(decision.arguments)}`);
 
-    const result = await executeToolCall(decision.name, decision.arguments, { isFrontdesk });
+    const result = await executeToolCall(decision.name, decision.arguments, { isFrontdesk, sub: event.data?.sub });
 
     // Step 3: Log the outcome
     logAction({

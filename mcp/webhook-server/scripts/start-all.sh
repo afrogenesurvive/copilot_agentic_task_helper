@@ -48,34 +48,53 @@ echo "=========================================="
 echo ""
 
 # ═══════════════════════════════════════════════
-# STEP 1: Start Cloudflare Tunnel
+# STEP 1: Start Cloudflare Tunnel (NAMED — stable domain)
 # ═══════════════════════════════════════════════
 echo "🚇 [1/8] Starting Cloudflare Tunnel on port $PORT..."
 
-tmpfile=$(mktemp)
-cloudflared tunnel --url "http://localhost:$PORT" > "$tmpfile" 2>&1 &
-TUNNEL_PID=$!
+TUNNEL_ID="${CLOUDFLARE_TUNNEL_ID:-}"
+TUNNEL_TOKEN="${CLOUDFLARE_TUNNEL_TOKEN:-}"
+TUNNEL_DOMAIN="${CLOUDFLARE_TUNNEL_DOMAIN:-}"
 
-# Wait for tunnel URL
-TUNNEL_URL=""
-for i in $(seq 1 30); do
-  TUNNEL_URL=$(grep -oE 'https?://[-a-zA-Z0-9.]+(\.[-a-zA-Z0-9.]+)*\.trycloudflare\.com' "$tmpfile" 2>/dev/null | head -1)
-  if [ -n "$TUNNEL_URL" ]; then
-    break
-  fi
-  sleep 2
-done
-
-if [ -z "$TUNNEL_URL" ]; then
-  echo "❌ Failed to get tunnel URL (waited 60s)"
-  echo "   cloudflared output:"
-  cat "$tmpfile" 2>/dev/null | head -10
-  kill $TUNNEL_PID 2>/dev/null
-  rm -f "$tmpfile"
+if [ -z "$TUNNEL_DOMAIN" ]; then
+  echo "❌ CLOUDFLARE_TUNNEL_DOMAIN not set in .env — cannot start named tunnel."
+  echo "   Set CLOUDFLARE_TUNNEL_DOMAIN (and CLOUDFLARE_TUNNEL_TOKEN or CLOUDFLARE_TUNNEL_ID)."
   exit 1
 fi
+TUNNEL_URL="https://${TUNNEL_DOMAIN}"
+CF_DIR="$PROJECT_DIR/safe/cloudflared"
+mkdir -p "$CF_DIR"
+TUNNEL_LOG="$CF_DIR/tunnel.log"
 
-echo "   ✅ Tunnel URL: $TUNNEL_URL"
+if [ -n "$TUNNEL_TOKEN" ]; then
+  cloudflared tunnel --no-autoupdate run --token "$TUNNEL_TOKEN" > "$TUNNEL_LOG" 2>&1 &
+elif [ -n "$TUNNEL_ID" ]; then
+  CREDS_FILE="${HOME}/.cloudflared/${TUNNEL_ID}.json"
+  cat > "$CF_DIR/config.yml" <<EOF
+tunnel: ${TUNNEL_ID}
+credentials-file: ${CREDS_FILE}
+ingress:
+  - hostname: ${TUNNEL_DOMAIN}
+    service: http://localhost:${PORT}
+  - service: http_status:404
+EOF
+  cloudflared tunnel --no-autoupdate --config "$CF_DIR/config.yml" run "$TUNNEL_ID" > "$TUNNEL_LOG" 2>&1 &
+else
+  echo "❌ Neither CLOUDFLARE_TUNNEL_TOKEN nor CLOUDFLARE_TUNNEL_ID set in .env."
+  exit 1
+fi
+TUNNEL_PID=$!
+echo "$TUNNEL_PID" > "$CF_DIR/tunnel.pid"
+
+# Give cloudflared a moment to connect; full health check happens after the server starts.
+sleep 5
+if ! kill -0 "$TUNNEL_PID" 2>/dev/null; then
+  echo "❌ cloudflared exited early. Log:"
+  tail -15 "$TUNNEL_LOG" 2>/dev/null
+  exit 1
+fi
+echo "   ✅ Tunnel starting: $TUNNEL_URL (PID $TUNNEL_PID, log $TUNNEL_LOG)"
+echo "   ℹ️  Full health check runs after the webhook server is up."
 echo ""
 
 # ═══════════════════════════════════════════════
@@ -364,7 +383,7 @@ cleanup() {
   echo ""
   echo "Shutting down tunnel..."
   kill $TUNNEL_PID 2>/dev/null
-  rm -f "$tmpfile"
+  rm -f "$CF_DIR/tunnel.pid"
   echo "Done."
   exit 0
 }

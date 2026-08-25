@@ -16,6 +16,7 @@ logs/
 
 # ── Build output & local data ──
 safe/
+docs/safe/
 tokens/
 dist/
 build/

@@ -1,5 +1,31 @@
 # Changelog
 
+## [0.2.0-1] — 2026-08-24
+
+### Fixed
+
+- **Electron dashboard live-log crash**: the log tailer could crash when a new day's log file first appeared (invalid buffer size). The tailer now guards the start offset, and the tail loop is hardened so a bad tick logs an error instead of taking down the app.
+
+## [0.2.0] — 2026-08-24
+
+### Added
+
+- **License-key login** for frontdesk seats — per-seat keys replace username/password.
+- **End-to-end encrypted chat** between the frontdesk webapp and the agent (AES-256-GCM, key derived from a per-seat ECDH exchange).
+- **Direct-to-tunnel chat** by default; Trello becomes an optional mirror with a degraded store-and-forward mode when the tunnel is down.
+- **Per-seat Google/Trello account binding** via an in-app "Connect Google" flow; the agent runner uses a seat's own credentials when acting for it.
+- **macOS Electron operator dashboard** — start/stop the whole backend stack, live log stream, queue, sessions, licenses, accounts & keys, tools, tray + priority notifications.
+- **Named Cloudflare tunnel scripts** for a stable public endpoint.
+
+### Changed
+
+- **Unified logging**: all MCP servers and webhook handlers now route tool-call/webhook logging through a shared logger that emits a unified live stream while preserving the existing on-disk layouts.
+- **Webapp rewrite** for license login, E2E encryption, Connect Google, and degraded mode; the Netlify config no longer serves secrets.
+
+### Docs
+
+- Added `docs/electron.md` (operator dashboard) and `docs/ipcs.md` (Electron IPC channels); refreshed `docs/push-notifications.md`.
+
 ## [main-3] — 2026-08-18
 
 ### Changed
@@ -11,18 +37,18 @@
 
 ### Added
 
-- **`safe/repo_master_list.md`**: Created comprehensive inventory of all 46 repos for account `afrogenesurvive` with license and visibility info.
+- **Repo master list**: Created a comprehensive inventory of all 46 repos for account `afrogenesurvive` with license and visibility info.
 
 ### Changed
 
 - **40 repo licenses updated** via GitHub API — 22 repos set to MIT, 17 to Apache-2.0, 1 changed from MIT→Apache-2.0, 1 changed from Apache-2.0→MIT.
-- **`safe/repo_master_list.md`**: Updated to reflect current license states after all changes applied.
+- **Repo master list**: Updated to reflect current license states after all changes applied.
 
 ## [main-1] — 2026-07-24
 
 ### Added
 
-- **Gmail multi-account support** (`mcp/gmail/index.js`): Added `userId` parameter to all Gmail tools (`gmail_list_messages`, `gmail_get_message`, `gmail_send_message`), supporting both the default account (`michael.grandison@gmail.com`) and `entclinicmobay@gmail.com` via `GMAIL_REFRESH_TOKEN_2`/`GMAIL_USER_2` env vars.
+- **Gmail multi-account support** (`mcp/gmail/index.js`): Added `userId` parameter to all Gmail tools (`gmail_list_messages`, `gmail_get_message`, `gmail_send_message`), supporting both the default account and `entclinicmobay@gmail.com` via `GMAIL_REFRESH_TOKEN_2`/`GMAIL_USER_2` env vars.
 - **Sheets MCP Server** (`mcp/sheets/`): New MCP server with 5 tools — `sheets_get_metadata`, `sheets_get_values`, `sheets_update_values`, `sheets_insert_rows`, `sheets_copy_paste_format`. Provides per-cell Google Sheets editing for the Bills Check Master spreadsheet.
 - **xlsx-to-Sheet conversion script** (`scripts/convert-xlsx-to-sheet.mjs`): One-time utility to convert the existing xlsx to a native Google Sheet.
 - **`mcp:sheets` npm script** in `package.json` for running the Sheets MCP server directly.
@@ -31,4 +57,4 @@
 ### Changed
 
 - **`shared/tool-manifest.js`**: All Gmail tool descriptions updated to document multi-account `userId` support. Added `sheetsTools` array with 5 Sheet tool definitions. `allTools` now includes `sheetsTools`.
-- **Local config** (gitignored): `.vscode/mcp.json` updated with Sheets MCP server entry. `safe/office_monthly_bills_extraction_agent.md` updated with Sheets API workflow replacing xlsx download/upload pattern.
+- **Local config** (gitignored): VS Code MCP config updated with Sheets MCP server entry; the local extraction-agent doc updated with the Sheets API workflow replacing the xlsx download/upload pattern.

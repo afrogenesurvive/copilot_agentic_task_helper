@@ -15,6 +15,7 @@ import path from "path";
 import { fileURLToPath } from "url";
 import { enqueueEvent } from "./event-queue.js";
 import { sanitizeObject } from "../../../scripts/sanitize.stub.mjs";
+import { log as logEvent } from "../../../shared/logger.mjs";
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const RULES_FILE = path.resolve(__dirname, "..", "..", "..", "safe", "webhook-tool-rules.json");
@@ -129,6 +130,7 @@ export function dispatch(event) {
     );
 
     console.log(`   🤖 [TOOL] Rule "${rule.name}" → ${rule.tool}`);
+    logEvent({ source: "webhook", subSource: "tool-dispatch", level: "info", message: `rule "${rule.name}" → ${rule.tool}`, data: { rule: rule.name, tool: rule.tool, eventSource: event.source, eventType: event.type } });
     matched = true;
   }
 

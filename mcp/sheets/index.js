@@ -54,16 +54,13 @@ import { fileURLToPath } from "url";
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const LOG_DIR = path.resolve(__dirname, "..", "..", "logs", "tool_call");
 
+import { toolCall } from "../../shared/logger.mjs";
+
+// Tool-call logging routes through the shared logger (shared/logger.mjs), which
+// preserves logs/tool_call/*.log + *_verbose.log AND emits unified live entries.
 function logToolCall(name, args, summary) {
-  const ts = new Date().toISOString();
-  const today = ts.slice(0, 10);
-  const argsStr = JSON.stringify(args).slice(0, 200);
-  const line = `[${ts}] EVENT name=sheets/${name} input=${argsStr} output=${summary}`;
-  const entry = { timestamp: ts, name: `sheets/${name}`, details: { input: argsStr, output: summary } };
-  fs.mkdirSync(LOG_DIR, { recursive: true });
-  fs.appendFileSync(path.join(LOG_DIR, `${today}_verbose.log`), JSON.stringify(entry) + "\n");
-  fs.appendFileSync(path.join(LOG_DIR, `${today}.log`), line + "\n");
-  console.error(`[mcp] ${line}`);
+  toolCall("mcp", "sheets", { name, args, response: summary });
+  console.error(`[mcp] sheets/${name} → ${typeof summary === "string" ? summary.slice(0, 80) : "done"}`);
 }
 
 /* ── MCP Server ── */

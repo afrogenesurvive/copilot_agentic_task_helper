@@ -64,34 +64,13 @@ function safeJson(data) {
   return { type: "text", text: JSON.stringify(sanitized, null, 2) };
 }
 
-function logToolCall(name, args, response) {
-  const ts = new Date().toISOString();
-  const today = ts.slice(0, 10);
-  const argsStr = JSON.stringify(args).slice(0, 200);
-  let respStr = typeof response === "string" ? response : "done";
-  // Truncate long JSON responses to keep logs readable
-  if (respStr.length > 100) {
-    try {
-      const parsed = JSON.parse(respStr);
-      if (Array.isArray(parsed)) respStr = `${parsed.length} items`;
-      else if (parsed.id) respStr = `id=${parsed.id}`;
-      else respStr = respStr.slice(0, 100) + "...";
-    } catch {
-      respStr = respStr.slice(0, 100) + "...";
-    }
-  }
-  fs.mkdirSync(LOG_DIR, { recursive: true });
+import { toolCall } from "../../shared/logger.mjs";
 
-  for (const [eventName, details] of [
-    ["tool_call", `trello/${name} input=${argsStr}`],
-    ["tool_response", `trello/${name} output=${respStr}`],
-  ]) {
-    const line = `[${ts}] EVENT name=${eventName} details=${details}`;
-    const entry = { timestamp: ts, name: eventName, details };
-    fs.appendFileSync(path.join(LOG_DIR, `${today}_verbose.log`), JSON.stringify(entry) + "\n");
-    fs.appendFileSync(path.join(LOG_DIR, `${today}.log`), line + "\n");
-    console.error(`[mcp] ${line}`);
-  }
+// Tool-call logging routes through the shared logger (shared/logger.mjs), which
+// preserves logs/tool_call/*.log + *_verbose.log AND emits unified live entries.
+function logToolCall(name, args, response) {
+  toolCall("mcp", "trello", { name, args, response });
+  console.error(`[mcp] trello/${name} → ${typeof response === "string" ? response.slice(0, 80) : "done"}`);
 }
 
 /* ── MCP Server ── */
