@@ -16,6 +16,7 @@ import fs from "fs";
 import path from "path";
 import { fileURLToPath } from "url";
 import OpenAI from "openai";
+import { log } from "../../shared/logger.mjs";
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const PROMPT_LOG_DIR = path.resolve(__dirname, "..", "..", "logs", "agent-runner", "prompts");
@@ -44,6 +45,7 @@ function logPrompt(systemMessage, userContext, tools) {
   } catch (err) {
     console.error(`   ❌ [MODEL] Failed to log prompt: ${err.message}`);
   }
+  log({ source: "runner", subSource: "model", level: "debug", message: "model prompt", data: { type: "model_prompt", toolCount: entry.toolCount, model: entry.model } });
 }
 
 const client = new OpenAI({
@@ -160,10 +162,12 @@ export async function callModel(context, toolDefs) {
     "- Trello: trello_add_comment, trello_get_card, trello_list_cards, trello_get_lists, trello_get_card_actions, trello_get_checklists, trello_create_card, trello_update_card, trello_create_checklist, trello_add_checklist_item",
     "- Gmail: gmail_list_messages, gmail_get_message, gmail_send_message",
     "- Web: web_search (search the web), web_fetch (fetch a URL and read content)",
+    "- Frontdesk: frontdesk_reply (send an encrypted reply to a chat user — pass sub + text)",
     "",
     "Rules:",
     "- Choose ONE tool and provide ALL required parameters",
     "- If the event is a frontdesk message, reply helpfully but don't make up information",
+    "- For frontdesk_message events (source: frontdesk), answer the user and reply with frontdesk_reply(sub=<the event's sub>, text=<your answer>)",
     "- If you're unsure, use trello_add_comment to ask for clarification",
     "- Never make up card IDs, list IDs, or other identifiers",
     "- Respond only with a tool call — no explanatory text",

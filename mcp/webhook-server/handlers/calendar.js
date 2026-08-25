@@ -30,33 +30,20 @@ const EVENT_STATE_PATH = path.resolve(__dirname, "..", "..", "..", "logs", "noti
  * Log the full raw webhook body before any sanitization or processing.
  * Provides a forensic audit trail in logs/webhook/raw/YYYY-MM-DD.jsonl.
  */
+import { notify, webhookVerbose, webhookRaw } from "../../../shared/logger.mjs";
+
+// Legacy file writes now route through the shared logger (shared/logger.mjs),
+// which preserves the same on-disk layouts while also emitting unified live entries.
 function logRawBody(source, body) {
-  const ts = new Date().toISOString();
-  const day = ts.slice(0, 10);
-  const entry = {
-    ts,
-    source,
-    body: typeof body === "object" ? body : { raw: String(body) },
-  };
-  try {
-    fs.mkdirSync(RAW_DIR, { recursive: true });
-    fs.appendFileSync(path.join(RAW_DIR, `${day}.jsonl`), JSON.stringify(entry) + "\n");
-  } catch (err) {
-    console.error(`   ❌ [RAW] Failed to log raw body: ${err.message}`);
-  }
+  webhookRaw(source, body);
 }
 
 function logVerbose(entry) {
-  const ts = new Date().toISOString();
-  fs.mkdirSync(LOG_DIR, { recursive: true });
-  fs.appendFileSync(path.join(LOG_DIR, `${ts.slice(0, 10)}_verbose.log`), JSON.stringify({ ts, ...entry }) + "\n");
+  webhookVerbose("calendar", entry);
 }
 
 function logNotification(entry) {
-  const ts = entry.ts || new Date().toISOString();
-  const day = ts.slice(0, 10);
-  fs.mkdirSync(NOTIFY_DIR, { recursive: true });
-  fs.appendFileSync(path.join(NOTIFY_DIR, `${day}.jsonl`), JSON.stringify(entry) + "\n");
+  notify(entry.source || "calendar", entry.type || "event", entry.data);
 }
 
 function getCalendarAuth() {

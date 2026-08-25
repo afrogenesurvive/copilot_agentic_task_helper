@@ -11,6 +11,7 @@
  */
 
 import "dotenv/config";
+import { getSeatAccounts } from "../../scripts/frontdesk-accounts.mjs";
 
 // ── Frontdesk Allowlist — only these tools can be called for frontdesk events ──
 const FRONTDESK_ALLOWLIST = new Set([
@@ -26,6 +27,8 @@ const FRONTDESK_ALLOWLIST = new Set([
   // Web Search — read-only (safe)
   "web_search",
   "web_fetch",
+  // Frontdesk — encrypted reply to a chat user (safe)
+  "frontdesk_reply",
 ]);
 
 // ── Blocklist — NEVER allowed, even for non-frontdesk events ──
@@ -41,8 +44,14 @@ const TRELLO_KEY = process.env.TRELLO_KEY || "";
 const TRELLO_TOKEN = process.env.TRELLO_TOKEN || "";
 const TRELLO_BASE = "https://api.trello.com/1";
 
+// Per-seat credentials resolved before each tool call (see executeToolCall).
+// null → fall back to the default .env accounts.
+let activeCreds = null;
+
 function trelloUrl(path, params = {}) {
-  const qs = new URLSearchParams({ key: TRELLO_KEY, token: TRELLO_TOKEN, ...params });
+  const key = activeCreds?.trello?.key || TRELLO_KEY;
+  const token = activeCreds?.trello?.token || TRELLO_TOKEN;
+  const qs = new URLSearchParams({ key, token, ...params });
   return `${TRELLO_BASE}${path}?${qs}`;
 }
 
@@ -124,17 +133,20 @@ import { google } from "googleapis";
 import { OAuth2Client } from "google-auth-library";
 
 function getGmailClient() {
-  const { GMAIL_CLIENT_ID, GMAIL_CLIENT_SECRET, GMAIL_REFRESH_TOKEN } = process.env;
-  if (!GMAIL_CLIENT_ID || !GMAIL_CLIENT_SECRET || !GMAIL_REFRESH_TOKEN) return null;
-  const oauth2 = new OAuth2Client(GMAIL_CLIENT_ID, GMAIL_CLIENT_SECRET);
-  oauth2.setCredentials({ refresh_token: GMAIL_REFRESH_TOKEN });
+  const g = activeCreds?.google || {};
+  const clientId = g.clientId || process.env.GMAIL_CLIENT_ID;
+  const clientSecret = g.clientSecret || process.env.GMAIL_CLIENT_SECRET;
+  const refreshToken = g.refreshToken || process.env.GMAIL_REFRESH_TOKEN;
+  if (!clientId || !clientSecret || !refreshToken) return null;
+  const oauth2 = new OAuth2Client(clientId, clientSecret);
+  oauth2.setCredentials({ refresh_token: refreshToken });
   return google.gmail({ version: "v1", auth: oauth2 });
 }
 
 async function gmailListMessages(query, maxResults) {
   const gmail = getGmailClient();
   if (!gmail) throw new Error("Gmail auth not configured");
-  const userId = process.env.GMAIL_USER || "me";
+  const userId = activeCreds?.google?.user || process.env.GMAIL_USER || "me";
   const res = await gmail.users.messages.list({
     userId,
     q: query || "",
@@ -146,7 +158,7 @@ async function gmailListMessages(query, maxResults) {
 async function gmailGetMessage(id, format) {
   const gmail = getGmailClient();
   if (!gmail) throw new Error("Gmail auth not configured");
-  const userId = process.env.GMAIL_USER || "me";
+  const userId = activeCreds?.google?.user || process.env.GMAIL_USER || "me";
   const res = await gmail.users.messages.get({
     userId,
     id,
@@ -159,7 +171,7 @@ async function gmailGetMessage(id, format) {
 async function gmailSendMessage(to, subject, body) {
   const gmail = getGmailClient();
   if (!gmail) throw new Error("Gmail auth not configured");
-  const userId = process.env.GMAIL_USER || "me";
+  const userId = activeCreds?.google?.user || process.env.GMAIL_USER || "me";
 
   // Build RFC 2822 message
   const email = [
@@ -257,6 +269,21 @@ async function webFetchPage(url) {
   };
 }
 
+// ── Frontdesk reply (via webhook server — it owns the encryption + session) ──
+
+async function frontdeskReply(sub, text) {
+  const base = `http://localhost:${process.env.WEBHOOK_PORT || "3199"}`;
+  const token = process.env.WEBHOOK_API_TOKEN || "";
+  const res = await fetch(`${base}/api/frontdesk/reply`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json", ...(token ? { Authorization: `Bearer ${token}` } : {}) },
+    body: JSON.stringify({ sub, text }),
+  });
+  if (!res.ok) throw new Error(`Webhook API ${res.status}: ${await res.text()}`);
+  const data = await res.json();
+  return { ok: true, tool: "frontdesk_reply", result: data };
+}
+
 function stripHtml(str) {
   return str
     .replace(/<[^>]+>/g, "")
@@ -279,6 +306,7 @@ const HANDLERS = {
   gmail_send_message: (args) => gmailSendMessage(args.to, args.subject, args.body),
   web_search: (args) => webSearchDuckDuckGo(args.query, args.maxResults),
   web_fetch: (args) => webFetchPage(args.url),
+  frontdesk_reply: (args) => frontdeskReply(args.sub, args.text),
 };
 
 /**
@@ -308,6 +336,14 @@ export async function executeToolCall(toolName, args, options = {}) {
     return { ok: false, tool: toolName, error: `No handler registered for "${toolName}"` };
   }
 
+  // Resolve per-seat account credentials (gates which Google/Trello account the
+  // agent uses when acting for a frontdesk seat). null → default .env.
+  const seat = options.sub ? getSeatAccounts(options.sub) : null;
+  activeCreds = { google: seat?.google || null, trello: seat?.trello || null };
+  if (seat) {
+    console.log(`   🔑 [EXECUTOR] Per-seat accounts for "${options.sub}" — google=${seat.google ? "yes" : "no"}, trello=${seat.trello ? "yes" : "no"}`);
+  }
+
   console.log(`   🔧 [EXECUTOR] Executing ${toolName}...`);
 
   try {
@@ -317,5 +353,7 @@ export async function executeToolCall(toolName, args, options = {}) {
   } catch (err) {
     console.error(`   ❌ [EXECUTOR] ${toolName} failed: ${err.message}`);
     return { ok: false, tool: toolName, error: err.message };
+  } finally {
+    activeCreds = null;
   }
 }

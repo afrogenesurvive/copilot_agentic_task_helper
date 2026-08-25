@@ -703,4 +703,19 @@ export const sheetsTools = [
 ];
 
 /** Combined list of all tools for use by the agent runner */
-export const allTools = [...trelloTools, ...gmailTools, ...driveTools, ...calendarTools, ...webSearchTools, ...sheetsTools];
+export const frontdeskTools = [
+  {
+    name: "frontdesk_reply",
+    description: "Send a reply to a frontdesk chat user. The reply is encrypted and delivered to their webapp. Use for frontdesk_message events (source: frontdesk).",
+    inputSchema: {
+      type: "object",
+      properties: {
+        sub: { type: "string", description: "The frontdesk user's seat id (the 'sub' from the event, e.g. their email)" },
+        text: { type: "string", description: "The reply text to send to the user" },
+      },
+      required: ["sub", "text"],
+    },
+  },
+];
+
+export const allTools = [...trelloTools, ...gmailTools, ...driveTools, ...calendarTools, ...webSearchTools, ...sheetsTools, ...frontdeskTools];

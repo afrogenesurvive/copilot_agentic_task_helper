@@ -8,6 +8,7 @@
 import fs from "fs";
 import path from "path";
 import { fileURLToPath } from "url";
+import { log } from "../../shared/logger.mjs";
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const LOG_DIR = path.resolve(__dirname, "..", "..", "logs", "agent-runner");
@@ -27,4 +28,7 @@ export function logAction(entry) {
   } catch (err) {
     console.error(`   ❌ [LOGGER] Write failed: ${err.message}`);
   }
+
+  const level = entry.action === "failed" ? "error" : entry.action === "skipped" ? "warn" : "info";
+  log({ source: "runner", subSource: entry.toolName ? "tool" : "action", level, message: entry.action || "action", data: logEntry });
 }

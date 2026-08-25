@@ -27,6 +27,7 @@ import fs from "fs";
 import path from "path";
 import { fileURLToPath } from "url";
 import { sanitizeObject } from "../../../scripts/sanitize.stub.mjs";
+import { log as logEvent } from "../../../shared/logger.mjs";
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const QUEUE_DIR = path.resolve(__dirname, "..", "..", "..", "logs", "pending-tool-calls");
@@ -204,6 +205,7 @@ export function enqueueEvent(event, queueName = "misc_notifications") {
   stores[name].push(entry);
   saveQueue(name);
   console.log(`   📋 [QUEUE] Enqueued #${seqNo} → "${name}" (${event.source}/${event.type})`);
+  logEvent({ source: "webhook", subSource: "queue", level: "info", message: `enqueued #${seqNo} → ${name} (${event.source}/${event.type})`, data: { id, seqNo, queue: name, source: event.source, type: event.type } });
   // Notify the agent runner if this was a priority queue item
   if (name === "priority") {
     signalAgentRunner();

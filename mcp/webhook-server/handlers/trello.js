@@ -13,6 +13,7 @@ import { fileURLToPath } from "url";
 import crypto from "crypto";
 import { enqueueEvent } from "../lib/event-queue.js";
 import { dispatch } from "../lib/tool-dispatch.js";
+import { ingestDegradedEnvelope } from "../lib/frontdesk.js";
 import { sanitizeObject } from "../../../scripts/sanitize.stub.mjs";
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
@@ -22,67 +23,50 @@ const NOTIFY_DIR = path.resolve(__dirname, "..", "..", "..", "logs", "notificati
 const FRONTDESK_UNAUTHORIZED_DIR = path.resolve(__dirname, "..", "..", "..", "logs", "frontdesk", "unauthorized");
 const SESSION_LOG_DIR = path.resolve(__dirname, "..", "..", "..", "logs", "frontdesk", "sessions");
 
+// Frontdesk v2 toggles — when FRONTDESK_USE_TRELLO=false (default), the frontdesk
+// runs direct-to-tunnel (see lib/frontdesk.js) and this Trello-based frontdesk
+// handling is skipped. Session-log Trello cards are mirrored only when
+// FRONTDESK_LOG_TO_TRELLO=true.
+const FRONTDESK_TRELLO = process.env.FRONTDESK_USE_TRELLO === "true";
+const LOG_TO_TRELLO = process.env.FRONTDESK_LOG_TO_TRELLO === "true";
+
 /**
  * Log the full raw webhook body before any sanitization or processing.
  * Provides a forensic audit trail in logs/webhook/raw/YYYY-MM-DD.jsonl
  * so you can cross-reference sanitized data against the original.
  */
+import { notify, webhookVerbose, webhookError, webhookRaw } from "../../../shared/logger.mjs";
+
+// Legacy file writes now route through the shared logger (shared/logger.mjs),
+// which preserves the same on-disk layouts while also emitting unified live entries.
 function logRawBody(source, body) {
-  const ts = new Date().toISOString();
-  const day = ts.slice(0, 10);
-  const entry = {
-    ts,
-    source,
-    body: typeof body === "object" ? body : { raw: String(body) },
-  };
-  try {
-    fs.mkdirSync(RAW_DIR, { recursive: true });
-    fs.appendFileSync(path.join(RAW_DIR, `${day}.jsonl`), JSON.stringify(entry) + "\n");
-  } catch (err) {
-    console.error(`   ❌ [RAW] Failed to log raw body: ${err.message}`);
-  }
+  webhookRaw(source, body);
 }
 
 function logError(msg) {
-  const ts = new Date().toISOString();
-  fs.mkdirSync(LOG_DIR, { recursive: true });
-  fs.appendFileSync(path.join(LOG_DIR, `${ts.slice(0, 10)}.log`), `[${ts}] ERROR: ${msg}\n`);
+  webhookError("trello", msg);
 }
 
 function logVerbose(entry) {
-  const ts = new Date().toISOString();
-  fs.mkdirSync(LOG_DIR, { recursive: true });
-  fs.appendFileSync(path.join(LOG_DIR, `${ts.slice(0, 10)}_verbose.log`), JSON.stringify({ ts, ...entry }) + "\n");
+  webhookVerbose("trello", entry);
 }
 
 function logNotification(body) {
-  const ts = new Date().toISOString();
-  const day = ts.slice(0, 10);
   const action = body.action || {};
   const model = body.model || {};
   const d = action.data || {};
-
-  const entry = {
-    ts,
-    source: "trello",
-    type: action.type || "unknown",
-    data: sanitizeObject(
-      {
-        board: model.name || d.board?.name,
-        list: d.list?.name,
-        card: d.card?.name,
-        checklist: d.checklist?.name,
-        checkItem: d.checkItem?.name,
-      },
-      { auditSource: "webhook/trello" },
-    ),
-  };
-
-  // Strip undefined fields
-  Object.keys(entry.data).forEach((k) => entry.data[k] === undefined && delete entry.data[k]);
-
-  fs.mkdirSync(NOTIFY_DIR, { recursive: true });
-  fs.appendFileSync(path.join(NOTIFY_DIR, `${day}.jsonl`), JSON.stringify(entry) + "\n");
+  const data = sanitizeObject(
+    {
+      board: model.name || d.board?.name,
+      list: d.list?.name,
+      card: d.card?.name,
+      checklist: d.checklist?.name,
+      checkItem: d.checkItem?.name,
+    },
+    { auditSource: "webhook/trello" },
+  );
+  Object.keys(data).forEach((k) => data[k] === undefined && delete data[k]);
+  notify("trello", action.type || "unknown", data);
 }
 
 /**
@@ -146,10 +130,32 @@ export function trelloHandler(req, res) {
     timestamp: action?.date || ts,
   };
 
+  // ── Degraded-mode `[fd1]` envelope ingestion (ALWAYS on) ──
+  // When the tunnel is down, the Netlify app posts encrypted `[fd1]` comments to
+  // Trello; Trello's webhook retry delivers them here once the tunnel returns.
+  // Format: "[fd1] <certB64u> <sigB64u> <iv> <tag> <ct>" (+ optional "[sig:…]").
+  // This is the store-and-forward recovery path — independent of the
+  // FRONTDESK_USE_TRELLO toggle (which gates the OLD plaintext chat flow).
+  if (event.type === "commentCard" && event.list?.name === "frontdesk_input") {
+    const rawText = String(action?.data?.text || "").replace(/\s*\[sig:[a-f0-9]{16}\]$/, "");
+    const m = rawText.match(/^\[fd1\]\s+(\S+)\s+(\S+)\s+(\S+)\s+(\S+)\s+(\S+)/);
+    if (m) {
+      const out = ingestDegradedEnvelope(m[1], m[2], { iv: m[3], tag: m[4], ct: m[5] });
+      console.log(
+        out.ok
+          ? `   💬 [FRONTDESK] Degraded [fd1] message ingested (${out.id})`
+          : `   ⚠️ [FRONTDESK] Degraded [fd1] ingestion failed: ${out.error}`,
+      );
+      // Skip the legacy Trello frontdesk flow for this message.
+      return res.status(200).json({ status: out.ok ? "ingested" : "ignored" });
+    }
+  }
+
   // Verify HMAC signature for frontdesk_input commentCard events
   // Strips [sig:...] from the text so the agent sees clean text,
   // and sets event.data._verified so the agent can trust the origin.
-  if (event.type === "commentCard" && event.list?.name === "frontdesk_input") {
+  // Only active when FRONTDESK_USE_TRELLO=true (Trello mirror mode).
+  if (FRONTDESK_TRELLO && event.type === "commentCard" && event.list?.name === "frontdesk_input") {
     const text = action?.data?.text || "";
     const sigMatch = text.match(/\[sig:([a-f0-9]{16})\]$/);
     if (sigMatch) {
@@ -207,7 +213,8 @@ export function trelloHandler(req, res) {
   //   1. Logged to logs/frontdesk/unauthorized/ for audit trail
   //   2. Auto-replied on frontdesk_output with a generic "we'll get back to you" message
   // The auto-reply happens via direct Trello API call — no agent involvement needed.
-  if (event.type === "commentCard" && event.list?.name === "frontdesk_input" && event.data._authorized !== true) {
+  // Only active when FRONTDESK_USE_TRELLO=true (Trello mirror mode).
+  if (FRONTDESK_TRELLO && event.type === "commentCard" && event.list?.name === "frontdesk_input" && event.data._authorized !== true) {
     const day = ts.slice(0, 10);
     const logEntry = {
       ts,
@@ -263,7 +270,8 @@ export function trelloHandler(req, res) {
   // Capture session log cards from Trello and write to local logs
   // The Netlify log-session function creates Trello cards on the session_logs
   // list; the webhook picks them up and persists them to the local filesystem.
-  if (event.type === "createCard" && event.list?.name === "session_logs") {
+  // Only active when FRONTDESK_LOG_TO_TRELLO=true (mirror mode).
+  if (LOG_TO_TRELLO && event.type === "createCard" && event.list?.name === "session_logs") {
     const day = ts.slice(0, 10);
     const cardDesc = action?.data?.card?.desc || "";
     let sessionEntry;
@@ -288,7 +296,7 @@ export function trelloHandler(req, res) {
   // Additionally, dispatch() checks each event against webhook-tool-rules.json.
   // If a rule matches, an additional pending_tool_call event is enqueued to
   // the priority queue, telling the agent which MCP tool to invoke.
-  if (event.data._authorized === true && event.type === "commentCard" && event.list?.name === "frontdesk_input") {
+  if (FRONTDESK_TRELLO && event.data._authorized === true && event.type === "commentCard" && event.list?.name === "frontdesk_input") {
     enqueueEvent(event, "priority");
     console.log(`   ✅ [TRELLO] Authorized frontdesk → priority queue (auto-answer)`);
   } else {

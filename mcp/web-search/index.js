@@ -34,32 +34,13 @@ function safeJson(data) {
   return { type: "text", text: JSON.stringify(sanitized, null, 2) };
 }
 
-function logToolCall(name, args, response) {
-  const ts = new Date().toISOString();
-  const today = ts.slice(0, 10);
-  const argsStr = JSON.stringify(args).slice(0, 200);
-  let respStr = typeof response === "string" ? response : "done";
-  if (respStr.length > 100) {
-    try {
-      const parsed = JSON.parse(respStr);
-      if (Array.isArray(parsed)) respStr = `${parsed.length} items`;
-      else if (parsed.title) respStr = `"${parsed.title.slice(0, 60)}"`;
-      else respStr = respStr.slice(0, 100) + "...";
-    } catch {
-      respStr = respStr.slice(0, 100) + "...";
-    }
-  }
-  fs.mkdirSync(LOG_DIR, { recursive: true });
+import { toolCall } from "../../shared/logger.mjs";
 
-  for (const [eventName, details] of [
-    ["tool_call", `web-search/${name} input=${argsStr}`],
-    ["tool_response", `web-search/${name} output=${respStr}`],
-  ]) {
-    const entry = { timestamp: ts, name: eventName, details };
-    fs.appendFileSync(path.join(LOG_DIR, `${today}_verbose.log`), JSON.stringify(entry) + "\n");
-    fs.appendFileSync(path.join(LOG_DIR, `${today}.log`), `[${ts}] EVENT name=${eventName} details=${details}\n`);
-    console.error(`[mcp] [${ts}] EVENT name=${eventName} details=${details}`);
-  }
+// Tool-call logging routes through the shared logger (shared/logger.mjs), which
+// preserves logs/tool_call/*.log + *_verbose.log AND emits unified live entries.
+function logToolCall(name, args, response) {
+  toolCall("mcp", "web-search", { name, args, response });
+  console.error(`[mcp] web-search/${name} → ${typeof response === "string" ? response.slice(0, 80) : "done"}`);
 }
 
 /* ── DuckDuckGo Search ── */

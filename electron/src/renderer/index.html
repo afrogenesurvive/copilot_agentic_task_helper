@@ -1,0 +1,194 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta http-equiv="Content-Security-Policy" content="default-src 'self'; style-src 'self'; script-src 'self'; img-src 'self' data:;" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>Frontdesk Operator</title>
+    <link rel="stylesheet" href="style.css" />
+  </head>
+  <body>
+    <div class="app-layout">
+      <aside class="sidebar">
+        <div class="sidebar-title">🖥️ Frontdesk<br/>Operator</div>
+        <nav class="sidebar-nav">
+          <button data-tab="dashboard" class="active">📊 Dashboard</button>
+          <button data-tab="queue">🔴 Queue</button>
+          <button data-tab="logs">📄 Logs</button>
+          <button data-tab="sessions">👥 Sessions</button>
+          <button data-tab="licenses">🔑 Licenses</button>
+          <button data-tab="accounts">🔐 Accounts &amp; Keys</button>
+          <button data-tab="tools">🧰 Tools</button>
+          <button data-tab="appearance">🎨 Appearance</button>
+        </nav>
+        <div class="sidebar-footer">
+          <button id="quit-btn" class="quit">⏻ Quit</button>
+        </div>
+      </aside>
+      <div class="content">
+        <header>
+          <h1>Frontdesk Operator</h1>
+          <div class="header-right">
+            <span id="health-badge" class="badge">checking…</span>
+          </div>
+        </header>
+        <main>
+      <!-- Dashboard -->
+      <section id="tab-dashboard" class="tab active">
+        <div id="service-grid"></div>
+        <div class="panel">
+          <h3>Config</h3>
+          <pre id="config-box">loading…</pre>
+        </div>
+      </section>
+
+      <!-- Queue -->
+      <section id="tab-queue" class="tab">
+        <div class="panel">
+          <h3>🔴 Priority queue</h3>
+          <div id="queue-priority"></div>
+        </div>
+        <div class="panel">
+          <h3>📥 Misc notifications</h3>
+          <div id="queue-misc"></div>
+        </div>
+      </section>
+
+      <!-- Logs -->
+      <section id="tab-logs" class="tab">
+        <div class="panel">
+          <div class="panel-head">
+            <h3>📄 Logs</h3>
+            <div class="logs-subtabs">
+              <button id="logs-sub-live" class="logs-subtab active">Live</button>
+              <button id="logs-sub-files" class="logs-subtab">Files</button>
+            </div>
+          </div>
+
+          <!-- Live -->
+          <div id="logs-live">
+            <div class="log-filters">
+              <select id="log-f-source">
+                <option value="">all sources</option>
+                <option>webhook</option><option>runner</option><option>mcp</option><option>tunnel</option>
+                <option>frontdesk</option><option>notifications</option><option>electron</option>
+              </select>
+              <select id="log-f-subSource">
+                <option value="">all sub-sources</option>
+                <option>trello</option><option>gmail</option><option>drive</option><option>calendar</option><option>sheets</option>
+                <option>web-search</option><option>queue</option><option>http</option><option>tool</option><option>model</option>
+                <option>action</option><option>send</option><option>reply</option><option>session</option><option>cloudflared</option>
+              </select>
+              <select id="log-f-level">
+                <option value="">all levels</option><option>debug</option><option>info</option><option>warn</option><option>error</option>
+              </select>
+              <input id="log-f-search" type="text" placeholder="search…" />
+              <label class="log-check"><input type="checkbox" id="log-f-autoscroll" checked /> auto-scroll</label>
+              <button id="log-pause">⏸ Pause</button>
+              <button id="log-clear">Clear</button>
+            </div>
+            <div id="log-box" class="log-box">loading…</div>
+          </div>
+
+          <!-- Files -->
+          <div id="logs-files" style="display:none">
+            <div class="panel-head">
+              <span id="log-file-title" class="log-file-title">Select a log file to view</span>
+              <button id="log-file-refresh">Refresh</button>
+            </div>
+            <div id="log-file-list">loading…</div>
+            <div id="log-file-view" style="display:none">
+              <div class="log-file-actions">
+                <button id="log-file-tail">Tail 500</button>
+                <button id="log-file-full">Full</button>
+                <button id="log-file-search-toggle">Search</button>
+              </div>
+              <input id="log-file-search" type="text" placeholder="filter lines…" style="display:none" />
+              <pre id="log-file-box">…</pre>
+            </div>
+          </div>
+        </div>
+      </section>
+
+      <!-- Sessions -->
+      <section id="tab-sessions" class="tab">
+        <div class="panel">
+          <h3>👥 Frontdesk sessions</h3>
+          <div id="sessions-box">loading…</div>
+        </div>
+      </section>
+
+      <!-- Licenses -->
+      <section id="tab-licenses" class="tab">
+        <div class="panel">
+          <div class="panel-head">
+            <h3>🔑 Seat licenses</h3>
+            <button id="licenses-refresh">Refresh</button>
+          </div>
+          <div id="licenses-box">loading…</div>
+        </div>
+      </section>
+
+      <!-- Accounts & Keys -->
+      <section id="tab-accounts" class="tab">
+        <div class="panel">
+          <div class="panel-head">
+            <h3>🔐 Seat → account bindings</h3>
+            <button id="accounts-refresh">Refresh</button>
+          </div>
+          <div id="accounts-box">loading…</div>
+          <p style="color:var(--muted);font-size:0.72rem;margin-top:0.6rem;line-height:1.4">
+            Connect a Google account or set a Trello key/token per seat. The agent uses these when acting
+            on behalf of that seat. <b>▶ Spawn MCP</b> launches dedicated MCP instances bound to the seat's
+            accounts (instead of the shared VS Code ones).
+          </p>
+        </div>
+      </section>
+
+      <!-- Tools -->
+      <section id="tab-tools" class="tab">
+        <div class="panel">
+          <h3>📋 Shared tool manifest</h3>
+          <div id="manifest-box">loading…</div>
+        </div>
+        <div class="panel">
+          <h3>⚡ Quick actions</h3>
+          <div id="quick-tools">
+            <div class="qtool">
+              <strong>Trello</strong>
+              <button data-act="boards">Boards</button>
+              <button data-act="lists">Lists (of a board)</button>
+              <button data-act="cards">Cards (of a list)</button>
+              <div class="qresult" id="trello-result"></div>
+            </div>
+            <div class="qtool">
+              <strong>Gmail</strong>
+              <button data-act="gmail-list">Recent messages</button>
+              <div class="qresult" id="gmail-result"></div>
+            </div>
+          </div>
+        </div>
+      </section>
+
+      <!-- Appearance -->
+      <section id="tab-appearance" class="tab">
+        <div class="panel">
+          <h3>🎨 Appearance</h3>
+          <div class="theme-row">
+            <button class="theme-option" data-theme="light">☀️ Light</button>
+            <button class="theme-option" data-theme="dark">🌙 Dark</button>
+            <button class="theme-option" data-theme="system">🖥️ System</button>
+          </div>
+          <p style="color:var(--muted);font-size:0.72rem;margin-top:0.6rem;line-height:1.4">
+            Saved to <code>APPEARANCE_THEME</code> in <code>.env</code>. “System” follows macOS — the native
+            window chrome and this dashboard both update when the OS theme changes.
+          </p>
+        </div>
+      </section>
+        </main>
+      </div>
+    </div>
+
+    <script src="app.js"></script>
+  </body>
+</html>
