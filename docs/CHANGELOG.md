@@ -1,5 +1,23 @@
 # Changelog
 
+## [0.2.1-1] — 2026-08-27
+
+### Added
+
+- **Multi-provider LLM support** for the agent runner — switch between DeepSeek (default), OpenAI,
+  Anthropic, or a local Ollama server via a single `LLM_PROVIDER` setting.
+- **Config system** — a plain-JSON `config.json` at the repo root now takes precedence over `.env`.
+  The Electron dashboard gains a **⚙️ Config** tab to view, edit, save, export, and import it.
+
+### Changed
+
+- All backend services (webhook server, agent runner, MCP servers) now load configuration from
+  `config.json` first, falling back to `.env`.
+
+### Docs
+
+- Refreshed `ipcs.md` and `electron.md`.
+
 ## [0.2.0-2] — 2026-08-27
 
 ### Removed

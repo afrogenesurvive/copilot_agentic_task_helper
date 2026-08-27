@@ -4,7 +4,7 @@
  * Agent Runner — Autonomous queue processor (watch mode)
  *
  * Listens for trigger file changes from the webhook server, then processes
- * priority queue items via DeepSeek V4. No polling — event-driven.
+ * priority queue items via the configured LLM provider. No polling — event-driven.
  *
  * Usage:
  *   node mcp/agent-runner/index.js             # Start in foreground
@@ -19,7 +19,8 @@
  *   Stop:  kill <PID> (find with: lsof -i :3199 | grep agent-runner)
  */
 
-import "dotenv/config";
+import config from "../../shared/config-loader.cjs";
+config.loadEnvInto(process.env);
 import fs from "fs";
 import path from "path";
 import readline from "readline";
@@ -36,6 +37,7 @@ import {
   isTaskLocked,
 } from "./poller.js";
 import { callModel, buildTaskContext } from "./model-client.js";
+import { getModelName } from "../../shared/model-provider.mjs";
 import { executeToolCall } from "./tool-executor.js";
 import { logAction } from "./logger.js";
 import { allTools } from "../../shared/tool-manifest.js";
@@ -125,8 +127,8 @@ async function processEvent(event) {
   }
 
   try {
-    // Step 1: Send to DeepSeek V4 for reasoning
-    console.log(`   🤖 [RUNNER] Asking DeepSeek V4...`);
+    // Step 1: Send to the configured LLM for reasoning
+    console.log(`   🤖 [RUNNER] Asking ${getModelName()}...`);
     const decision = await callModel(event, allTools);
 
     if (!decision) {
@@ -177,7 +179,7 @@ async function processEvent(event) {
 }
 
 /**
- * Process a task from the daily task list by sending it to DeepSeek.
+ * Process a task from the daily task list by sending it to the configured LLM.
  * The model decides if it can take action (read queues, comment, etc.)
  * or marks the task as not automatable.
  */
@@ -196,8 +198,8 @@ async function processTask(task) {
   acquireTaskLock(task.lineIndex);
 
   try {
-    // Build task context and send to DeepSeek
-    console.log(`   🤖 [RUNNER] Asking DeepSeek V4...`);
+    // Build task context and send to the configured LLM
+    console.log(`   🤖 [RUNNER] Asking ${getModelName()}...`);
     const taskContext = buildTaskContext(task);
     const decision = await callModel(taskContext, allTools);
 
@@ -320,7 +322,7 @@ function printBanner() {
   const line = "─".repeat(50);
   console.log(`\n${line}`);
   console.log(`   🤖 Agent Runner`);
-  console.log(`   📡 DeepSeek V4`);
+  console.log(`   📡 ${getModelName()}`);
   console.log(`   � Watch mode (triggered by webhook server via .runner-trigger)`);
   console.log(`   📋 Task fallback: every ${TASK_CHECK_INTERVAL / 1000}s (AGENT_TASK_INTERVAL)`);
   console.log(`   🛡️  ${allTools.length} tools available (allowlist restricts to safe subset)`);

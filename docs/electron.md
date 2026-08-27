@@ -27,6 +27,7 @@ npm run electron:dev       # launch dashboard + autostart the whole backend
 | 👥 Sessions | Frontdesk login/logout sessions |
 | 🔑 Licenses | Seat licenses (valid / expired / revoked) |
 | 🔐 Accounts & Keys | Bind Google/Trello accounts per seat; ▶ Spawn MCP for a seat |
+| ⚙️ Config | `config.json` presence, editable JSON, Save / Export / Import |
 | 🧰 Tools | Shared tool manifest + Trello/Gmail quick actions |
 | 🎨 Appearance | Light / Dark / System theme (`APPEARANCE_THEME` — native chrome + dashboard) |
 | ⏻ Quit (bottom) | Quits the app — main `before-quit` stops all backend services |
@@ -58,7 +59,10 @@ npm run electron:build   # = electron-builder --mac
 [`npm run electron:build`](../package.json#L48) = [`electron-builder --mac`](../electron/package.json#L1) (the `dist:mac` script).
 
 Packaged apps read the repo pieces (scripts, shared, mcp, webapp) from `extraResources`, but
-`.env`/`safe/`/`logs/` are read from the live repo — the primary flow is dev (`npm start`).
+`.env`/`config.json`/`safe`/`logs/` are read from the live repo — the primary flow is dev (`npm start`).
+
+A repo-root `config.json` (plain JSON) is the primary config source; `.env` is used when it's absent.
+Manage it from the **⚙️ Config** tab (edit/save/export/import).
 
 ## Notes
 

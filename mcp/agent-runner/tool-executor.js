@@ -10,7 +10,8 @@
  * Environment: reuses TRELLO_KEY, TRELLO_TOKEN, GMAIL_* from .env
  */
 
-import "dotenv/config";
+import config from "../../shared/config-loader.cjs";
+config.loadEnvInto(process.env);
 import { getSeatAccounts } from "../../scripts/frontdesk-accounts.mjs";
 
 // ── Frontdesk Allowlist — only these tools can be called for frontdesk events ──

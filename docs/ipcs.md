@@ -24,14 +24,17 @@ preload bridge ([`electron/src/preload.js`](../electron/src/preload.js#L7)) as `
 | `toolLog(lines?)` | [`logs:tool`](../electron/src/main.js#L385) | `/tool-logs?lines=` result (legacy tool-call tail) |
 | `sessions()` | [`frontdesk:sessions`](../electron/src/main.js#L398) | Last 200 frontdesk session entries |
 | `licenses()` | [`licenses:list`](../electron/src/main.js#L400) | `{ok, seats:[{sub,status,exp,issuedAt,enc}]}` |
-| `config()` | [`config:get`](../electron/src/main.js#L401) | Non-secret `.env`/config values |
+| `config()` | [`config:get`](../electron/src/main.js#L401) | Config summary: `{present, source, configPath, values, webhookBaseUrl, …}` (config.json primary, `.env` fallback) |
+| `configSave(values)` | [`config:save`](../electron/src/main.js#L409) | Writes the flat object to `config.json` and applies it to `process.env` |
+| `configExport()` | [`config:export`](../electron/src/main.js#L414) | `{ok, present, source, json}` — effective config as pretty JSON |
+| `configImport(raw)` | [`config:import`](../electron/src/main.js#L418) | Parses JSON → saves `config.json` → applies to `process.env` |
 | `googleStatus()` | [`google:status`](../electron/src/main.js#L413) | `{connected, user, consentUrl}` |
 | `toolsManifest()` | [`tools:manifest`](../electron/src/main.js#L410) | Shared tool manifest ([`shared/tool-manifest.js`](../shared/tool-manifest.js#L1)) |
 | `trello(action, params)` | [`tools:trello`](../electron/src/main.js#L411) | Trello REST quick actions (list_boards/lists/cards, add_comment) |
 | `gmail(action, params)` | [`tools:gmail`](../electron/src/main.js#L412) | Gmail list/get via googleapis |
 | `openExternal(url)` | [`open:external`](../electron/src/main.js#L456) | Open a URL in the system browser |
 | `getTheme()` | [`app:getTheme`](../electron/src/main.js#L460) | `{theme: light\|dark\|system, effective: dark\|light}` |
-| `setTheme(theme)` | [`app:setTheme`](../electron/src/main.js#L461) | Persists `APPEARANCE_THEME` to `.env`, applies it, returns theme info |
+| `setTheme(theme)` | [`app:setTheme`](../electron/src/main.js#L461) | Persists `APPEARANCE_THEME` to `config.json` (or `.env` fallback), applies it, returns theme info |
 | `quit()` | [`app:quit`](../electron/src/main.js#L462) | Quit the app (main `before-quit` stops all services) |
 | `accountsList()` | [`accounts:list`](../electron/src/main.js#L415) | `{ok, rows:[{sub, googleConnected, googleUser, trelloConfigured}]}` |
 | `accountsConnectGoogle(sub)` | [`accounts:connectGoogle`](../electron/src/main.js#L430) | Runs loopback OAuth for the seat → binds Google account |

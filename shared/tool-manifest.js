@@ -4,7 +4,7 @@
  * Single source of truth for all MCP tool schemas.
  * Imported by:
  *   - MCP servers (trello, gmail) to respond to VS Code's tools/list request
- *   - Agent runner to send tool definitions to DeepSeek V4 function calling
+ *   - Agent runner to send tool definitions to the configured LLM provider (function calling)
  *
  * Each tool follows the JSON Schema format (inputSchema),
  * which maps directly to OpenAI/DeepSeek function `parameters`.

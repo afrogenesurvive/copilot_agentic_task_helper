@@ -3,7 +3,7 @@
   "version": "1.0.0",
   "private": true,
   "type": "module",
-  "description": "Autonomous agent runner — polls priority queue, calls DeepSeek V4, executes tool calls",
+  "description": "Autonomous agent runner — processes priority queue + daily tasks via the configured LLM provider",
   "main": "index.js",
   "dependencies": {
     "dotenv": "^16.4.0",

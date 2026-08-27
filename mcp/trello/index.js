@@ -14,7 +14,8 @@ import { Server } from "@modelcontextprotocol/sdk/server/index.js";
 import { StdioServerTransport } from "@modelcontextprotocol/sdk/server/stdio.js";
 import { CallToolRequestSchema, ListToolsRequestSchema } from "@modelcontextprotocol/sdk/types.js";
 import fetch from "node-fetch";
-import "dotenv/config";
+import config from "../../shared/config-loader.cjs";
+config.loadEnvInto(process.env);
 import { sanitizeObject } from "../../scripts/sanitize.stub.mjs";
 import { trelloTools } from "../../shared/tool-manifest.js";
 
