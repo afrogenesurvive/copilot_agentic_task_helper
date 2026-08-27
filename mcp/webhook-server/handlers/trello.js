@@ -268,9 +268,9 @@ export function trelloHandler(req, res) {
   }
 
   // Capture session log cards from Trello and write to local logs
-  // The Netlify log-session function creates Trello cards on the session_logs
-  // list; the webhook picks them up and persists them to the local filesystem.
-  // Only active when FRONTDESK_LOG_TO_TRELLO=true (mirror mode).
+  // The webhook server's frontdesk logSession mirror (FRONTDESK_LOG_TO_TRELLO=true)
+  // creates Trello cards on the session_logs list; this handler picks them up and
+  // persists them to the local filesystem. Only active in mirror mode.
   if (LOG_TO_TRELLO && event.type === "createCard" && event.list?.name === "session_logs") {
     const day = ts.slice(0, 10);
     const cardDesc = action?.data?.card?.desc || "";
