@@ -1,5 +1,11 @@
 # Changelog
 
+## [0.2.0-2] — 2026-08-27
+
+### Removed
+
+- **Legacy Netlify build/edge/session-log helpers** — the site is now build-less; only the runtime-config and Trello-proxy functions remain. Session logs are written by the backend instead.
+
 ## [0.2.0-1] — 2026-08-24
 
 ### Fixed
