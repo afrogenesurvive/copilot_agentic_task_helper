@@ -29,6 +29,7 @@
       if (tab === "sessions") refreshSessions();
       if (tab === "licenses") refreshLicenses();
       if (tab === "accounts") refreshAccounts();
+      if (tab === "config") refreshConfig();
       if (tab === "tools") refreshTools();
       if (tab === "appearance") refreshAppearance();
     });
@@ -451,6 +452,67 @@
       : `<div class="empty">Error: ${esc(res.error)}</div>`;
   });
 
+  // ── Config (config.json) ──
+  function configMsg(text, isErr) {
+    const el = $("config-msg");
+    el.textContent = text;
+    el.className = isErr ? "config-msg err" : "config-msg ok";
+  }
+  async function refreshConfig() {
+    const c = await api.configGet();
+    const status = $("config-status");
+    if (c.present) {
+      status.innerHTML = `<span class="tag valid">✅ config.json present</span><span class="config-src">using <code>${esc(c.configPath)}</code> — overrides <code>.env</code></span>`;
+    } else {
+      status.innerHTML = `<span class="tag expired">⚠️ no config.json</span><span class="config-src">falling back to <code>.env</code> — press <b>Save</b> to create config.json from current values</span>`;
+    }
+    $("config-editor").value = JSON.stringify(c.values || {}, null, 2);
+    configMsg("");
+  }
+  $("config-refresh").addEventListener("click", refreshConfig);
+  $("config-save").addEventListener("click", async () => {
+    let parsed;
+    try {
+      parsed = JSON.parse($("config-editor").value);
+    } catch (err) {
+      return configMsg(`Invalid JSON: ${err.message}`, true);
+    }
+    const res = await api.configSave(parsed);
+    if (res.ok) {
+      configMsg(`Saved ${res.count} key(s) to config.json. Restart services (Dashboard → Stop / Start) to apply.`);
+      refreshConfig();
+    } else {
+      configMsg(res.error || "Save failed", true);
+    }
+  });
+  $("config-export").addEventListener("click", async () => {
+    const res = await api.configExport();
+    const blob = new Blob([res.json], { type: "application/json" });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement("a");
+    a.href = url;
+    a.download = "config.json";
+    document.body.appendChild(a);
+    a.click();
+    a.remove();
+    setTimeout(() => URL.revokeObjectURL(url), 1000);
+    configMsg(`Exported ${res.present ? "config.json" : ".env → JSON"} (${res.json.length} bytes).`);
+  });
+  $("config-import").addEventListener("click", () => $("config-import-input").click());
+  $("config-import-input").addEventListener("change", async (e) => {
+    const file = e.target.files && e.target.files[0];
+    if (!file) return;
+    const text = await file.text();
+    const res = await api.configImport(text);
+    if (res.ok) {
+      configMsg(`Imported ${res.count} key(s) → config.json. Restart services to apply.`);
+      refreshConfig();
+    } else {
+      configMsg(res.error || "Import failed", true);
+    }
+    e.target.value = "";
+  });
+
   // ── Appearance (light/dark/system) ──
   let sysMedia = null;
   let sysHandler = null;
@@ -486,6 +548,7 @@
 
   // ── Init ──
   refreshDashboard();
+  refreshConfig();
   refreshAppearance();
   bindLogFilters();
   bindLogStream();
@@ -496,5 +559,6 @@
     if (document.querySelector("#tab-queue").classList.contains("active")) refreshQueue();
     if (document.querySelector("#tab-logs").classList.contains("active")) refreshLogs();
     if (document.querySelector("#tab-accounts").classList.contains("active")) refreshAccounts();
+    if (document.querySelector("#tab-config").classList.contains("active")) refreshConfig();
   }, 15000);
 })();

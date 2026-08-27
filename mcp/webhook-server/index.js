@@ -29,7 +29,8 @@
 import express from "express";
 import cors from "cors";
 import rateLimit from "express-rate-limit";
-import "dotenv/config";
+import config from "../../shared/config-loader.cjs";
+config.loadEnvInto(process.env);
 import crypto from "crypto";
 import fs from "fs";
 import path from "path";
@@ -63,6 +64,7 @@ import {
 import { startGoogleOAuth, handleGoogleOAuthCallback } from "./lib/oauth.js";
 import { getSeatAccounts } from "../../scripts/frontdesk-accounts.mjs";
 import { log as logEvent } from "../../shared/logger.mjs";
+import { callChat, getModelName } from "../../shared/model-provider.mjs";
 
 const app = express();
 
@@ -654,8 +656,8 @@ const server = app.listen(PORT, () => {
  *   ls [queue]           — List pending items with seq numbers
  *   done <number>        — Mark an item as cleared by its #
  *   done task <number>   — Mark a task as completed by its number
- *   execute <number>     — Process a queue event via DeepSeek inline
- *   execute task <number>— Process a task via DeepSeek inline
+ *   execute <number>     — Process a queue event via the configured LLM inline
+ *   execute task <number>— Process a task via the configured LLM inline
  *   peek <number>        — Show full JSON details of an item by its #
  *   tasks                — Show today's task list from tasks/YYYY-MM-DD.md
  *                        (numbered, with ✅/⬜ status)
@@ -679,8 +681,8 @@ function setupReadline() {
       help: { desc: "Show this help", fn: cmdHelp },
       ls: { desc: "List pending items: ls [priority|misc_notifications]", fn: cmdList },
       done: { desc: "Mark item cleared by #: done <seqNo> | done task <taskNum>", fn: cmdDone },
-      execute: { desc: "Process an event via DeepSeek inline: execute <seqNo>", fn: cmdExecute },
-      "execute-task": { desc: "Process a task via DeepSeek inline: execute-task <taskNum>", fn: cmdExecuteTask },
+      execute: { desc: "Process an event via the configured LLM inline: execute <seqNo>", fn: cmdExecute },
+      "execute-task": { desc: "Process a task via the configured LLM inline: execute-task <taskNum>", fn: cmdExecuteTask },
       "done-task": { desc: "Mark a task done by number: done-task <taskNum>", fn: cmdDoneTask },
       peek: { desc: "Show full details of an item by its #", fn: cmdPeek },
       tasks: { desc: "Show today's task list", fn: cmdTasks },
@@ -766,7 +768,7 @@ function setupReadline() {
         console.log(`   ${num}) ${status} ${t.text}`);
       });
       console.log(`\n   💡 Type "done-task <num>" to mark a task done`);
-      console.log(`   💡 Type "execute-task <num>" to process a task via DeepSeek`);
+      console.log(`   💡 Type "execute-task <num>" to process a task via the configured LLM`);
       console.log(``);
     }
 
@@ -789,7 +791,7 @@ function setupReadline() {
       "gmail_get_message",
     ]);
 
-    /** Build event context for DeepSeek */
+    /** Build event context for the configured LLM */
     function buildEventContext(event) {
       const lines = [`New ${event.source}/${event.type} event:`];
       if (event.data?.text) lines.push(`Message: "${event.data.text.slice(0, 500)}"`);
@@ -812,14 +814,6 @@ function setupReadline() {
       if (event.data?.subject) lines.push(`Subject: "${event.data.subject}"`);
       if (event.data?.direction) lines.push(`Direction: ${event.data.direction}`);
       return lines.join("\n");
-    }
-
-    /** Map tool manifest to OpenAI function format */
-    function mapTools(tools) {
-      return tools.map((t) => ({
-        type: "function",
-        function: { name: t.name, description: t.description, parameters: t.inputSchema },
-      }));
     }
 
     /** Get authenticated Gmail client */
@@ -887,7 +881,7 @@ function setupReadline() {
       }
     }
 
-    /** Execute a queue event via DeepSeek inline */
+    /** Execute a queue event via the configured LLM inline */
     async function cmdExecute(args) {
       if (!args || !/^\d+$/.test(args)) {
         return console.log(`   ⚠️  Usage: execute <number>. Type "ls" to see item numbers.`);
@@ -898,60 +892,31 @@ function setupReadline() {
       if (!event) return console.log(`   ⚠️  No item found with #${seqNo}. Type "ls" to see items.`);
       if (event.cleared) return console.log(`   ⚠️  Item #${seqNo} is already cleared.`);
 
-      const apiKey = process.env.DEEPSEEK_API_KEY;
-      if (!apiKey) return console.log(`   ❌ DEEPSEEK_API_KEY not set in .env`);
-
       console.log(`\n   🤖 [EXECUTE] Processing #${seqNo}: ${event.source}/${event.type}`);
-      console.log(`   📤 [EXECUTE] Sending to DeepSeek...`);
+      console.log(`   📤 [EXECUTE] Sending to ${getModelName()}...`);
 
       try {
         const eventContext = buildEventContext(event);
-        const tools = mapTools(allTools);
 
-        const response = await fetch("https://api.deepseek.com/chat/completions", {
-          method: "POST",
-          headers: { "Content-Type": "application/json", Authorization: `Bearer ${apiKey}` },
-          body: JSON.stringify({
-            model: "deepseek-chat",
-            messages: [
-              {
-                role: "system",
-                content:
-                  "You are an autonomous business workflow agent. Your job is to process incoming events and decide what action to take. Choose ONE tool and provide ALL required parameters. Respond only with a tool call — no explanatory text.",
-              },
-              { role: "user", content: eventContext },
-            ],
-            tools,
-            tool_choice: "auto",
-            temperature: 0.1,
-          }),
+        const { toolCall, reply } = await callChat({
+          systemMessage:
+            "You are an autonomous business workflow agent. Your job is to process incoming events and decide what action to take. Choose ONE tool and provide ALL required parameters. Respond only with a tool call — no explanatory text.",
+          userContext: eventContext,
+          tools: allTools,
+          temperature: 0.1,
         });
 
-        if (!response.ok) {
-          const errText = await response.text();
-          throw new Error(`DeepSeek API ${response.status}: ${errText}`);
-        }
-
-        const data = await response.json();
-        const toolCall = data.choices?.[0]?.message?.tool_calls?.[0];
         if (!toolCall) {
-          const reply = data.choices?.[0]?.message?.content || "(empty)";
-          console.log(`   ⚠️ [EXECUTE] No tool call returned — model said: "${reply.slice(0, 200)}"`);
+          const said = reply ? ` — model said: "${String(reply).slice(0, 200)}"` : "";
+          console.log(`   ⚠️ [EXECUTE] No tool call returned${said}`);
           console.log(`   ⏭️  [EXECUTE] Marking #${seqNo} as skipped.`);
           markClearedByNumber(seqNo);
           return;
         }
 
-        let toolArgs;
-        try {
-          toolArgs = JSON.parse(toolCall.function.arguments);
-        } catch {
-          console.log(`   ❌ [EXECUTE] Invalid JSON in tool arguments: "${toolCall.function.arguments}"`);
-          return;
-        }
-
-        const toolName = toolCall.function.name;
-        console.log(`   🤖 [EXECUTE] DeepSeek chose: ${toolName}(${JSON.stringify(toolArgs)})`);
+        const toolName = toolCall.name;
+        const toolArgs = toolCall.arguments;
+        console.log(`   🤖 [EXECUTE] ${getModelName()} chose: ${toolName}(${JSON.stringify(toolArgs)})`);
 
         // Validate against allowlist
         if (!EXECUTE_ALLOWLIST.has(toolName)) {
@@ -999,7 +964,7 @@ function setupReadline() {
       }
     }
 
-    /** Execute a task via DeepSeek inline (like cmdExecute but for tasks) */
+    /** Execute a task via the configured LLM inline (like cmdExecute but for tasks) */
     async function cmdExecuteTask(args) {
       if (!args || !/^\d+$/.test(args)) {
         return console.log(`   ⚠️  Usage: execute-task <taskNum>. Type "tasks" to see task numbers.`);
@@ -1017,11 +982,8 @@ function setupReadline() {
         return console.log(`   ⚠️  Task #${taskNum} is already done.`);
       }
 
-      const apiKey = process.env.DEEPSEEK_API_KEY;
-      if (!apiKey) return console.log(`   ❌ DEEPSEEK_API_KEY not set in .env`);
-
       console.log(`\n   🤖 [EXECUTE-TASK] Processing task #${taskNum}: "${task.text}"`);
-      console.log(`   📤 [EXECUTE-TASK] Sending to DeepSeek...`);
+      console.log(`   📤 [EXECUTE-TASK] Sending to ${getModelName()}...`);
 
       try {
         const taskContext = [
@@ -1032,38 +994,18 @@ function setupReadline() {
           "If you can make progress (read queues, send notifications, comment on cards), do so now.",
         ].join("\n");
 
-        const tools = mapTools(allTools);
-
-        const response = await fetch("https://api.deepseek.com/chat/completions", {
-          method: "POST",
-          headers: { "Content-Type": "application/json", Authorization: `Bearer ${apiKey}` },
-          body: JSON.stringify({
-            model: "deepseek-chat",
-            messages: [
-              {
-                role: "system",
-                content:
-                  "You are an autonomous task automation agent. Your job is to make progress on daily tasks. If you can take action with available tools, do so. Otherwise respond with '[skip]'.",
-              },
-              { role: "user", content: taskContext },
-            ],
-            tools,
-            tool_choice: "auto",
-            temperature: 0.1,
-          }),
+        const { toolCall, reply } = await callChat({
+          systemMessage:
+            "You are an autonomous task automation agent. Your job is to make progress on daily tasks. If you can take action with available tools, do so. Otherwise respond with '[skip]'.",
+          userContext: taskContext,
+          tools: allTools,
+          temperature: 0.1,
         });
 
-        if (!response.ok) {
-          const errText = await response.text();
-          throw new Error(`DeepSeek API ${response.status}: ${errText}`);
-        }
-
-        const data = await response.json();
-        const toolCall = data.choices?.[0]?.message?.tool_calls?.[0];
         if (!toolCall) {
-          const reply = data.choices?.[0]?.message?.content || "(empty)";
-          const isSkip = reply.toLowerCase().includes("[skip]");
-          console.log(`   ⚠️  [EXECUTE-TASK] No tool call returned. Model said: "${reply.slice(0, 200)}"`);
+          const isSkip = (reply || "").toLowerCase().includes("[skip]");
+          const said = reply ? ` Model said: "${String(reply).slice(0, 200)}"` : "";
+          console.log(`   ⚠️  [EXECUTE-TASK] No tool call returned.${said}`);
           if (isSkip) {
             markTaskDoneByNumber(taskNum);
             console.log(`   ⏭️  [EXECUTE-TASK] Task #${taskNum} marked as not automatable.`);
@@ -1071,16 +1013,9 @@ function setupReadline() {
           return;
         }
 
-        let toolArgs;
-        try {
-          toolArgs = JSON.parse(toolCall.function.arguments);
-        } catch {
-          console.log(`   ❌ [EXECUTE-TASK] Invalid JSON in tool arguments: "${toolCall.function.arguments}"`);
-          return;
-        }
-
-        const toolName = toolCall.function.name;
-        console.log(`   🤖 [EXECUTE-TASK] DeepSeek chose: ${toolName}(${JSON.stringify(toolArgs)})`);
+        const toolName = toolCall.name;
+        const toolArgs = toolCall.arguments;
+        console.log(`   🤖 [EXECUTE-TASK] ${getModelName()} chose: ${toolName}(${JSON.stringify(toolArgs)})`);
 
         // Validate against allowlist
         if (!EXECUTE_ALLOWLIST.has(toolName)) {

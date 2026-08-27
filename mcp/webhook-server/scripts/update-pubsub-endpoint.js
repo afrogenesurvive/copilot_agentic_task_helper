@@ -20,7 +20,8 @@ import { GoogleAuth } from "google-auth-library";
 import fs from "fs";
 import path from "path";
 import { fileURLToPath } from "url";
-import "dotenv/config";
+import config from "../../../shared/config-loader.cjs";
+config.loadEnvInto(process.env);
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 

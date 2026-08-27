@@ -590,3 +590,48 @@ th {
   max-height: 220px;
   overflow-y: auto;
 }
+
+/* ── Config tab ── */
+#config-editor {
+  width: 100%;
+  min-height: 340px;
+  font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+  font-size: 0.78rem;
+  line-height: 1.45;
+  background: var(--surface);
+  color: var(--text);
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  padding: 10px;
+  resize: vertical;
+  box-sizing: border-box;
+  white-space: pre;
+}
+.config-actions {
+  display: flex;
+  gap: 8px;
+  margin-top: 10px;
+  flex-wrap: wrap;
+  align-items: center;
+}
+.config-src {
+  margin-left: 8px;
+  font-size: 0.78rem;
+  color: var(--muted);
+}
+.config-msg {
+  margin-top: 10px;
+  font-size: 0.8rem;
+}
+.config-msg.ok {
+  color: var(--ok);
+}
+.config-msg.err {
+  color: var(--err);
+}
+.hint {
+  color: var(--muted);
+  font-size: 0.74rem;
+  line-height: 1.5;
+  margin: 8px 0;
+}

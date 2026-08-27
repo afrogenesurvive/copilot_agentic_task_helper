@@ -16,7 +16,8 @@
  */
 
 import fetch from "node-fetch";
-import "dotenv/config";
+import config from "../../../shared/config-loader.cjs";
+config.loadEnvInto(process.env);
 
 const TRELLO_KEY = process.env.TRELLO_KEY || "";
 const TRELLO_TOKEN = process.env.TRELLO_TOKEN || "";

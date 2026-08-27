@@ -1,28 +1,31 @@
 /**
- * Model Client — calls DeepSeek V4 API with function calling via the OpenAI SDK
+ * Model Client — multi-provider LLM client (a la ai_transcription_agent)
  *
- * Takes an event's context, sends it to DeepSeek along with tool
- * definitions from the shared manifest, and returns the model's
- * chosen tool call (function name + arguments).
+ * All provider logic lives in shared/model-provider.mjs (single source of
+ * truth shared with the webhook-server inline execute flow). Supported:
+ *   LLM_PROVIDER=deepseek  (default)  — DEEPSEEK_API_KEY
+ *   LLM_PROVIDER=openai               — OPENAI_API_KEY (+ OPENAI_MODEL / OPENAI_BASE_URL)
+ *   LLM_PROVIDER=anthropic            — ANTHROPIC_API_KEY (+ ANTHROPIC_MODEL / ANTHROPIC_BASE_URL / ANTHROPIC_MAX_TOKENS)
+ *   LLM_PROVIDER=ollama               — OLLAMA_BASE_URL + OLLAMA_MODEL (+ OLLAMA_NUM_CTX)
  *
- * Uses the OpenAI SDK because DeepSeek's API is fully compatible with it.
- *
- * Environment:
- *   DEEPSEEK_API_KEY — API key for DeepSeek V4
- *   AGENT_MODEL      — Model name (default: "deepseek-chat")
+ * Takes an event's context, sends it to the configured provider along with
+ * tool definitions from the shared manifest, and returns the model's chosen
+ * tool call (function name + arguments).
  */
 
 import fs from "fs";
 import path from "path";
 import { fileURLToPath } from "url";
-import OpenAI from "openai";
 import { log } from "../../shared/logger.mjs";
+import { callChat, getModelName, PROVIDER } from "../../shared/model-provider.mjs";
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const PROMPT_LOG_DIR = path.resolve(__dirname, "..", "..", "logs", "agent-runner", "prompts");
 
+const MODEL = getModelName();
+
 /**
- * Log the full prompt sent to DeepSeek for audit/review.
+ * Log the full prompt sent to the LLM for audit/review.
  * Writes to logs/agent-runner/prompts/YYYY-MM-DD.jsonl.
  * Only active when AGENT_RUNNER_VERBOSE=true is set.
  */
@@ -37,7 +40,7 @@ function logPrompt(systemMessage, userContext, tools) {
     userContext,
     toolCount: tools.length,
     toolNames: tools.map((t) => t.function?.name || t.name),
-    model: process.env.AGENT_MODEL || "deepseek-v4-flash",
+    model: MODEL,
   };
   try {
     fs.mkdirSync(PROMPT_LOG_DIR, { recursive: true });
@@ -46,25 +49,6 @@ function logPrompt(systemMessage, userContext, tools) {
     console.error(`   ❌ [MODEL] Failed to log prompt: ${err.message}`);
   }
   log({ source: "runner", subSource: "model", level: "debug", message: "model prompt", data: { type: "model_prompt", toolCount: entry.toolCount, model: entry.model } });
-}
-
-const client = new OpenAI({
-  apiKey: process.env.DEEPSEEK_API_KEY || "",
-  baseURL: "https://api.deepseek.com",
-});
-
-/**
- * Map MCP tool definitions to OpenAI's tool calling format.
- */
-function mapTools(toolDefs) {
-  return toolDefs.map((t) => ({
-    type: "function",
-    function: {
-      name: t.name,
-      description: t.description,
-      parameters: t.inputSchema,
-    },
-  }));
 }
 
 /**
@@ -132,23 +116,15 @@ export function buildEventContext(event) {
 }
 
 /**
- * Call the DeepSeek V4 API with an event or task context and tool definitions.
- * Uses the OpenAI SDK under the hood.
+ * Call the configured LLM with an event or task context and tool definitions.
+ * Delegates to shared/model-provider.mjs for the provider-specific request.
  * @param {object|string} context — A queue event object OR a plain context string
  * @param {Array} toolDefs — Tool definitions from shared/tool-manifest.js
  * @returns {object|null} { name: string, arguments: object } or null if no tool call
  */
 export async function callModel(context, toolDefs) {
-  if (!process.env.DEEPSEEK_API_KEY) {
-    console.error("   ❌ [MODEL] DEEPSEEK_API_KEY not set in .env");
-    return null;
-  }
-
-  const tools = mapTools(toolDefs);
-
   // Support both event objects and plain context strings
   const eventContext = typeof context === "string" ? context : buildEventContext(context);
-  const model = process.env.AGENT_MODEL || "deepseek-v4-flash";
 
   const systemMessage = [
     "You are an autonomous business workflow agent. Your job is to process incoming events",
@@ -174,53 +150,25 @@ export async function callModel(context, toolDefs) {
   ].join("\n");
 
   // Log the full prompt for audit when AGENT_RUNNER_VERBOSE=true
-  logPrompt(systemMessage, eventContext, tools);
+  logPrompt(systemMessage, eventContext, toolDefs);
 
   try {
-    const response = await client.chat.completions.create({
-      model,
-      messages: [
-        {
-          role: "system",
-          content: systemMessage,
-        },
-        {
-          role: "user",
-          content: eventContext,
-        },
-      ],
-      tools,
-      tool_choice: "auto",
-      temperature: 0.1,
-      thinking: { type: "enabled" },
-      reasoning_effort: "high",
-      stream: false,
+    const { toolCall, reply } = await callChat({
+      systemMessage,
+      userContext: eventContext,
+      tools: toolDefs,
     });
 
-    const choice = response.choices?.[0];
-    const toolCall = choice?.message?.tool_calls?.[0];
-
     if (!toolCall) {
-      const reply = choice?.message?.content || "(empty)";
-      console.log(`   ⚠️ [MODEL] No tool call returned — model said: "${reply.slice(0, 100)}"`);
+      const said = reply ? ` — model said: "${String(reply).slice(0, 100)}"` : "";
+      console.log(`   ⚠️ [MODEL] No tool call returned${said}`);
       return null;
     }
 
-    // Parse the arguments JSON string
-    let args;
-    try {
-      args = JSON.parse(toolCall.function.arguments);
-    } catch {
-      console.error(`   ❌ [MODEL] Invalid JSON in tool arguments: "${toolCall.function.arguments}"`);
-      return null;
-    }
-
-    console.log(`   🤖 [MODEL] DeepSeek chose: ${toolCall.function.name}(${JSON.stringify(args)})`);
-    return { name: toolCall.function.name, arguments: args };
+    console.log(`   🤖 [MODEL] ${PROVIDER}/${MODEL} chose: ${toolCall.name}(${JSON.stringify(toolCall.arguments)})`);
+    return { name: toolCall.name, arguments: toolCall.arguments };
   } catch (err) {
-    // OpenAI SDK errors include status code and message
-    const status = err.status ? ` (HTTP ${err.status})` : "";
-    console.error(`   ❌ [MODEL] API call failed${status}: ${err.message}`);
+    console.error(`   ❌ [MODEL] API call failed: ${err.message}`);
     return null;
   }
 }

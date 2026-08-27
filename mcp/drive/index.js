@@ -16,7 +16,8 @@ import { StdioServerTransport } from "@modelcontextprotocol/sdk/server/stdio.js"
 import { CallToolRequestSchema, ListToolsRequestSchema } from "@modelcontextprotocol/sdk/types.js";
 import { google } from "googleapis";
 import { OAuth2Client } from "google-auth-library";
-import "dotenv/config";
+import config from "../../shared/config-loader.cjs";
+config.loadEnvInto(process.env);
 import { sanitizeObject } from "../../scripts/sanitize.stub.mjs";
 import { driveTools } from "../../shared/tool-manifest.js";
 

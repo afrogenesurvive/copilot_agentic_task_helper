@@ -18,7 +18,8 @@
  *   WEBHOOK_BASE_URL — public tunnel URL
  */
 
-import "dotenv/config";
+import config from "../../../shared/config-loader.cjs";
+config.loadEnvInto(process.env);
 import { google } from "googleapis";
 import { OAuth2Client } from "google-auth-library";
 import fs from "fs";

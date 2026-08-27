@@ -18,6 +18,7 @@
           <button data-tab="sessions">👥 Sessions</button>
           <button data-tab="licenses">🔑 Licenses</button>
           <button data-tab="accounts">🔐 Accounts &amp; Keys</button>
+          <button data-tab="config">⚙️ Config</button>
           <button data-tab="tools">🧰 Tools</button>
           <button data-tab="appearance">🎨 Appearance</button>
         </nav>
@@ -142,6 +143,30 @@
             on behalf of that seat. <b>▶ Spawn MCP</b> launches dedicated MCP instances bound to the seat's
             accounts (instead of the shared VS Code ones).
           </p>
+        </div>
+      </section>
+
+      <!-- Config -->
+      <section id="tab-config" class="tab">
+        <div class="panel">
+          <div class="panel-head">
+            <h3>⚙️ Config (config.json)</h3>
+            <button id="config-refresh">Refresh</button>
+          </div>
+          <div id="config-status"></div>
+          <p class="hint">
+            Plain-JSON config at the repo root. When <code>config.json</code> is present it
+            <b>overrides</b> <code>.env</code>; when absent, <code>.env</code> is used. Edit the JSON
+            below and press <b>Save</b>. Restart services (Dashboard → Stop / Start) to apply changes.
+          </p>
+          <textarea id="config-editor" spellcheck="false" placeholder="{ }"></textarea>
+          <div class="config-actions">
+            <button id="config-save" class="primary">💾 Save</button>
+            <button id="config-export">📤 Export</button>
+            <button id="config-import">📥 Import</button>
+            <input type="file" id="config-import-input" accept=".json,application/json" style="display:none" />
+          </div>
+          <div id="config-msg"></div>
         </div>
       </section>
 

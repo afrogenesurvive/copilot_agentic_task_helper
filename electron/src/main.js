@@ -27,20 +27,9 @@ const ROOT = app.isPackaged ? path.join(process.resourcesPath, "..", "..") : pat
 const REPO = app.isPackaged ? path.join(process.resourcesPath) : ROOT;
 const RENDERER_HTML = path.join(__dirname, "renderer", "index.html");
 
-// ── .env loader (avoid a dotenv dependency) ──
-function loadEnv() {
-  const envFile = path.join(REPO, ".env");
-  try {
-    const content = fs.readFileSync(envFile, "utf8");
-    for (const line of content.split("\n")) {
-      const m = line.match(/^([A-Za-z0-9_]+)=(.*)$/);
-      if (m) process.env[m[1]] = m[2].trim();
-    }
-  } catch {
-    /* no .env — dev-only features disabled */
-  }
-}
-loadEnv();
+// ── Config loader (config.json first, .env fallback) ──
+const config = require("../../shared/config-loader.cjs");
+config.loadEnvInto(process.env);
 
 let mainWindow = null; // hoisted so applyTheme() can reference it at module load
 
@@ -59,17 +48,8 @@ function applyTheme() {
   }
 }
 function updateEnvKey(key, value) {
-  const envFile = path.join(REPO, ".env");
-  try {
-    let content = fs.readFileSync(envFile, "utf8");
-    const re = new RegExp(`^${key}=.*$`, "m");
-    if (re.test(content)) content = content.replace(re, `${key}=${value}`);
-    else content += (content.endsWith("\n") ? "" : "\n") + `${key}=${value}\n`;
-    fs.writeFileSync(envFile, content);
-    process.env[key] = value;
-  } catch {
-    /* best effort — theme still applies for this session */
-  }
+  config.setKey(key, value); // writes to config.json (primary) or .env (fallback)
+  process.env[key] = value;
 }
 function setAppTheme(theme) {
   const t = ["light", "dark", "system"].includes(theme) ? theme : "system";
@@ -400,14 +380,33 @@ function registerIpc() {
   ipcMain.handle("frontdesk:sessions", () => ({ ok: true, entries: frontdeskSessions() }));
 
   ipcMain.handle("licenses:list", () => licensesList());
-  ipcMain.handle("config:get", () => ({
-    webhookBaseUrl: process.env.WEBHOOK_BASE_URL || `http://localhost:${WEBHOOK_PORT}`,
-    agentPub: process.env.FRONTDESK_AGENT_PUBKEY || "",
-    corsOrigins: process.env.CORS_ORIGINS || "",
-    tunnelDomain: process.env.CLOUDFLARE_TUNNEL_DOMAIN || "",
-    useTrello: process.env.FRONTDESK_USE_TRELLO === "true",
-    logToTrello: process.env.FRONTDESK_LOG_TO_TRELLO === "true",
+  ipcMain.handle("config:get", () => {
+    const eff = config.readEffective();
+    return {
+      present: eff.present,
+      source: eff.source,
+      configPath: eff.present ? config.CONFIG_PATH : config.ENV_PATH,
+      values: eff.values || {},
+      webhookBaseUrl: process.env.WEBHOOK_BASE_URL || `http://localhost:${WEBHOOK_PORT}`,
+      agentPub: process.env.FRONTDESK_AGENT_PUBKEY || "",
+      corsOrigins: process.env.CORS_ORIGINS || "",
+      tunnelDomain: process.env.CLOUDFLARE_TUNNEL_DOMAIN || "",
+      useTrello: process.env.FRONTDESK_USE_TRELLO === "true",
+      logToTrello: process.env.FRONTDESK_LOG_TO_TRELLO === "true",
+    };
+  });
+  ipcMain.handle("config:save", (_e, values) => {
+    const res = config.saveConfig(values || {});
+    if (res.ok) config.applyValues(values || {}, process.env);
+    return res;
+  });
+  ipcMain.handle("config:export", () => ({
+    ok: true,
+    present: config.hasConfigJson(),
+    source: config.readEffective().source,
+    json: config.exportConfig(),
   }));
+  ipcMain.handle("config:import", (_e, raw) => config.importConfig(raw));
 
   ipcMain.handle("tools:manifest", () => toolsManifest());
   ipcMain.handle("tools:trello", (_e, action, params) => trelloAction(action, params));
