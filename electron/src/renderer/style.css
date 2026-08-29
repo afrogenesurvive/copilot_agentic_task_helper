@@ -635,3 +635,191 @@ th {
   line-height: 1.5;
   margin: 8px 0;
 }
+
+/* ── Generic utilities ── */
+.hidden {
+  display: none !important;
+}
+
+/* ── Config: sectioned field editor ── */
+.config-fields {
+  display: flex;
+  flex-direction: column;
+  gap: 1rem;
+  margin-top: 0.4rem;
+}
+.config-section h4 {
+  font-size: 0.72rem;
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+  color: var(--accent);
+  margin-bottom: 0.4rem;
+  padding-bottom: 0.25rem;
+  border-bottom: 1px solid var(--border);
+}
+.config-field {
+  display: grid;
+  grid-template-columns: 220px 1fr auto;
+  gap: 0.5rem;
+  align-items: center;
+  padding: 0.3rem 0;
+  border-bottom: 1px dashed var(--border);
+}
+.config-field:last-child {
+  border-bottom: none;
+}
+.cfg-label {
+  font-size: 0.74rem;
+  color: var(--text);
+  word-break: break-word;
+}
+.cfg-input-row {
+  display: flex;
+  gap: 0.3rem;
+  align-items: center;
+  min-width: 0;
+}
+.cfg-input-row input,
+.cfg-input-row select {
+  width: 100%;
+  min-width: 0;
+  background: var(--surface);
+  color: var(--text);
+  border: 1px solid var(--border);
+  border-radius: 4px;
+  padding: 0.28rem 0.45rem;
+  font-size: 0.74rem;
+  font-family: ui-monospace, Menlo, monospace;
+}
+.cfg-secret-toggle {
+  background: none;
+  border: none;
+  color: var(--muted);
+  cursor: pointer;
+  font-size: 0.8rem;
+  padding: 0 0.2rem;
+}
+.cfg-source {
+  justify-self: end;
+  font-size: 0.62rem;
+  white-space: nowrap;
+}
+.cfg-source.env {
+  color: var(--warn);
+  background: rgba(243, 156, 18, 0.12);
+}
+.cfg-source.default {
+  color: var(--muted);
+  background: rgba(143, 143, 176, 0.12);
+}
+
+/* ── Chat panel ── */
+.chat-layout {
+  display: grid;
+  grid-template-columns: 200px 1fr;
+  gap: 0.7rem;
+  margin-top: 0.5rem;
+  min-height: 52vh;
+}
+.chat-sessions {
+  border-right: 1px solid var(--border);
+  padding-right: 0.5rem;
+  max-height: 48vh;
+  overflow-y: auto;
+}
+.chat-session {
+  padding: 0.4rem 0.5rem;
+  border-radius: 5px;
+  cursor: pointer;
+  margin-bottom: 0.25rem;
+  border-left: 3px solid transparent;
+}
+.chat-session:hover {
+  background: var(--surface);
+}
+.chat-session.active {
+  background: var(--surface);
+  border-left-color: var(--accent);
+}
+.cs-name {
+  display: block;
+  font-size: 0.72rem;
+  color: var(--text);
+  word-break: break-all;
+}
+.cs-meta {
+  display: block;
+  font-size: 0.62rem;
+  color: var(--muted);
+}
+.chat-main {
+  display: flex;
+  flex-direction: column;
+  min-width: 0;
+}
+.chat-box {
+  flex: 1;
+  max-height: 42vh;
+  overflow-y: auto;
+  background: var(--bg);
+  border-radius: 6px;
+  padding: 0.5rem;
+  display: flex;
+  flex-direction: column;
+  gap: 0.5rem;
+}
+.chat-msg {
+  max-width: 85%;
+  padding: 0.45rem 0.6rem;
+  border-radius: 8px;
+  font-size: 0.78rem;
+  line-height: 1.45;
+  word-break: break-word;
+  white-space: pre-wrap;
+}
+.chat-msg.user {
+  align-self: flex-end;
+  background: var(--accent);
+  color: #fff;
+}
+.chat-msg.assistant {
+  align-self: flex-start;
+  background: var(--surface);
+  border: 1px solid var(--border);
+}
+.chat-msg.system {
+  align-self: center;
+  background: transparent;
+  color: var(--muted);
+  font-size: 0.7rem;
+  font-style: italic;
+}
+.chat-role {
+  font-size: 0.62rem;
+  color: var(--muted);
+  margin-bottom: 0.2rem;
+  font-weight: 600;
+}
+.chat-msg.user .chat-role {
+  color: rgba(255, 255, 255, 0.8);
+}
+.chat-model {
+  font-weight: 400;
+}
+.chat-input-row {
+  display: flex;
+  gap: 0.4rem;
+  margin-top: 0.5rem;
+}
+#chat-input {
+  flex: 1;
+  resize: vertical;
+  background: var(--surface);
+  color: var(--text);
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  padding: 0.45rem 0.55rem;
+  font-size: 0.78rem;
+  font-family: inherit;
+  line-height: 1.4;
+}

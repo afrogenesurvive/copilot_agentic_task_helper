@@ -1,6 +1,6 @@
 {
   "name": "copilot_agentic_task_helper",
-  "version": "0.2.1",
+  "version": "0.2.2",
   "private": true,
   "description": "Remote Collaborator Chat — Trello-powered chat interface for GitHub Copilot agent interactions",
   "scripts": {

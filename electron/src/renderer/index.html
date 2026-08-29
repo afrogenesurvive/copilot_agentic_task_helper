@@ -20,7 +20,9 @@
           <button data-tab="accounts">🔐 Accounts &amp; Keys</button>
           <button data-tab="config">⚙️ Config</button>
           <button data-tab="tools">🧰 Tools</button>
+          <button data-tab="chat">💬 Chat</button>
           <button data-tab="appearance">🎨 Appearance</button>
+          <button data-tab="about">ℹ️ About</button>
         </nav>
         <div class="sidebar-footer">
           <button id="quit-btn" class="quit">⏻ Quit</button>
@@ -151,20 +153,25 @@
         <div class="panel">
           <div class="panel-head">
             <h3>⚙️ Config (config.json)</h3>
-            <button id="config-refresh">Refresh</button>
+            <div>
+              <button id="config-refresh">Refresh</button>
+              <button id="config-raw">Raw JSON</button>
+            </div>
           </div>
           <div id="config-status"></div>
           <p class="hint">
             Plain-JSON config at the repo root. When <code>config.json</code> is present it
-            <b>overrides</b> <code>.env</code>; when absent, <code>.env</code> is used. Edit the JSON
-            below and press <b>Save</b>. Restart services (Dashboard → Stop / Start) to apply changes.
+            <b>overrides</b> <code>.env</code>; when absent, <code>.env</code> is used. Edit a field and
+            press <b>Save</b> — only the keys you change are written. Restart services
+            (Dashboard → Stop / Start) to apply changes.
           </p>
-          <textarea id="config-editor" spellcheck="false" placeholder="{ }"></textarea>
+          <div id="config-fields" class="config-fields"></div>
+          <textarea id="config-editor" class="hidden" spellcheck="false" placeholder="{ }"></textarea>
           <div class="config-actions">
             <button id="config-save" class="primary">💾 Save</button>
             <button id="config-export">📤 Export</button>
             <button id="config-import">📥 Import</button>
-            <input type="file" id="config-import-input" accept=".json,application/json" style="display:none" />
+            <input type="file" id="config-import-input" class="hidden" accept=".json,application/json" />
           </div>
           <div id="config-msg"></div>
         </div>
@@ -208,6 +215,50 @@
             Saved to <code>APPEARANCE_THEME</code> in <code>.env</code>. “System” follows macOS — the native
             window chrome and this dashboard both update when the OS theme changes.
           </p>
+        </div>
+      </section>
+
+      <!-- Chat -->
+      <section id="tab-chat" class="tab">
+        <div class="panel chat-panel">
+          <div class="panel-head">
+            <h3>💬 Agent chat</h3>
+            <div>
+              <button id="chat-new">+ New chat</button>
+              <button id="chat-refresh">Refresh</button>
+            </div>
+          </div>
+          <div class="chat-layout">
+            <div id="chat-session-list" class="chat-sessions"></div>
+            <div class="chat-main">
+              <div id="chat-box" class="chat-box"><div class="empty">Start a new chat or pick a session.</div></div>
+              <div class="chat-input-row">
+                <textarea id="chat-input" rows="2" placeholder="Message the agent… (Enter to send, Shift+Enter for newline)"></textarea>
+                <button id="chat-send" class="primary">Send</button>
+              </div>
+              <div id="chat-status" class="config-msg"></div>
+            </div>
+          </div>
+        </div>
+      </section>
+
+      <!-- About -->
+      <section id="tab-about" class="tab">
+        <div class="panel">
+          <div class="panel-head">
+            <h3>ℹ️ About</h3>
+            <div class="logs-subtabs">
+              <button id="about-sub-info" class="logs-subtab active">About</button>
+              <button id="about-sub-guide" class="logs-subtab">Guide</button>
+            </div>
+          </div>
+          <div id="about-info">
+            <p class="hint" id="about-version"></p>
+            <p class="hint">Frontdesk Operator — Electron control plane for the frontdesk v2 stack. Monitor queues, logs, sessions, licenses and MCP services; run the configured LLM from the Chat tab.</p>
+          </div>
+          <div id="about-guide" class="hidden">
+            <p class="hint">Guide coming soon.</p>
+          </div>
         </div>
       </section>
         </main>

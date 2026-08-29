@@ -27,9 +27,11 @@ npm run electron:dev       # launch dashboard + autostart the whole backend
 | 👥 Sessions | Frontdesk login/logout sessions |
 | 🔑 Licenses | Seat licenses (valid / expired / revoked) |
 | 🔐 Accounts & Keys | Bind Google/Trello accounts per seat; ▶ Spawn MCP for a seat |
-| ⚙️ Config | `config.json` presence, editable JSON, Save / Export / Import |
+| 💬 Chat | Chat with the configured LLM (the agent) directly from the dashboard — each conversation is saved as its own log file |
+| ⚙️ Config | Sectioned field editor with per-key source badges, secret show/hide, Save (edited keys only), Export / Import, Raw JSON toggle |
 | 🧰 Tools | Shared tool manifest + Trello/Gmail quick actions |
 | 🎨 Appearance | Light / Dark / System theme (`APPEARANCE_THEME` — native chrome + dashboard) |
+| ℹ️ About | App name + version (About) + a Guide sub-tab |
 | ⏻ Quit (bottom) | Quits the app — main `before-quit` stops all backend services |
 
 ## Source layout
@@ -62,7 +64,9 @@ Packaged apps read the repo pieces (scripts, shared, mcp, webapp) from `extraRes
 `.env`/`config.json`/`safe`/`logs/` are read from the live repo — the primary flow is dev (`npm start`).
 
 A repo-root `config.json` (plain JSON) is the primary config source; `.env` is used when it's absent.
-Manage it from the **⚙️ Config** tab (edit/save/export/import).
+Manage it from the **⚙️ Config** tab — a sectioned field editor with per-key source badges
+(`config.json` / `.env` / default), secret show/hide, and Save that writes only the keys you change.
+A **Raw JSON** toggle keeps the full-editor view.
 
 ## Notes
 
