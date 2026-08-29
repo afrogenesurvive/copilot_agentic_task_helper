@@ -1,5 +1,25 @@
 # Changelog
 
+## [0.2.2-1] — 2026-08-29
+
+### Added
+
+- **Chat tab** in the Electron dashboard — chat directly with the configured LLM from the app; each
+  conversation is saved to its own log file under `logs/electron_chat/`.
+- **About tab** — app name/version plus a Guide sub-tab (placeholder for now).
+- **Config editor upgrade** — the Config tab now shows config fields grouped by section with source badges
+  (`config.json` / `.env` / default), secret show/hide, and saves only the keys you change. A **Raw JSON**
+  toggle keeps the full-editor view.
+
+### Fixed
+
+- The Config tab could previously fail to load (a renderer/preload API name mismatch); it now renders
+  correctly.
+
+### Docs
+
+- Refreshed `electron.md` and `ipcs.md`.
+
 ## [0.2.1-1] — 2026-08-27
 
 ### Added

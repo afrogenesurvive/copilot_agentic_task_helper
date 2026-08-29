@@ -341,6 +341,95 @@ function startPriorityWatch() {
   notifTimer = setInterval(checkPriority, 15000);
 }
 
+// ── Electron chat (prompt the configured LLM from the dashboard) ─────────────
+// Each chat session persists to its own JSONL file under logs/electron_chat/
+// (already covered by the repo-wide `logs/` gitignore rule).
+const CHAT_DIR = path.join(REPO, "logs", "electron_chat");
+const CHAT_SYSTEM_PROMPT =
+  process.env.ELECTRON_CHAT_SYSTEM_PROMPT || "You are a helpful assistant for the Frontdesk Operator dashboard. Answer the user's questions directly and concisely.";
+
+function chatSessionPath(id) {
+  const safe = String(id || "").replace(/[^A-Za-z0-9._-]/g, "");
+  return safe ? path.join(CHAT_DIR, `${safe}.jsonl`) : null;
+}
+function chatAppend(id, entry) {
+  const p = chatSessionPath(id);
+  if (!p) return { ok: false, error: "invalid session id" };
+  fs.mkdirSync(CHAT_DIR, { recursive: true });
+  fs.appendFileSync(p, JSON.stringify({ ts: new Date().toISOString(), ...entry }) + "\n", "utf8");
+  return { ok: true, path: p };
+}
+function chatReadHistory(id) {
+  const p = chatSessionPath(id);
+  if (!p || !fs.existsSync(p)) return { ok: true, entries: [] };
+  const entries = [];
+  for (const l of fs.readFileSync(p, "utf8").split("\n").filter(Boolean)) {
+    try {
+      entries.push(JSON.parse(l));
+    } catch {
+      /* skip malformed line */
+    }
+  }
+  return { ok: true, entries };
+}
+function chatListSessions() {
+  if (!fs.existsSync(CHAT_DIR)) return [];
+  const out = [];
+  for (const f of fs.readdirSync(CHAT_DIR)) {
+    if (!f.endsWith(".jsonl")) continue;
+    const p = path.join(CHAT_DIR, f);
+    let count = 0;
+    let lastTs = null;
+    let lastRole = null;
+    try {
+      const lines = fs.readFileSync(p, "utf8").split("\n").filter(Boolean);
+      count = lines.length;
+      const last = lines[lines.length - 1];
+      if (last) {
+        const o = JSON.parse(last);
+        lastTs = o.ts || null;
+        lastRole = o.role || null;
+      }
+    } catch {
+      /* skip */
+    }
+    let mtime = "";
+    try {
+      mtime = fs.statSync(p).mtime.toISOString();
+    } catch {
+      /* ignore */
+    }
+    out.push({ id: f.replace(/\.jsonl$/, ""), file: f, count, lastTs, lastRole, mtime });
+  }
+  out.sort((a, b) => String(b.lastTs || b.mtime).localeCompare(String(a.lastTs || a.mtime)));
+  return out;
+}
+async function chatSend(id, message) {
+  const text = String(message || "").trim();
+  if (!text) return { ok: false, error: "empty message" };
+  if (!chatSessionPath(id)) return { ok: false, error: "invalid session id" };
+  // Build context from existing history (before persisting this message).
+  const hist = chatReadHistory(id);
+  const transcript = (hist.entries || [])
+    .slice(-40)
+    .map((e) => `${e.role === "user" ? "User" : e.role === "system" ? "System" : "Assistant"}: ${e.content}`)
+    .join("\n\n");
+  chatAppend(id, { role: "user", content: text });
+  const context = transcript ? `${transcript}\n\nUser: ${text}` : text;
+  try {
+    const mod = await import(pathToFileURL(path.join(REPO, "shared", "model-provider.mjs")).href);
+    const { callChat, getModelName } = mod;
+    const { reply, usage } = await callChat({ systemMessage: CHAT_SYSTEM_PROMPT, userContext: context, tools: [] });
+    const replyText = reply != null ? String(reply) : "(no reply)";
+    const model = typeof getModelName === "function" ? getModelName() : undefined;
+    chatAppend(id, { role: "assistant", content: replyText, model, usage: usage || undefined });
+    return { ok: true, reply: replyText, model };
+  } catch (err) {
+    chatAppend(id, { role: "assistant", content: `⚠️ ${err.message}`, error: true });
+    return { ok: false, error: err.message };
+  }
+}
+
 // ── IPC ──────────────────────────────────────────────────────────────────────
 function registerIpc() {
   ipcMain.handle("svc:list", () => Promise.all(Object.keys(serviceDefs).map(serviceHealth)));
@@ -394,6 +483,10 @@ function registerIpc() {
       useTrello: process.env.FRONTDESK_USE_TRELLO === "true",
       logToTrello: process.env.FRONTDESK_LOG_TO_TRELLO === "true",
     };
+  });
+  ipcMain.handle("config:getWithSources", () => {
+    const res = config.readWithSources();
+    return { ok: true, present: res.present, source: res.source, configPath: res.configPath, count: res.count, values: res.values, ...(res.error ? { error: res.error } : {}) };
   });
   ipcMain.handle("config:save", (_e, values) => {
     const res = config.saveConfig(values || {});
@@ -453,6 +546,27 @@ function registerIpc() {
     stopService(`mcp:trello:${sub}`);
     return { ok: true };
   });
+
+  ipcMain.handle("app:version", () => {
+    try {
+      const pkg = require(path.join(__dirname, "..", "package.json"));
+      return { ok: true, name: pkg.productName || pkg.name || "Frontdesk Operator", version: pkg.version || "" };
+    } catch {
+      return { ok: true, name: "Frontdesk Operator", version: "" };
+    }
+  });
+
+  // Chat — prompt the configured LLM; each chat persists to logs/electron_chat/<id>.jsonl
+  ipcMain.handle("chat:list", () => ({ ok: true, sessions: chatListSessions() }));
+  ipcMain.handle("chat:new", (_e, title) => {
+    const slug = new Date().toISOString().replace(/[:.]/g, "-").slice(0, 19);
+    const id = `chat-${slug}`;
+    const safeTitle = String(title || "").trim().replace(/[^A-Za-z0-9 _-]/g, "").slice(0, 60);
+    chatAppend(id, { role: "system", content: "session created", title: safeTitle || undefined });
+    return { ok: true, id };
+  });
+  ipcMain.handle("chat:history", (_e, id) => chatReadHistory(id));
+  ipcMain.handle("chat:send", (_e, id, message) => chatSend(id, message));
 
   ipcMain.handle("open:external", (_e, url) => {
     const { shell } = require("electron");

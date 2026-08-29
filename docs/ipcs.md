@@ -28,6 +28,7 @@ preload bridge ([`electron/src/preload.js`](../electron/src/preload.js#L7)) as `
 | `configSave(values)` | [`config:save`](../electron/src/main.js#L409) | Writes the flat object to `config.json` and applies it to `process.env` |
 | `configExport()` | [`config:export`](../electron/src/main.js#L414) | `{ok, present, source, json}` — effective config as pretty JSON |
 | `configImport(raw)` | [`config:import`](../electron/src/main.js#L418) | Parses JSON → saves `config.json` → applies to `process.env` |
+| `configWithSources()` | [`config:getWithSources`](../electron/src/main.js#L487) | Per-key config with source annotation — `{values: {key: {value, source}}}` where source ∈ `config.json` \| `.env` \| `default` |
 | `googleStatus()` | [`google:status`](../electron/src/main.js#L413) | `{connected, user, consentUrl}` |
 | `toolsManifest()` | [`tools:manifest`](../electron/src/main.js#L410) | Shared tool manifest ([`shared/tool-manifest.js`](../shared/tool-manifest.js#L1)) |
 | `trello(action, params)` | [`tools:trello`](../electron/src/main.js#L411) | Trello REST quick actions (list_boards/lists/cards, add_comment) |
@@ -42,6 +43,11 @@ preload bridge ([`electron/src/preload.js`](../electron/src/preload.js#L7)) as `
 | `accountsClear(sub)` | [`accounts:clear`](../electron/src/main.js#L440) | Removes a seat's bindings |
 | `accountsSpawnForSeat(sub)` | [`accounts:spawnForSeat`](../electron/src/main.js#L449) | Spawns dedicated `mcp:gmail:<sub>` / `mcp:trello:<sub>` with per-seat env |
 | `accountsStopForSeat(sub)` | [`accounts:stopForSeat`](../electron/src/main.js#L450) | Stops the per-seat MCP instances |
+| `appVersion()` | [`app:version`](../electron/src/main.js#L550) | `{ok, name, version}` — app name/version (About tab) |
+| `chatList()` | [`chat:list`](../electron/src/main.js#L560) | `{ok, sessions}` — chats under `logs/electron_chat/` |
+| `chatNew(title?)` | [`chat:new`](../electron/src/main.js#L561) | Creates a new chat log file, returns `{ok, id}` |
+| `chatHistory(id)` | [`chat:history`](../electron/src/main.js#L568) | `{ok, entries}` — full transcript of a chat |
+| `chatSend(id, message)` | [`chat:send`](../electron/src/main.js#L569) | Appends the user message, calls the configured LLM, appends the reply, returns `{ok, reply, model}` |
 
 ## Security notes
 
@@ -49,6 +55,7 @@ preload bridge ([`electron/src/preload.js`](../electron/src/preload.js#L7)) as `
 - Service logs are kept in a per-service ring buffer (500 lines) in the main process; credentials
   are never sent to the renderer (only connected/configured booleans + user emails).
 - Per-seat MCP spawns pass credentials as child-process env overrides — never over IPC.
+- Chat LLM calls run in the main process; chat transcripts are written under `logs/electron_chat/`.
 
 ## Loopback OAuth ([`electron/src/main/oauth.js`](../electron/src/main/oauth.js#L1))
 

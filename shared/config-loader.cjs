@@ -23,6 +23,32 @@ const REPO = path.resolve(__dirname, "..");
 const CONFIG_PATH = path.join(REPO, "config.json");
 const ENV_PATH = path.join(REPO, ".env");
 
+/**
+ * Known config keys with their fallback defaults.
+ * Used only for per-key source annotation ("default" source) — these are never
+ * written to config.json, so .env / host-env overrides are never shadowed.
+ */
+const DEFAULTS = {
+  LLM_PROVIDER: "deepseek",
+  LLM_TEMPERATURE: "0.1",
+  DEEPSEEK_MODEL: "deepseek-v4-flash",
+  OPENAI_MODEL: "gpt-4o",
+  ANTHROPIC_MODEL: "claude-sonnet-4-5",
+  ANTHROPIC_MAX_TOKENS: "4096",
+  OLLAMA_BASE_URL: "http://127.0.0.1:11434",
+  OLLAMA_NUM_CTX: "32768",
+  WEBHOOK_PORT: "3199",
+  CORS_ORIGINS: "http://localhost:3199",
+  APPEARANCE_THEME: "system",
+  FRONTDESK_SESSION_TTL: "7200",
+  PRIORITY_REMINDER_INTERVAL: "300000",
+  AGENT_RUNNER_ENABLED: "true",
+  AGENT_TASK_INTERVAL: "60000",
+  LOG_LEVEL: "info",
+  OPERATOR_AUTOSTART: "true",
+  TRUST_PROXY: "1",
+};
+
 /** True when config.json exists (primary source present). */
 function hasConfigJson() {
   return fs.existsSync(CONFIG_PATH);
@@ -71,6 +97,51 @@ function readEffective() {
     }
   }
   return { present: false, source: ".env", values: readEnv() };
+}
+
+/**
+ * Per-key config with source annotation for the operator's Config editor.
+ * Precedence: config.json > .env > default. "default" values are display-only
+ * annotations and are never merged into the saved config.
+ * @param {object} [defaults] — key → default value map (defaults to DEFAULTS)
+ * @returns {{present: boolean, source: string, configPath: string, count: number, values: object, error?: string}}
+ */
+function readWithSources(defaults = DEFAULTS) {
+  let cfg = null;
+  let present = false;
+  let source = ".env";
+  let err = null;
+  if (hasConfigJson()) {
+    present = true;
+    source = "config.json";
+    try {
+      cfg = readConfigFile() || {};
+    } catch (e) {
+      err = e.message;
+      cfg = null;
+    }
+  }
+  const env = readEnv();
+  const keys = new Set([...(defaults ? Object.keys(defaults) : []), ...Object.keys(env), ...(cfg ? Object.keys(cfg) : [])]);
+  const values = {};
+  for (const k of keys) {
+    let value;
+    let src;
+    if (cfg && k in cfg) {
+      value = cfg[k];
+      src = "config.json";
+    } else if (k in env) {
+      value = env[k];
+      src = ".env";
+    } else {
+      value = defaults ? defaults[k] : "";
+      src = "default";
+    }
+    values[k] = { value: String(value), source: src };
+  }
+  const out = { present, source, configPath: present ? CONFIG_PATH : ENV_PATH, count: Object.keys(values).length, values };
+  if (err) out.error = err;
+  return out;
 }
 
 /**
@@ -165,11 +236,13 @@ module.exports = {
   REPO,
   CONFIG_PATH,
   ENV_PATH,
+  DEFAULTS,
   hasConfigJson,
   parseEnv,
   readEnv,
   readConfigFile,
   readEffective,
+  readWithSources,
   loadEnvInto,
   applyValues,
   saveConfig,

@@ -13,6 +13,7 @@ webapp/.env
 
 # ── Logs ──
 logs/
+logs/electron_chat/
 *.log
 
 # ── Build output & local data ──

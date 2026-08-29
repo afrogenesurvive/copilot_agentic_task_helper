@@ -28,6 +28,7 @@ contextBridge.exposeInMainWorld("api", {
   // Licenses + config
   licenses: () => ipcRenderer.invoke("licenses:list"),
   config: () => ipcRenderer.invoke("config:get"),
+  configWithSources: () => ipcRenderer.invoke("config:getWithSources"),
   configSave: (values) => ipcRenderer.invoke("config:save", values),
   configExport: () => ipcRenderer.invoke("config:export"),
   configImport: (raw) => ipcRenderer.invoke("config:import", raw),
@@ -44,6 +45,13 @@ contextBridge.exposeInMainWorld("api", {
   trello: (action, params) => ipcRenderer.invoke("tools:trello", action, params),
   gmail: (action, params) => ipcRenderer.invoke("tools:gmail", action, params),
   openExternal: (url) => ipcRenderer.invoke("open:external", url),
+  // About
+  appVersion: () => ipcRenderer.invoke("app:version"),
+  // Chat
+  chatList: () => ipcRenderer.invoke("chat:list"),
+  chatNew: (title) => ipcRenderer.invoke("chat:new", title),
+  chatHistory: (id) => ipcRenderer.invoke("chat:history", id),
+  chatSend: (id, message) => ipcRenderer.invoke("chat:send", id, message),
   // Appearance
   getTheme: () => ipcRenderer.invoke("app:getTheme"),
   setTheme: (theme) => ipcRenderer.invoke("app:setTheme", theme),
