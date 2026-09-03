@@ -1,6 +1,6 @@
 {
   "name": "frontdesk-operator",
-  "version": "0.2.2",
+  "version": "0.2.3",
   "private": true,
   "description": "Frontdesk v2 operator dashboard — monitor queues, logs, sessions, licenses, and run MCP tools from a macOS desktop app",
   "main": "src/main.js",
@@ -57,6 +57,13 @@
         "filter": [
           "**/*",
           "!**/node_modules/**"
+        ]
+      },
+      {
+        "from": "../electron/docs",
+        "to": "electron/docs",
+        "filter": [
+          "**/*"
         ]
       }
     ]

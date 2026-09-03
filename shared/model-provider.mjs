@@ -15,36 +15,52 @@
  * return: { toolCall: { name, arguments } | null, reply: string | null, usage }.
  */
 
-export const PROVIDER = (process.env.LLM_PROVIDER || "deepseek").toLowerCase();
+/**
+ * Resolve the active provider from env on every call, so provider/model changes
+ * (e.g. saved from the Electron ⚙️ Config tab) apply immediately in long-lived
+ * processes instead of being frozen at first module import.
+ * @returns {"deepseek"|"openai"|"anthropic"|"ollama"}
+ */
+export function getProvider() {
+  const p = (process.env.LLM_PROVIDER || "deepseek").toLowerCase();
+  return ["deepseek", "openai", "anthropic", "ollama"].includes(p) ? p : "deepseek";
+}
 
-const OLLAMA_BASE_URL = process.env.OLLAMA_BASE_URL || "http://127.0.0.1:11434";
+/** Ollama server base URL, resolved live (default: local instance). */
+function ollamaBaseUrl() {
+  return process.env.OLLAMA_BASE_URL || "http://127.0.0.1:11434";
+}
 
 /** Resolve the active model name from env, with per-provider defaults. */
 function resolveModel() {
-  if (PROVIDER === "ollama") return process.env.OLLAMA_MODEL || null;
-  if (PROVIDER === "openai") return process.env.OPENAI_MODEL || "gpt-4o";
-  if (PROVIDER === "anthropic") return process.env.ANTHROPIC_MODEL || "claude-sonnet-4-5";
+  const provider = getProvider();
+  if (provider === "ollama") return process.env.OLLAMA_MODEL || null;
+  if (provider === "openai") return process.env.OPENAI_MODEL || "gpt-4o";
+  if (provider === "anthropic") return process.env.ANTHROPIC_MODEL || "claude-sonnet-4-5";
   return process.env.DEEPSEEK_MODEL || "deepseek-v4-flash";
 }
 
-export const MODEL = resolveModel();
-
-/** Current model name — used by the runner / webhook-server for logging. */
+/**
+ * Current model name — resolved live from env. Used by the runner, webhook
+ * server, and Electron chat for logging + requests.
+ */
 export function getModelName() {
-  return MODEL;
+  return resolveModel();
 }
 
 function resolveEndpoint() {
-  if (PROVIDER === "ollama") return `${OLLAMA_BASE_URL.replace(/\/$/, "")}/v1/chat/completions`;
-  if (PROVIDER === "openai") return `${(process.env.OPENAI_BASE_URL || "https://api.openai.com/v1").replace(/\/$/, "")}/chat/completions`;
-  if (PROVIDER === "anthropic") return `${(process.env.ANTHROPIC_BASE_URL || "https://api.anthropic.com").replace(/\/$/, "")}/v1/messages`;
+  const provider = getProvider();
+  if (provider === "ollama") return `${ollamaBaseUrl().replace(/\/$/, "")}/v1/chat/completions`;
+  if (provider === "openai") return `${(process.env.OPENAI_BASE_URL || "https://api.openai.com/v1").replace(/\/$/, "")}/chat/completions`;
+  if (provider === "anthropic") return `${(process.env.ANTHROPIC_BASE_URL || "https://api.anthropic.com").replace(/\/$/, "")}/v1/messages`;
   return "https://api.deepseek.com/chat/completions";
 }
 
 function resolveApiKey() {
-  if (PROVIDER === "deepseek") return process.env.DEEPSEEK_API_KEY;
-  if (PROVIDER === "openai") return process.env.OPENAI_API_KEY;
-  if (PROVIDER === "anthropic") return process.env.ANTHROPIC_API_KEY;
+  const provider = getProvider();
+  if (provider === "deepseek") return process.env.DEEPSEEK_API_KEY;
+  if (provider === "openai") return process.env.OPENAI_API_KEY;
+  if (provider === "anthropic") return process.env.ANTHROPIC_API_KEY;
   return "ollama"; // Ollama doesn't require a real key
 }
 
@@ -55,17 +71,16 @@ function resolveApiKey() {
  * @returns {string} The resolved API key (always "ollama" for Ollama).
  */
 export function keyGuard() {
-  if (PROVIDER === "ollama") return "ollama"; // no key required
+  const provider = getProvider();
+  if (provider === "ollama") return "ollama"; // no key required
   const key = resolveApiKey();
   const label =
-    PROVIDER === "deepseek"
+    provider === "deepseek"
       ? "DEEPSEEK_API_KEY"
-      : PROVIDER === "openai"
+      : provider === "openai"
         ? "OPENAI_API_KEY"
-        : PROVIDER === "anthropic"
-          ? "ANTHROPIC_API_KEY"
-          : null;
-  if (!key) throw new Error(`${label} not set — add it to .env (LLM_PROVIDER=${PROVIDER})`);
+        : "ANTHROPIC_API_KEY";
+  if (!key) throw new Error(`${label} not set — add it to .env (LLM_PROVIDER=${provider})`);
   return key;
 }
 
@@ -82,11 +97,11 @@ export function mapTools(toolDefs) {
  * Non-Ollama providers always return true.
  */
 export async function checkOllamaHealth() {
-  if (PROVIDER !== "ollama") return true;
+  if (getProvider() !== "ollama") return true;
   try {
     const controller = new AbortController();
     const timer = setTimeout(() => controller.abort(), 5000);
-    const res = await fetch(`${OLLAMA_BASE_URL.replace(/\/$/, "")}/api/tags`, { signal: controller.signal });
+    const res = await fetch(`${ollamaBaseUrl().replace(/\/$/, "")}/api/tags`, { signal: controller.signal });
     clearTimeout(timer);
     return res.ok;
   } catch {
@@ -107,18 +122,18 @@ export async function callChat({ systemMessage, userContext, tools = [], tempera
   keyGuard();
 
   // Fail fast if Ollama is down (instead of retrying / timing out)
-  if (PROVIDER === "ollama") {
+  if (getProvider() === "ollama") {
     const healthy = await checkOllamaHealth();
     if (!healthy) {
       throw new Error(
-        `Ollama server is not responding (${OLLAMA_BASE_URL}/api/tags). Start Ollama or check OLLAMA_BASE_URL.`,
+        `Ollama server is not responding (${ollamaBaseUrl()}/api/tags). Start Ollama or check OLLAMA_BASE_URL.`,
       );
     }
   }
 
   const temp = temperature ?? parseFloat(process.env.LLM_TEMPERATURE || "0.1");
 
-  if (PROVIDER === "anthropic") {
+  if (getProvider() === "anthropic") {
     return callAnthropic({ systemMessage, userContext, tools, temperature: temp });
   }
   return callOpenAiCompatible({ systemMessage, userContext, tools, temperature: temp });
@@ -127,7 +142,7 @@ export async function callChat({ systemMessage, userContext, tools = [], tempera
 /** Anthropic Messages API — different request/response shape from OpenAI. */
 async function callAnthropic({ systemMessage, userContext, tools, temperature }) {
   const body = {
-    model: MODEL,
+    model: getModelName(),
     system: systemMessage,
     messages: [{ role: "user", content: userContext }],
     tools: tools.map((t) => ({
@@ -183,8 +198,9 @@ async function callAnthropic({ systemMessage, userContext, tools, temperature })
 
 /** OpenAI-compatible path — shared by deepseek, openai, and ollama. */
 async function callOpenAiCompatible({ systemMessage, userContext, tools, temperature }) {
+  const provider = getProvider();
   const body = {
-    model: MODEL,
+    model: getModelName(),
     messages: [
       { role: "system", content: systemMessage },
       { role: "user", content: userContext },
@@ -196,12 +212,12 @@ async function callOpenAiCompatible({ systemMessage, userContext, tools, tempera
   };
 
   // DeepSeek-specific reasoning params — only sent to DeepSeek (other providers reject them)
-  if (PROVIDER === "deepseek") {
+  if (provider === "deepseek") {
     body.thinking = { type: "enabled" };
     body.reasoning_effort = "high";
   }
   // Ollama-specific: forwarded by Ollama's /v1 endpoint
-  if (PROVIDER === "ollama") {
+  if (provider === "ollama") {
     body.num_ctx = getNumCtx();
   }
 
@@ -213,7 +229,7 @@ async function callOpenAiCompatible({ systemMessage, userContext, tools, tempera
 
   if (!res.ok) {
     const errText = await res.text();
-    throw new Error(`${PROVIDER} API ${res.status}: ${errText.slice(0, 500)}`);
+    throw new Error(`${provider} API ${res.status}: ${errText.slice(0, 500)}`);
   }
 
   const data = await res.json();

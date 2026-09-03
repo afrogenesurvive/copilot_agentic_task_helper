@@ -17,12 +17,10 @@ import fs from "fs";
 import path from "path";
 import { fileURLToPath } from "url";
 import { log } from "../../shared/logger.mjs";
-import { callChat, getModelName, PROVIDER } from "../../shared/model-provider.mjs";
+import { callChat, getModelName, getProvider } from "../../shared/model-provider.mjs";
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const PROMPT_LOG_DIR = path.resolve(__dirname, "..", "..", "logs", "agent-runner", "prompts");
-
-const MODEL = getModelName();
 
 /**
  * Log the full prompt sent to the LLM for audit/review.
@@ -40,7 +38,7 @@ function logPrompt(systemMessage, userContext, tools) {
     userContext,
     toolCount: tools.length,
     toolNames: tools.map((t) => t.function?.name || t.name),
-    model: MODEL,
+    model: getModelName(),
   };
   try {
     fs.mkdirSync(PROMPT_LOG_DIR, { recursive: true });
@@ -165,7 +163,7 @@ export async function callModel(context, toolDefs) {
       return null;
     }
 
-    console.log(`   🤖 [MODEL] ${PROVIDER}/${MODEL} chose: ${toolCall.name}(${JSON.stringify(toolCall.arguments)})`);
+    console.log(`   🤖 [MODEL] ${getProvider()}/${getModelName()} chose: ${toolCall.name}(${JSON.stringify(toolCall.arguments)})`);
     return { name: toolCall.name, arguments: toolCall.arguments };
   } catch (err) {
     console.error(`   ❌ [MODEL] API call failed: ${err.message}`);

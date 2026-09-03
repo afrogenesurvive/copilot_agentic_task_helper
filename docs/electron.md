@@ -68,6 +68,20 @@ Manage it from the **⚙️ Config** tab — a sectioned field editor with per-k
 (`config.json` / `.env` / default), secret show/hide, and Save that writes only the keys you change.
 A **Raw JSON** toggle keeps the full-editor view.
 
+## LLM providers
+
+The **Chat** tab and the agent stack (runner + webhook server) support multiple LLM providers —
+DeepSeek (default), OpenAI, Anthropic, and a local Ollama server — via `LLM_PROVIDER` in the
+⚙️ Config tab. Single source of truth: [`shared/model-provider.mjs`](../shared/model-provider.mjs#L1).
+
+- The **LLM Provider** section shows only the active provider's fields (API key, model with default
+  placeholder, optional base URL / max tokens) plus the shared `LLM_TEMPERATURE`.
+- Provider and model are resolved **live from config on every call**, so saving a change applies to
+  the Chat tab immediately (no app restart).
+- Saving any provider key **auto-restarts** the agent runner and webhook server (if running) so they
+  pick up the new provider too; MCP servers and the tunnel are untouched.
+- The Chat header shows the active `provider · model` chip.
+
 ## Notes
 
 - Tray menu (Open, Start services, Quit) + native notification when the priority queue grows.

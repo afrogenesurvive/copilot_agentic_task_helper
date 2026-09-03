@@ -1,5 +1,21 @@
 # Changelog
 
+## [0.2.3-1] — 2026-09-03
+
+### Added
+
+- **Netlify MCP server** — manage the frontdesk Netlify site (sites, environment variables, deploys)
+  via `netlify_*` tools, available to the operator in VS Code.
+- **Electron Guide tab** — browse the included end-user documentation right inside the app (About →
+  Guide).
+- **Live LLM provider switching** — provider/model are read live from settings, so ⚙️ Config changes
+  apply to the Chat tab and the agent stack immediately; saving a provider key restarts the
+  runner/webhook automatically.
+
+### Docs
+
+- Refreshed `README.md` and `electron.md` (LLM providers, Netlify MCP server).
+
 ## [0.2.2-1] — 2026-08-29
 
 ### Added

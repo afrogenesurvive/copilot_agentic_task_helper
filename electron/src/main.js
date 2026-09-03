@@ -27,6 +27,48 @@ const ROOT = app.isPackaged ? path.join(process.resourcesPath, "..", "..") : pat
 const REPO = app.isPackaged ? path.join(process.resourcesPath) : ROOT;
 const RENDERER_HTML = path.join(__dirname, "renderer", "index.html");
 
+// ── Docs (About → Guide) — markdown end-user guides under <repo>/electron/docs ──
+const DOCS_DIR = path.join(REPO, "electron", "docs");
+
+function docTitle(file) {
+  const base = String(file || "")
+    .replace(/\.md$/i, "")
+    .replace(/[-_]+/g, " ")
+    .trim();
+  return base ? base.replace(/\b\w/g, (c) => c.toUpperCase()) : file;
+}
+
+function docsList() {
+  if (!fs.existsSync(DOCS_DIR)) return { ok: true, files: [] };
+  let names;
+  try {
+    names = fs.readdirSync(DOCS_DIR);
+  } catch {
+    return { ok: true, files: [] };
+  }
+  const files = names
+    .filter((n) => n.toLowerCase().endsWith(".md"))
+    .sort()
+    .map((file) => ({ file, title: docTitle(file) }));
+  return { ok: true, files };
+}
+
+function readDoc(file) {
+  const name = String(file || "");
+  const resolved = path.resolve(DOCS_DIR, name);
+  if (name.includes("..") || !resolved.startsWith(DOCS_DIR)) {
+    return { ok: false, error: "invalid doc name" };
+  }
+  if (!fs.existsSync(resolved) || !fs.statSync(resolved).isFile()) {
+    return { ok: false, error: "no such doc" };
+  }
+  try {
+    return { ok: true, content: fs.readFileSync(resolved, "utf8") };
+  } catch (err) {
+    return { ok: false, error: err.message };
+  }
+}
+
 // ── Config loader (config.json first, .env fallback) ──
 const config = require("../../shared/config-loader.cjs");
 config.loadEnvInto(process.env);
@@ -95,7 +137,12 @@ function startService(name, opts = {}) {
   if (running[name]) return { ok: true, already: true };
   if (!def.args || def.args.length === 0) return { ok: false, error: "not configured (set env vars in .env)" };
 
-  const child = spawn(def.cmd, def.args, { cwd: def.cwd || REPO, env: opts.env ? { ...process.env, ...opts.env } : process.env });
+  const child = spawn(def.cmd, def.args, {
+    cwd: def.cwd || REPO,
+    env: opts.env ? { ...process.env, ...opts.env } : process.env,
+    // Own process group per service so a quit/stop can kill the whole tree (negative pid).
+    detached: process.platform !== "win32",
+  });
   running[name] = { proc: child, out: [], label: def.label || name };
   const buf = running[name].out;
   const push = (chunk) => {
@@ -117,22 +164,31 @@ function startService(name, opts = {}) {
   return { ok: true, pid: child.pid };
 }
 
-function stopService(name) {
-  const entry = running[name];
-  if (!entry) return { ok: true, already: true };
+// Signal a process AND its whole tree. Children are spawned detached (own
+// process group on macOS/Linux), so a negative pid hits every descendant.
+function signalTree(proc, sig) {
+  if (!proc || typeof proc.pid !== "number") return;
+  if (process.platform !== "win32") {
+    try {
+      process.kill(-proc.pid, sig);
+      return;
+    } catch {
+      /* not a group leader / already gone — fall through to direct kill */
+    }
+  }
   try {
-    entry.proc.kill("SIGTERM");
+    proc.kill(sig);
   } catch {
     /* already gone */
   }
+}
+
+function stopService(name) {
+  const entry = running[name];
+  if (!entry) return { ok: true, already: true };
   liveLog.addLog({ source: "electron", subSource: name, level: "info", message: `stopping "${name}"` });
-  setTimeout(() => {
-    try {
-      entry.proc.kill("SIGKILL");
-    } catch {
-      /* fine */
-    }
-  }, 3000);
+  signalTree(entry.proc, "SIGTERM");
+  setTimeout(() => signalTree(entry.proc, "SIGKILL"), 3000);
   delete running[name];
   return { ok: true };
 }
@@ -164,6 +220,229 @@ function serviceTail(name, lines = 40) {
   const entry = running[name];
   const out = entry ? entry.out : [];
   return out.slice(-lines);
+}
+
+// ── User-script runner (scripts/user allowlist) ──────────────────────────────
+// Runs executables found under <repo>/scripts/user/ (bash/node/python3 by
+// extension, or direct exec for files with the executable bit). Manual only —
+// a human clicks Run in the renderer; no agent/LLM path triggers these.
+const SCRIPT_ROOT = path.join(REPO, "scripts", "user");
+const SCRIPT_RUNNERS = {
+  ".sh": ["bash"],
+  ".command": ["bash"],
+  ".bash": ["bash"],
+  ".mjs": ["node"],
+  ".js": ["node"],
+  ".cjs": ["node"],
+  ".py": ["python3"],
+};
+const scriptRuns = {}; // runId -> { runId, script, proc, out: [], startedAt }
+const RUN_OUT_MAX = 1000;
+
+function isInsideScriptsUser(p) {
+  const rel = path.relative(SCRIPT_ROOT, p);
+  return rel === "" || (!rel.startsWith("..") && !path.isAbsolute(rel));
+}
+
+// Pull a one-line usage summary from the file header comment (shebang skipped).
+function readScriptUsage(file) {
+  try {
+    const src = fs.readFileSync(file, "utf8");
+    const lines = src.split("\n");
+    let i = lines[0] && lines[0].startsWith("#!") ? 1 : 0;
+    const out = [];
+    for (; i < lines.length && i < 24; i++) {
+      const t = lines[i].replace(/^\s*#+\s?/, "").trim();
+      if (!t) break; // stop at first blank or non-comment line
+      out.push(t);
+    }
+    const joined = out.join(" ").trim();
+    return joined.length > 260 ? joined.slice(0, 260) + "…" : joined;
+  } catch {
+    return "";
+  }
+}
+
+function scanUserScripts() {
+  if (!fs.existsSync(SCRIPT_ROOT)) return [];
+  let entries;
+  try {
+    entries = fs.readdirSync(SCRIPT_ROOT);
+  } catch {
+    return [];
+  }
+  const scripts = [];
+  for (const name of entries) {
+    if (name.startsWith(".")) continue;
+    const full = path.join(SCRIPT_ROOT, name);
+    let st;
+    try {
+      st = fs.statSync(full);
+    } catch {
+      continue;
+    }
+    if (!st.isFile()) continue;
+    const ext = path.extname(name).toLowerCase();
+    let runner = SCRIPT_RUNNERS[ext] || null;
+    if (!runner && st.mode & 0o111) runner = [full]; // executable-bit fallback
+    scripts.push({
+      name,
+      ext: ext || "(none)",
+      runner: runner ? runner[0] : null,
+      size: st.size,
+      usage: readScriptUsage(full),
+    });
+  }
+  return scripts.sort((a, b) => a.name.localeCompare(b.name));
+}
+
+function activeRuns() {
+  return Object.values(scriptRuns).map((r) => ({
+    runId: r.runId,
+    script: r.script,
+    pid: r.proc.pid,
+    startedAt: r.startedAt,
+  }));
+}
+
+function sendScripts(channel, payload) {
+  for (const w of BrowserWindow.getAllWindows()) {
+    try {
+      w.webContents.send(channel, payload);
+    } catch {
+      /* window gone */
+    }
+  }
+}
+
+async function probeTools() {
+  const exists = (cmd) =>
+    new Promise((res) => {
+      try {
+        const p = spawn("which", [cmd], { stdio: "ignore" });
+        p.on("error", () => res(false));
+        p.on("exit", (c) => res(c === 0));
+      } catch {
+        res(false);
+      }
+    });
+  const [awsB, nodeB, pyB] = await Promise.all([exists("aws"), exists("node"), exists("python3")]);
+  let awsVersion = "";
+  if (awsB) {
+    try {
+      const v = await new Promise((res) => {
+        const p = spawn("aws", ["--version"]);
+        let s = "";
+        p.stdout.on("data", (d) => (s += d));
+        p.stderr.on("data", (d) => (s += d));
+        p.on("close", () => res(s.trim()));
+        p.on("error", () => res(""));
+      });
+      awsVersion = v.replace(/^aws-cli\//, "").split(" ")[0] || v;
+    } catch {
+      /* ignore */
+    }
+  }
+  return {
+    aws: awsB,
+    awsVersion,
+    node: nodeB,
+    python3: pyB,
+    awsCreds: !!(process.env.AWS_ACCESS_KEY_ID || process.env.AWS_SECRET_ACCESS_KEY),
+    awsProfile: process.env.AWS_PROFILE || "",
+    awsRegion: process.env.AWS_DEFAULT_REGION || process.env.AWS_REGION || "",
+  };
+}
+
+// Accepts a JSON array string (["--dry-run", "-i", "i-0abc"]) or a plain
+// whitespace/quoted list; returns a string array.
+function parseArgs(text) {
+  const s = String(text || "").trim();
+  if (!s) return [];
+  try {
+    const j = JSON.parse(s);
+    if (Array.isArray(j)) return j.map(String);
+  } catch {
+    /* not JSON — fall through */
+  }
+  const re = /"([^"]*)"|'([^']*)'|(\S+)/g;
+  const out = [];
+  let m;
+  while ((m = re.exec(s))) out.push(m[1] ?? m[2] ?? m[3]);
+  return out;
+}
+
+function runUserScript(scriptName, argsText) {
+  const name = String(scriptName || "");
+  const full = path.join(SCRIPT_ROOT, name);
+  if (!isInsideScriptsUser(full)) return { ok: false, error: "script must live under scripts/user/" };
+  if (!fs.existsSync(full) || !fs.statSync(full).isFile())
+    return { ok: false, error: `no such script: ${name}` };
+  if (Object.values(scriptRuns).some((r) => r.script === name))
+    return { ok: false, error: `"${name}" is already running` };
+
+  const ext = path.extname(full).toLowerCase();
+  let runner = SCRIPT_RUNNERS[ext] || null;
+  if (!runner && fs.statSync(full).mode & 0o111) runner = [full];
+  if (!runner)
+    return {
+      ok: false,
+      error: `no runner for .${ext || "unknown"} (supported: .sh .command .mjs .js .py, or an executable file)`,
+    };
+
+  const args = parseArgs(argsText);
+  const runId = `run-${Date.now()}-${Math.floor(Math.random() * 1e4)}`;
+  const child = spawn(runner[0], [...runner.slice(1), full, ...args], {
+    cwd: REPO,
+    env: process.env,
+    // Own process group so quitting can kill the script AND the commands it ran.
+    detached: process.platform !== "win32",
+  });
+  const rec = { runId, script: name, proc: child, out: [], startedAt: new Date().toISOString() };
+  scriptRuns[runId] = rec;
+
+  const push = (chunk) => {
+    const text = chunk.toString();
+    const lines = text.split("\n").filter((l) => l.length);
+    if (rec.out.push(...lines) > RUN_OUT_MAX) rec.out.splice(0, rec.out.length - RUN_OUT_MAX);
+    if (lines.length) sendScripts("scripts:output", { runId, script: name, text: lines.join("\n") + "\n" });
+  };
+  child.stdout.on("data", push);
+  child.stderr.on("data", push);
+  child.on("error", (err) => {
+    const msg = `[spawn error: ${err.message}]`;
+    rec.out.push(msg);
+    sendScripts("scripts:output", { runId, script: name, text: msg + "\n" });
+  });
+  child.on("exit", (code) => {
+    const msg = `[exit code=${code}]`;
+    rec.out.push(msg);
+    sendScripts("scripts:output", { runId, script: name, text: msg + "\n" });
+    delete scriptRuns[runId];
+    liveLog.addLog({
+      source: "electron",
+      subSource: "scripts",
+      level: code === 0 ? "info" : "warn",
+      message: `script "${name}" exited (code=${code})`,
+    });
+    sendScripts("scripts:update", { runs: activeRuns() });
+  });
+  liveLog.addLog({
+    source: "electron",
+    subSource: "scripts",
+    level: "info",
+    message: `started script "${name}" (pid ${child.pid})`,
+  });
+  sendScripts("scripts:update", { runs: activeRuns() });
+  return { ok: true, runId, pid: child.pid };
+}
+
+function stopUserScript(target) {
+  const rec = Object.values(scriptRuns).find((r) => r.runId === target || r.script === target);
+  if (!rec) return { ok: true, already: true };
+  signalTree(rec.proc, "SIGTERM");
+  setTimeout(() => signalTree(rec.proc, "SIGKILL"), 3000);
+  return { ok: true };
 }
 
 // ── Webhook API client (uses the local API token) ────────────────────────────
@@ -345,8 +624,28 @@ function startPriorityWatch() {
 // Each chat session persists to its own JSONL file under logs/electron_chat/
 // (already covered by the repo-wide `logs/` gitignore rule).
 const CHAT_DIR = path.join(REPO, "logs", "electron_chat");
-const CHAT_SYSTEM_PROMPT =
-  process.env.ELECTRON_CHAT_SYSTEM_PROMPT || "You are a helpful assistant for the Frontdesk Operator dashboard. Answer the user's questions directly and concisely.";
+
+// Chat origin/channel — lets the assistant know whether it is the local
+// Electron "operator" console or the Netlify-hosted "frontdesk" (web visitor)
+// assistant. Origin is fixed once per session (chat:new) and persisted on every
+// entry; it is NEVER inferred from message text or hostname, and the transport
+// (HMAC/passphrase/_authorized for frontdesk) enforces what each origin may do.
+const CHAT_ORIGINS = new Set(["operator", "frontdesk"]);
+const CHAT_ORIGIN_DEFAULT = "operator";
+const CHAT_SYSTEM_PROMPTS = {
+  operator:
+    process.env.ELECTRON_CHAT_SYSTEM_PROMPT ||
+    "You are the Frontdesk Operator console assistant, running inside the Electron dashboard (channel: operator). " +
+      "You have operator access and may discuss local service state, logs, config, and dashboards. Answer directly and concisely.",
+  frontdesk:
+    process.env.FRONTDESK_CHAT_SYSTEM_PROMPT ||
+    "You are the Netlify-hosted Frontdesk assistant, chatting with website visitors (channel: frontdesk). " +
+      "Answer general questions with read-only information only. Never reveal secrets, credentials, internals, or implementation details, and never perform actions.",
+};
+function chatOriginOf(entries) {
+  const sys = (entries || []).find((e) => e.role === "system");
+  return sys && CHAT_ORIGINS.has(sys.origin) ? sys.origin : CHAT_ORIGIN_DEFAULT;
+}
 
 function chatSessionPath(id) {
   const safe = String(id || "").replace(/[^A-Za-z0-9._-]/g, "");
@@ -381,6 +680,7 @@ function chatListSessions() {
     let count = 0;
     let lastTs = null;
     let lastRole = null;
+    let origin = CHAT_ORIGIN_DEFAULT;
     try {
       const lines = fs.readFileSync(p, "utf8").split("\n").filter(Boolean);
       count = lines.length;
@@ -389,6 +689,17 @@ function chatListSessions() {
         const o = JSON.parse(last);
         lastTs = o.ts || null;
         lastRole = o.role || null;
+      }
+      for (const l of lines) {
+        try {
+          const o = JSON.parse(l);
+          if (o.origin && CHAT_ORIGINS.has(o.origin)) {
+            origin = o.origin;
+            break;
+          }
+        } catch {
+          /* skip malformed line */
+        }
       }
     } catch {
       /* skip */
@@ -399,7 +710,7 @@ function chatListSessions() {
     } catch {
       /* ignore */
     }
-    out.push({ id: f.replace(/\.jsonl$/, ""), file: f, count, lastTs, lastRole, mtime });
+    out.push({ id: f.replace(/\.jsonl$/, ""), file: f, count, lastTs, lastRole, origin, mtime });
   }
   out.sort((a, b) => String(b.lastTs || b.mtime).localeCompare(String(a.lastTs || a.mtime)));
   return out;
@@ -410,24 +721,73 @@ async function chatSend(id, message) {
   if (!chatSessionPath(id)) return { ok: false, error: "invalid session id" };
   // Build context from existing history (before persisting this message).
   const hist = chatReadHistory(id);
+  const origin = chatOriginOf(hist.entries); // channel is fixed per session — never from message text
   const transcript = (hist.entries || [])
     .slice(-40)
     .map((e) => `${e.role === "user" ? "User" : e.role === "system" ? "System" : "Assistant"}: ${e.content}`)
     .join("\n\n");
-  chatAppend(id, { role: "user", content: text });
+  chatAppend(id, { role: "user", content: text, origin });
   const context = transcript ? `${transcript}\n\nUser: ${text}` : text;
+  const systemMessage = CHAT_SYSTEM_PROMPTS[origin] || CHAT_SYSTEM_PROMPTS[CHAT_ORIGIN_DEFAULT];
   try {
     const mod = await import(pathToFileURL(path.join(REPO, "shared", "model-provider.mjs")).href);
     const { callChat, getModelName } = mod;
-    const { reply, usage } = await callChat({ systemMessage: CHAT_SYSTEM_PROMPT, userContext: context, tools: [] });
+    const { reply, usage } = await callChat({ systemMessage, userContext: context, tools: [] });
     const replyText = reply != null ? String(reply) : "(no reply)";
     const model = typeof getModelName === "function" ? getModelName() : undefined;
-    chatAppend(id, { role: "assistant", content: replyText, model, usage: usage || undefined });
-    return { ok: true, reply: replyText, model };
+    chatAppend(id, { role: "assistant", content: replyText, model, origin, usage: usage || undefined });
+    return { ok: true, reply: replyText, model, origin };
   } catch (err) {
-    chatAppend(id, { role: "assistant", content: `⚠️ ${err.message}`, error: true });
+    chatAppend(id, { role: "assistant", content: `⚠️ ${err.message}`, origin, error: true });
     return { ok: false, error: err.message };
   }
+}
+
+// ── LLM provider config ─────────────────────────────────────────────────────
+// Env keys that select / configure the LLM provider (see shared/model-provider.mjs).
+// Saving any of these in the ⚙️ Config tab restarts the spawned LLM-consuming
+// services (runner + webhook) so the new provider/model applies right away.
+const PROVIDER_KEYS = new Set([
+  "LLM_PROVIDER",
+  "LLM_TEMPERATURE",
+  "DEEPSEEK_API_KEY",
+  "DEEPSEEK_MODEL",
+  "OPENAI_API_KEY",
+  "OPENAI_MODEL",
+  "OPENAI_BASE_URL",
+  "ANTHROPIC_API_KEY",
+  "ANTHROPIC_MODEL",
+  "ANTHROPIC_BASE_URL",
+  "ANTHROPIC_MAX_TOKENS",
+  "OLLAMA_BASE_URL",
+  "OLLAMA_MODEL",
+  "OLLAMA_NUM_CTX",
+]);
+
+// Restart a running service so it re-reads the (updated) process.env. Returns
+// true when a service was actually restarted. Waits briefly so the old process
+// releases its port (e.g. webhook on 3199) before the new one binds.
+async function restartService(name) {
+  if (!running[name]) return false;
+  stopService(name);
+  await new Promise((r) => setTimeout(r, 700));
+  startService(name);
+  return true;
+}
+
+// Resolve the active provider + model label for UI display (mirrors the
+// per-provider defaults in shared/model-provider.mjs without importing it).
+function effectiveLlmLabel() {
+  const p = (process.env.LLM_PROVIDER || "deepseek").toLowerCase();
+  const model =
+    p === "openai"
+      ? process.env.OPENAI_MODEL || "gpt-4o"
+      : p === "anthropic"
+        ? process.env.ANTHROPIC_MODEL || "claude-sonnet-4-5"
+        : p === "ollama"
+          ? process.env.OLLAMA_MODEL || "(set OLLAMA_MODEL)"
+          : process.env.DEEPSEEK_MODEL || "deepseek-v4-flash";
+  return { llmProvider: p, llmModel: model };
 }
 
 // ── IPC ──────────────────────────────────────────────────────────────────────
@@ -436,6 +796,17 @@ function registerIpc() {
   ipcMain.handle("svc:start", (_e, name) => startService(name));
   ipcMain.handle("svc:stop", (_e, name) => stopService(name));
   ipcMain.handle("svc:log", (_e, name, lines) => serviceTail(name, lines));
+
+  // User-script runner (scripts/user allowlist, manual run only)
+  ipcMain.handle("scripts:list", async () => ({
+    ok: true,
+    preflight: await probeTools(),
+    scripts: scanUserScripts(),
+    runs: activeRuns(),
+  }));
+  ipcMain.handle("scripts:run", (_e, name, args) => runUserScript(name, args));
+  ipcMain.handle("scripts:stop", (_e, target) => stopUserScript(target));
+  ipcMain.handle("scripts:running", () => ({ ok: true, runs: activeRuns() }));
 
   ipcMain.handle("health", async () => {
     try {
@@ -482,16 +853,29 @@ function registerIpc() {
       tunnelDomain: process.env.CLOUDFLARE_TUNNEL_DOMAIN || "",
       useTrello: process.env.FRONTDESK_USE_TRELLO === "true",
       logToTrello: process.env.FRONTDESK_LOG_TO_TRELLO === "true",
+      ...effectiveLlmLabel(),
     };
   });
   ipcMain.handle("config:getWithSources", () => {
     const res = config.readWithSources();
     return { ok: true, present: res.present, source: res.source, configPath: res.configPath, count: res.count, values: res.values, ...(res.error ? { error: res.error } : {}) };
   });
-  ipcMain.handle("config:save", (_e, values) => {
-    const res = config.saveConfig(values || {});
-    if (res.ok) config.applyValues(values || {}, process.env);
-    return res;
+  ipcMain.handle("config:save", async (_e, values) => {
+    const payload = values || {};
+    const res = config.saveConfig(payload);
+    if (!res.ok) return res;
+    config.applyValues(payload, process.env);
+    // Provider changes affect the LLM path. The in-process Chat reads env live
+    // (shared/model-provider.mjs resolves provider/model per call), but the
+    // spawned runner + webhook read it at startup — restart them so they pick
+    // up the change immediately.
+    const restarted = [];
+    if (Object.keys(payload).some((k) => PROVIDER_KEYS.has(k))) {
+      for (const name of ["runner", "webhook"]) {
+        if (await restartService(name)) restarted.push(name);
+      }
+    }
+    return { ...res, restarted, provider: process.env.LLM_PROVIDER || "deepseek" };
   });
   ipcMain.handle("config:export", () => ({
     ok: true,
@@ -556,14 +940,19 @@ function registerIpc() {
     }
   });
 
+  // Docs (About → Guide — electron/docs/*.md)
+  ipcMain.handle("docs:list", () => docsList());
+  ipcMain.handle("docs:get", (_e, file) => readDoc(file));
+
   // Chat — prompt the configured LLM; each chat persists to logs/electron_chat/<id>.jsonl
   ipcMain.handle("chat:list", () => ({ ok: true, sessions: chatListSessions() }));
-  ipcMain.handle("chat:new", (_e, title) => {
+  ipcMain.handle("chat:new", (_e, title, origin) => {
     const slug = new Date().toISOString().replace(/[:.]/g, "-").slice(0, 19);
     const id = `chat-${slug}`;
     const safeTitle = String(title || "").trim().replace(/[^A-Za-z0-9 _-]/g, "").slice(0, 60);
-    chatAppend(id, { role: "system", content: "session created", title: safeTitle || undefined });
-    return { ok: true, id };
+    const safeOrigin = CHAT_ORIGINS.has(origin) ? origin : CHAT_ORIGIN_DEFAULT;
+    chatAppend(id, { role: "system", content: "session created", title: safeTitle || undefined, origin: safeOrigin });
+    return { ok: true, id, origin: safeOrigin };
   });
   ipcMain.handle("chat:history", (_e, id) => chatReadHistory(id));
   ipcMain.handle("chat:send", (_e, id, message) => chatSend(id, message));
@@ -615,7 +1004,7 @@ function createTray() {
       { label: "Start webhook server", click: () => startService("webhook") },
       { label: "Start agent runner", click: () => startService("runner") },
       { type: "separator" },
-      { label: "Quit", click: () => { stopService("webhook"); stopService("runner"); stopService("tunnel"); app.quit(); } },
+      { label: "Quit", click: () => app.quit() }, // before-quit drains every service + script
     ]);
     tray.setContextMenu(menu);
   } catch (err) {
@@ -697,7 +1086,52 @@ app.on("window-all-closed", () => {
   // Quit from the tray menu or Cmd+Q.
 });
 
-app.on("before-quit", () => {
-  for (const name of Object.keys(running)) stopService(name);
+// ── Full teardown ────────────────────────────────────────────────────────────
+// Stops EVERYTHING the app started itself: all services (incl. per-seat MCPs)
+// AND all user-script runs. Because children are detached into their own
+// process groups, signalTree() can reap each one's whole subtree. The wait
+// loop here replaces the old fire-and-forget SIGKILL timer, which never fired
+// during a fast quit and left strays behind.
+
+function isAlive(proc) {
+  return !!proc && proc.exitCode === null && proc.signalCode === null;
+}
+
+async function shutdownEverything() {
   if (notifTimer) clearInterval(notifTimer);
+  const procs = [
+    ...Object.values(running).map((r) => r.proc),
+    ...Object.values(scriptRuns).map((r) => r.proc),
+  ].filter(isAlive);
+  if (procs.length === 0) return;
+
+  for (const p of procs) signalTree(p, "SIGTERM");
+  // Bounded wait for a clean exit (waits here — no timer that can be lost)…
+  const deadline = Date.now() + 3000;
+  while (Date.now() < deadline && procs.some(isAlive)) {
+    await new Promise((r) => setTimeout(r, 50));
+  }
+  // …then force-kill any survivors (whole groups, so stragglers don't linger).
+  for (const p of procs) {
+    if (isAlive(p)) signalTree(p, "SIGKILL");
+  }
+  await new Promise((r) => setTimeout(r, 150)); // let SIGKILL land before we exit
+}
+
+let quitting = false;
+function beginQuit() {
+  if (quitting) return; // re-entry guard: before-quit + signal handlers can overlap
+  quitting = true;
+  void shutdownEverything().finally(() => app.exit(0));
+}
+
+app.on("before-quit", (e) => {
+  e.preventDefault();
+  beginQuit();
 });
+
+// OS-level termination (kill <pid> / SIGTERM, Ctrl+C / SIGINT, SIGHUP) — same
+// clean drain so nothing the app spawned survives the process being ended.
+for (const sig of ["SIGTERM", "SIGINT", "SIGHUP"]) {
+  process.on(sig, beginQuit);
+}

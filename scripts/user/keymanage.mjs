@@ -50,7 +50,7 @@ import {
   archiveExpiredSeats,
   backfillAudit,
   collectSeatRecords,
-} from "./frontdesk-license.mjs";
+} from "../frontdesk-license.mjs";
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 
@@ -84,7 +84,10 @@ export function checkRevocation() {
       const enc = crypto.generateKeyPairSync("x25519").publicKey.export({ format: "jwk" }).x;
       const cert = JSON.stringify({ app: "frontdesk-agent", v: 1, sub, exp: 0, kid, pub: pubX, enc });
       const sig = crypto.sign(null, Buffer.from(cert, "utf8"), masterPriv);
-      const seatKeys = Buffer.concat([Buffer.from(privD, "base64url"), Buffer.from(crypto.generateKeyPairSync("x25519").privateKey.export({ format: "jwk" }).d, "base64url")]);
+      const seatKeys = Buffer.concat([
+        Buffer.from(privD, "base64url"),
+        Buffer.from(crypto.generateKeyPairSync("x25519").privateKey.export({ format: "jwk" }).d, "base64url"),
+      ]);
       const key = `TA1.${Buffer.from(cert).toString("base64url")}.${sig.toString("base64url")}.${seatKeys.toString("base64url")}`;
       const res = verifyLicenseKey(key);
       if (res.ok || res.reason !== "revoked_seat") {

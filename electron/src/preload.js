@@ -45,11 +45,29 @@ contextBridge.exposeInMainWorld("api", {
   trello: (action, params) => ipcRenderer.invoke("tools:trello", action, params),
   gmail: (action, params) => ipcRenderer.invoke("tools:gmail", action, params),
   openExternal: (url) => ipcRenderer.invoke("open:external", url),
+  // Scripts (scripts/user runner — manual run only)
+  scriptsList: () => ipcRenderer.invoke("scripts:list"),
+  scriptsRun: (name, args) => ipcRenderer.invoke("scripts:run", name, args),
+  scriptsStop: (target) => ipcRenderer.invoke("scripts:stop", target),
+  scriptsRunning: () => ipcRenderer.invoke("scripts:running"),
+  onScriptOutput: (cb) => {
+    const listener = (_e, data) => cb(data);
+    ipcRenderer.on("scripts:output", listener);
+    return () => ipcRenderer.removeListener("scripts:output", listener);
+  },
+  onScriptsUpdate: (cb) => {
+    const listener = (_e, data) => cb(data);
+    ipcRenderer.on("scripts:update", listener);
+    return () => ipcRenderer.removeListener("scripts:update", listener);
+  },
   // About
   appVersion: () => ipcRenderer.invoke("app:version"),
+  // Docs (About → Guide)
+  docsList: () => ipcRenderer.invoke("docs:list"),
+  docsGet: (file) => ipcRenderer.invoke("docs:get", file),
   // Chat
   chatList: () => ipcRenderer.invoke("chat:list"),
-  chatNew: (title) => ipcRenderer.invoke("chat:new", title),
+  chatNew: (title, origin) => ipcRenderer.invoke("chat:new", title, origin),  // origin: 'operator' | 'frontdesk' (default operator)
   chatHistory: (id) => ipcRenderer.invoke("chat:history", id),
   chatSend: (id, message) => ipcRenderer.invoke("chat:send", id, message),
   // Appearance
