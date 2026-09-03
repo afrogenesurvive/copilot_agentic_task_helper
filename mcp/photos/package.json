@@ -1,0 +1,16 @@
+{
+  "name": "photos-mcp-server",
+  "version": "1.0.0",
+  "private": true,
+  "type": "module",
+  "description": "MCP server for Google Photos Library API access — list, search, upload, and manage albums/media",
+  "main": "index.js",
+  "scripts": {
+    "start": "node index.js"
+  },
+  "dependencies": {
+    "@modelcontextprotocol/sdk": "^1.0.0",
+    "dotenv": "^16.4.0",
+    "google-auth-library": "^9.0.0"
+  }
+}
