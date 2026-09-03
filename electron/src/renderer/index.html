@@ -20,6 +20,7 @@
           <button data-tab="accounts">🔐 Accounts &amp; Keys</button>
           <button data-tab="config">⚙️ Config</button>
           <button data-tab="tools">🧰 Tools</button>
+          <button data-tab="scripts">📜 Scripts</button>
           <button data-tab="chat">💬 Chat</button>
           <button data-tab="appearance">🎨 Appearance</button>
           <button data-tab="about">ℹ️ About</button>
@@ -38,10 +39,9 @@
         <main>
       <!-- Dashboard -->
       <section id="tab-dashboard" class="tab active">
-        <div id="service-grid"></div>
-        <div class="panel">
-          <h3>Config</h3>
-          <pre id="config-box">loading…</pre>
+        <div id="svc-tabs" class="svc-tabs"></div>
+        <div id="svc-detail" class="panel svc-detail">
+          <div class="empty">Loading services…</div>
         </div>
       </section>
 
@@ -162,8 +162,8 @@
           <p class="hint">
             Plain-JSON config at the repo root. When <code>config.json</code> is present it
             <b>overrides</b> <code>.env</code>; when absent, <code>.env</code> is used. Edit a field and
-            press <b>Save</b> — only the keys you change are written. Restart services
-            (Dashboard → Stop / Start) to apply changes.
+            press <b>Save</b> — only the keys you change are written. Saving LLM provider settings
+            applies to the Chat tab instantly and restarts the runner/webhook services automatically.
           </p>
           <div id="config-fields" class="config-fields"></div>
           <textarea id="config-editor" class="hidden" spellcheck="false" placeholder="{ }"></textarea>
@@ -202,6 +202,23 @@
         </div>
       </section>
 
+      <!-- Scripts (scripts/user runner) -->
+      <section id="tab-scripts" class="tab">
+        <div class="panel">
+          <div class="panel-head">
+            <h3>📜 Scripts (scripts/user)</h3>
+            <button id="scripts-refresh">Refresh</button>
+          </div>
+          <div id="scripts-preflight"></div>
+          <p class="hint">
+            Runs executables found under <code>scripts/user/</code> (bash/node/python3 by extension).
+            Manual only — click <b>Run</b> yourself. Args accept a JSON array like
+            <code>["--dry-run","-i","i-0abc123"]</code> or plain space-separated values.
+          </p>
+          <div id="scripts-list">loading…</div>
+        </div>
+      </section>
+
       <!-- Appearance -->
       <section id="tab-appearance" class="tab">
         <div class="panel">
@@ -223,6 +240,7 @@
         <div class="panel chat-panel">
           <div class="panel-head">
             <h3>💬 Agent chat</h3>
+            <span id="chat-provider" class="tag chip-llm" title="Active LLM provider/model (set in ⚙️ Config)">…</span>
             <div>
               <button id="chat-new">+ New chat</button>
               <button id="chat-refresh">Refresh</button>
@@ -257,7 +275,18 @@
             <p class="hint">Frontdesk Operator — Electron control plane for the frontdesk v2 stack. Monitor queues, logs, sessions, licenses and MCP services; run the configured LLM from the Chat tab.</p>
           </div>
           <div id="about-guide" class="hidden">
-            <p class="hint">Guide coming soon.</p>
+            <div class="guide-layout">
+              <nav id="guide-nav" class="guide-nav" aria-label="Guide topics"></nav>
+              <div class="guide-main">
+                <div class="guide-toolbar">
+                  <span id="guide-status" class="guide-status"></span>
+                  <button id="guide-refresh" title="Reload the guide list from disk">↻ Refresh</button>
+                </div>
+                <article id="guide-body" class="guide-doc markdown">
+                  <p class="hint">Pick a guide from the list.</p>
+                </article>
+              </div>
+            </div>
           </div>
         </div>
       </section>
@@ -265,6 +294,7 @@
       </div>
     </div>
 
+    <script src="markdown.js"></script>
     <script src="app.js"></script>
   </body>
 </html>

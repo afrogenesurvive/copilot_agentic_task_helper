@@ -31,15 +31,17 @@
       if (tab === "accounts") refreshAccounts();
       if (tab === "config") refreshConfig();
       if (tab === "tools") refreshTools();
+      if (tab === "scripts") refreshScripts();
       if (tab === "appearance") refreshAppearance();
       if (tab === "about") refreshAbout();
       if (tab === "chat") refreshChatSessions();
     });
   });
 
-  // ── Dashboard ──
+  // ── Dashboard (per-service sub-tabs + large detail view) ──
+  const dash = { selected: null };
+
   async function refreshDashboard() {
-    const grid = $("service-grid");
     const health = await api.health();
     const badge = $("health-badge");
     if (health.ok) {
@@ -51,44 +53,67 @@
     }
 
     const svcs = await api.svcList();
-    grid.innerHTML = "";
-    for (const s of svcs) {
-      const card = document.createElement("div");
-      card.className = "svc-card";
-      const statusClass = s.running ? "running" : s.configured ? "stopped" : "error";
-      const statusText = s.running ? `● running${s.pid ? ` (pid ${s.pid})` : ""}` : s.configured ? "○ stopped" : "not configured";
-      card.innerHTML = `
-        <h4>${esc(s.label)}</h4>
-        <div class="svc-status ${statusClass}">${statusText}</div>
-        <div class="svc-health">${s.health ? "health: " + esc(JSON.stringify(s.health)) : "—"}</div>
-        <div class="svc-actions">
-          <button data-start="${s.name}" ${s.running ? "disabled" : ""}>Start</button>
-          <button data-stop="${s.name}" ${!s.running ? "disabled" : ""}>Stop</button>
-        </div>
-        <pre class="svc-log" id="svc-log-${s.name}">${esc((await api.svcLog(s.name, 30)).join("\n") || "")}</pre>
-      `;
-      grid.appendChild(card);
-    }
-    grid.querySelectorAll("[data-start]").forEach((b) =>
+    const names = svcs.map((s) => s.name);
+    if (!dash.selected || !names.includes(dash.selected)) dash.selected = names[0] || null;
+
+    const strip = $("svc-tabs");
+    strip.innerHTML = svcs
+      .map((s) => {
+        const cls = [
+          "svc-tab",
+          s.running ? "running" : s.configured ? "stopped" : "error",
+          s.name === dash.selected ? "active" : "",
+        ].join(" ");
+        return `<button class="${cls}" data-svc="${esc(s.name)}" title="${s.running ? "running" : s.configured ? "stopped" : "not configured"}">${esc(s.label)}</button>`;
+      })
+      .join("");
+    strip.querySelectorAll("button").forEach((b) =>
       b.addEventListener("click", async () => {
-        await api.svcStart(b.dataset.start);
-        refreshDashboard();
-      }),
-    );
-    grid.querySelectorAll("[data-stop]").forEach((b) =>
-      b.addEventListener("click", async () => {
-        await api.svcStop(b.dataset.stop);
-        refreshDashboard();
+        dash.selected = b.dataset.svc;
+        strip.querySelectorAll("button").forEach((x) => x.classList.toggle("active", x === b));
+        await renderSvcDetail(b.dataset.svc);
       }),
     );
 
-    const cfg = await api.config();
-    const gs = await api.googleStatus();
-    $("config-box").textContent = JSON.stringify(
-      { ...cfg, googleConnected: gs.connected, googleUser: gs.user || null },
-      null,
-      2,
-    );
+    await renderSvcDetail(dash.selected, svcs);
+  }
+
+  async function renderSvcDetail(name, svcs) {
+    const detail = $("svc-detail");
+    if (!name) {
+      detail.innerHTML = '<div class="empty">No services configured.</div>';
+      return;
+    }
+    const s = (svcs || (await api.svcList())).find((x) => x.name === name);
+    if (!s) return;
+    const statusClass = s.running ? "running" : s.configured ? "stopped" : "error";
+    const statusText = s.running ? `● running${s.pid ? ` (pid ${s.pid})` : ""}` : s.configured ? "○ stopped" : "not configured";
+    detail.innerHTML = `
+      <div class="svc-head">
+        <div>
+          <h3>${esc(s.label)}</h3>
+          <div class="svc-status ${statusClass}">${statusText}</div>
+        </div>
+        <div class="svc-actions">
+          <button data-start="${esc(s.name)}" ${s.running ? "disabled" : ""}>▶ Start</button>
+          <button data-stop="${esc(s.name)}" ${!s.running ? "disabled" : ""}>⏹ Stop</button>
+          <button id="svc-refresh">Refresh</button>
+        </div>
+      </div>
+      <div class="svc-health">${s.health ? "health: " + esc(JSON.stringify(s.health)) : s.running ? "—" : "not running"}</div>
+      <pre class="svc-detail-log" id="svc-detail-log">${esc((await api.svcLog(s.name, 500)).join("\n") || "")}</pre>
+    `;
+    detail.querySelector("[data-start]")?.addEventListener("click", async () => {
+      await api.svcStart(s.name);
+      refreshDashboard();
+    });
+    detail.querySelector("[data-stop]")?.addEventListener("click", async () => {
+      await api.svcStop(s.name);
+      refreshDashboard();
+    });
+    detail.querySelector("#svc-refresh")?.addEventListener("click", () => renderSvcDetail(s.name));
+    const box = $("svc-detail-log");
+    if (box) box.scrollTop = box.scrollHeight;
   }
 
   // ── Queue ──
@@ -508,6 +533,14 @@
     { key: "CLOUDFLARE_TUNNEL_TOKEN", label: "Cloudflare Tunnel Token", section: "Tunnel", secret: true },
     { key: "CLOUDFLARE_TUNNEL_ID", label: "Cloudflare Tunnel ID", section: "Tunnel", secret: false },
     { key: "CLOUDFLARE_TUNNEL_DOMAIN", label: "Cloudflare Tunnel Domain", section: "Tunnel", secret: false },
+    // AWS (EC2 / RDP testing) — used by scripts like update-rdp-sg.sh. These env
+    // vars are injected into spawned scripts; the AWS CLI also falls back to
+    // ~/.aws when they are unset. Region/profile are plain; keys are secrets.
+    { key: "AWS_ACCESS_KEY_ID", label: "AWS Access Key ID", section: "AWS", secret: true },
+    { key: "AWS_SECRET_ACCESS_KEY", label: "AWS Secret Access Key", section: "AWS", secret: true },
+    { key: "AWS_SESSION_TOKEN", label: "AWS Session Token (optional)", section: "AWS", secret: true },
+    { key: "AWS_DEFAULT_REGION", label: "AWS Default Region", section: "AWS", secret: false },
+    { key: "AWS_PROFILE", label: "AWS Profile (optional)", section: "AWS", secret: false },
     // Agent runner
     { key: "AGENT_RUNNER_ENABLED", label: "Agent Runner Enabled", section: "Agent runner", secret: false, options: ["true", "false"] },
     { key: "AGENT_TASK_INTERVAL", label: "Task Check Interval (ms)", section: "Agent runner", secret: false },
@@ -522,6 +555,58 @@
 
   const configState = { values: {}, sources: {}, dirty: new Set(), raw: false };
 
+  // Provider-aware metadata for the ⚙️ Config "LLM Provider" section — mirrors
+  // shared/model-provider.mjs. Which keys apply per provider, the required API
+  // key, and the default/placeholder model shown when the value is blank.
+  const LLM_PROVIDERS = {
+    deepseek: {
+      label: "DeepSeek",
+      hint: "Cloud API — requires a DeepSeek API key.",
+      required: "DEEPSEEK_API_KEY",
+      fields: [
+        { key: "DEEPSEEK_API_KEY", secret: true, required: true },
+        { key: "DEEPSEEK_MODEL", placeholder: "deepseek-v4-flash (default)" },
+      ],
+    },
+    openai: {
+      label: "OpenAI",
+      hint: "Cloud API — requires an OpenAI API key.",
+      required: "OPENAI_API_KEY",
+      fields: [
+        { key: "OPENAI_API_KEY", secret: true, required: true },
+        { key: "OPENAI_MODEL", placeholder: "gpt-4o (default)" },
+        { key: "OPENAI_BASE_URL", placeholder: "optional gateway/proxy override (default: api.openai.com/v1)" },
+      ],
+    },
+    anthropic: {
+      label: "Anthropic",
+      hint: "Cloud API — requires an Anthropic API key.",
+      required: "ANTHROPIC_API_KEY",
+      fields: [
+        { key: "ANTHROPIC_API_KEY", secret: true, required: true },
+        { key: "ANTHROPIC_MODEL", placeholder: "claude-sonnet-4-5 (default)" },
+        { key: "ANTHROPIC_BASE_URL", placeholder: "optional gateway/proxy override (default: api.anthropic.com)" },
+        { key: "ANTHROPIC_MAX_TOKENS", placeholder: "4096" },
+      ],
+    },
+    ollama: {
+      label: "Ollama (local)",
+      hint: "Local server — no API key needed.",
+      required: null,
+      fields: [
+        { key: "OLLAMA_BASE_URL", placeholder: "http://127.0.0.1:11434" },
+        { key: "OLLAMA_MODEL", placeholder: "required — e.g. deepseek-v4-flash" },
+        { key: "OLLAMA_NUM_CTX", placeholder: "32768 | 65536 | 131072" },
+      ],
+    },
+  };
+
+  function activeProvider() {
+    const raw = configState.values.LLM_PROVIDER && configState.values.LLM_PROVIDER.value;
+    const p = String(raw || "deepseek").toLowerCase();
+    return LLM_PROVIDERS[p] ? p : "deepseek";
+  }
+
   function configMsg(text, isErr) {
     const el = $("config-msg");
     el.textContent = text;
@@ -535,16 +620,36 @@
     const srcClass = src === "config.json" ? "valid" : src === ".env" ? "env" : "default";
     const srcLabel = src === "config.json" ? "config.json" : src === ".env" ? ".env" : "default";
     const inputType = f.secret ? "password" : "text";
+    const placeholder = f.placeholder ? ` placeholder="${escAttr(f.placeholder)}"` : "";
     const input = f.options
       ? `<select data-cfield="${escAttr(f.key)}">${f.options.map((o) => `<option value="${escAttr(o)}" ${String(val) === o ? "selected" : ""}>${esc(o)}</option>`).join("")}</select>`
-      : `<input type="${inputType}" data-cfield="${escAttr(f.key)}" value="${escAttr(val)}" spellcheck="false" />`;
+      : `<input type="${inputType}" data-cfield="${escAttr(f.key)}" value="${escAttr(val)}"${placeholder} spellcheck="false" />`;
     const toggle = f.secret ? `<button type="button" class="cfg-secret-toggle" data-secret-toggle="${escAttr(f.key)}" title="show/hide">👁</button>` : "";
+    const reqTag = f.providerRequired && !val ? `<span class="cfg-required" title="Required for the selected provider">required</span>` : "";
     return `
-      <div class="config-field">
-        <label class="cfg-label" title="${escAttr(f.key)}">${esc(f.label)}</label>
+      <div class="config-field${f.providerRequired ? " cfg-required-field" : ""}">
+        <label class="cfg-label" title="${escAttr(f.key)}">${esc(f.label)}${reqTag}</label>
         <div class="cfg-input-row">${input}${toggle}</div>
         <span class="cfg-source tag ${srcClass}">${srcLabel}</span>
       </div>`;
+  }
+
+  // Build the "LLM Provider" config section: provider picker + only the active
+  // provider's fields (plus the shared temperature). Editing stays consistent —
+  // inactive providers' values are preserved in configState and only written to
+  // config.json when you actually change them.
+  function llmProviderSectionHTML() {
+    const pick = CONFIG_FIELDS.find((f) => f.key === "LLM_PROVIDER");
+    const temp = CONFIG_FIELDS.find((f) => f.key === "LLM_TEMPERATURE");
+    const meta = LLM_PROVIDERS[activeProvider()];
+    const rows = [`<div class="provider-summary"><span class="provider-badge">${esc(meta.label)}</span><span class="provider-hint">${esc(meta.hint)}</span></div>`];
+    for (const f of meta.fields) {
+      const def = CONFIG_FIELDS.find((x) => x.key === f.key);
+      if (!def) continue;
+      rows.push(configFieldHTML({ ...def, placeholder: f.placeholder, providerRequired: !!f.required }));
+    }
+    if (temp) rows.push(configFieldHTML(temp));
+    return `<div class="config-section">${pick ? `<h4>LLM Provider</h4>${configFieldHTML(pick)}` : ""}<div class="provider-panel">${rows.join("")}</div></div>`;
   }
 
   function renderConfigForm() {
@@ -570,7 +675,9 @@
       sec.fields.push(f);
     }
     wrap.innerHTML = sections
-      .map((s) => `<div class="config-section"><h4>${esc(s.name)}</h4>${s.fields.map(configFieldHTML).join("")}</div>`)
+      .map((s) =>
+        s.name === "LLM Provider" ? llmProviderSectionHTML() : `<div class="config-section"><h4>${esc(s.name)}</h4>${s.fields.map(configFieldHTML).join("")}</div>`,
+      )
       .join("");
     wrap.querySelectorAll("[data-cfield]").forEach((el) =>
       el.addEventListener("input", (e) => {
@@ -581,6 +688,16 @@
         configMsg("");
       }),
     );
+    // Switching provider re-renders so only the active provider's fields show.
+    const llmSelect = wrap.querySelector('[data-cfield="LLM_PROVIDER"]');
+    if (llmSelect) {
+      llmSelect.addEventListener("change", () => {
+        if (configState.values.LLM_PROVIDER) configState.values.LLM_PROVIDER.value = llmSelect.value;
+        configState.dirty.add("LLM_PROVIDER");
+        configMsg("");
+        renderConfigForm();
+      });
+    }
     wrap.querySelectorAll("[data-secret-toggle]").forEach((b) =>
       b.addEventListener("click", () => {
         const input = wrap.querySelector(`[data-cfield="${b.dataset.secretToggle}"]`);
@@ -634,7 +751,17 @@
     if (Object.keys(payload).length === 0) return configMsg("No changes to save.", true);
     const res = await api.configSave(payload);
     if (res.ok) {
-      configMsg(`Saved ${res.count} key(s) to config.json. Restart services (Dashboard → Stop / Start) to apply.`);
+      const meta = LLM_PROVIDERS[String(res.provider || "deepseek").toLowerCase()] || LLM_PROVIDERS.deepseek;
+      let msg = `Saved ${res.count} key(s) → config.json.`;
+      if (res.restarted && res.restarted.length) {
+        msg += ` LLM services restarted: ${res.restarted.join(", ")}. Provider is now live.`;
+      } else {
+        msg += ` No LLM services running — start them on the Dashboard to apply (the Chat tab picks up changes immediately).`;
+      }
+      if (meta.required && !(configState.values[meta.required] && configState.values[meta.required].value)) {
+        msg += ` ⚠️ ${meta.label} has no ${meta.required} set — calls will fail until you add it.`;
+      }
+      configMsg(msg);
       refreshConfig();
     } else {
       configMsg(res.error || "Save failed", true);
@@ -696,12 +823,76 @@
     }),
   );
 
-  // ── About (About / Guide tabs, Guide left empty for now) ──
+  // ── About (About / Guide tabs; Guide is the electron/docs markdown browser) ──
   async function refreshAbout() {
     const r = await api.appVersion();
     const el = $("about-version");
     el.textContent = r && r.ok ? `${r.name} — v${r.version}` : "Frontdesk Operator";
   }
+
+  // Guide = rendered markdown docs from electron/docs/*.md (served via main IPC).
+  // Preferred order + friendly labels for the docs shipped with the app; any extra
+  // .md files found on disk are appended alphabetically after these.
+  const GUIDE_DOCS = [
+    { file: "README.md", title: "🏠 Overview & Getting Started" },
+    { file: "netlify-setup.md", title: "🌐 Netlify / Frontdesk Setup" },
+    { file: "dashboard.md", title: "📊 Dashboard" },
+    { file: "queue.md", title: "🔴 Queue" },
+    { file: "logs.md", title: "📄 Logs" },
+    { file: "sessions.md", title: "👥 Sessions" },
+    { file: "licenses.md", title: "🔑 Licenses" },
+    { file: "accounts.md", title: "🔐 Accounts & Keys" },
+    { file: "config.md", title: "⚙️ Config" },
+    { file: "tools.md", title: "🧰 Tools" },
+    { file: "scripts.md", title: "📜 Scripts" },
+    { file: "chat.md", title: "💬 Chat" },
+    { file: "appearance.md", title: "🎨 Appearance" },
+    { file: "about.md", title: "ℹ️ About" },
+  ];
+  const guideState = { docs: [], current: null };
+
+  async function refreshGuide() {
+    const res = await api.docsList();
+    const files = (res && res.ok && res.files) || [];
+    const byFile = {};
+    for (const f of files) byFile[f.file] = f.title || f.file;
+    const known = new Set(GUIDE_DOCS.map((d) => d.file));
+    const ordered = GUIDE_DOCS.filter((d) => byFile[d.file]);
+    for (const f of files) {
+      if (!known.has(f.file)) ordered.push({ file: f.file, title: byFile[f.file] || f.file });
+    }
+    guideState.docs = ordered;
+    const nav = $("guide-nav");
+    const body = $("guide-body");
+    if (!ordered.length) {
+      nav.innerHTML = "";
+      body.innerHTML = '<p class="hint">No guides found under electron/docs/.</p>';
+      guideState.current = null;
+      return;
+    }
+    nav.innerHTML = ordered
+      .map((d) => `<button type="button" class="guide-item" data-doc="${escAttr(d.file)}">${esc(d.title)}</button>`)
+      .join("");
+    nav.querySelectorAll("[data-doc]").forEach((b) => b.addEventListener("click", () => loadGuideDoc(b.dataset.doc)));
+    const cur = guideState.current && byFile[guideState.current] ? guideState.current : ordered[0].file;
+    loadGuideDoc(cur);
+  }
+
+  async function loadGuideDoc(file) {
+    const body = $("guide-body");
+    const nav = $("guide-nav");
+    guideState.current = file;
+    nav.querySelectorAll("[data-doc]").forEach((b) => b.classList.toggle("active", b.dataset.doc === file));
+    const status = $("guide-status");
+    if (status) status.textContent = file;
+    body.innerHTML = '<p class="hint">Loading…</p>';
+    const res = await api.docsGet(file);
+    body.innerHTML =
+      res && res.ok
+        ? window.renderMarkdown(res.content)
+        : `<p class="hint">⚠️ Could not load ${esc(file)}${res && res.error ? ": " + esc(res.error) : ""}.</p>`;
+  }
+
   function setAboutTab(sub) {
     const info = $("about-sub-info");
     const guide = $("about-sub-guide");
@@ -711,15 +902,35 @@
     other.classList.remove("active");
     $("about-info").classList.toggle("hidden", sub === "guide");
     $("about-guide").classList.toggle("hidden", sub !== "guide");
+    if (sub === "guide" && !guideState.docs.length) refreshGuide();
   }
   $("about-sub-info").addEventListener("click", () => setAboutTab("info"));
   $("about-sub-guide").addEventListener("click", () => setAboutTab("guide"));
+  $("guide-refresh").addEventListener("click", refreshGuide);
+  // Route external links inside rendered guides through the host shell.
+  $("guide-body").addEventListener("click", (e) => {
+    const a = e.target && e.target.closest ? e.target.closest("a[data-ext]") : null;
+    if (!a) return;
+    e.preventDefault();
+    api.openExternal(a.getAttribute("href"));
+  });
 
   // ── Chat (prompt the configured LLM; each chat persists to its own log file) ──
   const chatState = { sessions: [], current: null, entries: [], sending: false };
+
+  // Show the currently active LLM provider/model in the Chat header.
+  async function refreshLlmChip() {
+    const el = $("chat-provider");
+    if (!el) return;
+    const c = await api.config();
+    if (c && c.llmProvider) el.textContent = `${c.llmProvider} · ${c.llmModel || ""}`;
+    else el.textContent = "";
+  }
+
   async function refreshChatSessions() {
     const res = await api.chatList();
     chatState.sessions = (res.ok && res.sessions) || [];
+    refreshLlmChip();
     const list = $("chat-session-list");
     list.innerHTML = chatState.sessions.length
       ? chatState.sessions
@@ -811,6 +1022,116 @@
     else refreshChatSessions();
   });
 
+  // ── Scripts (scripts/user runner — manual run only) ──
+  const scriptState = { list: [], runs: [], outputs: {}, preflight: null };
+  const scriptCap = 2000; // max buffered lines per script
+
+  function appendScriptOutput(script, text) {
+    if (!script) return;
+    const arr = scriptState.outputs[script] || (scriptState.outputs[script] = []);
+    arr.push(...String(text).split("\n"));
+    if (arr.length > scriptCap) arr.splice(0, arr.length - scriptCap);
+    const el = document.getElementById(`script-out-${script}`);
+    if (el) {
+      const stick = el.scrollTop + el.clientHeight >= el.scrollHeight - 40;
+      el.textContent = arr.join("\n");
+      if (stick) el.scrollTop = el.scrollHeight;
+    }
+  }
+
+  function renderScriptsPreflight() {
+    const p = scriptState.preflight;
+    const el = $("scripts-preflight");
+    if (!el) return;
+    if (!p) {
+      el.innerHTML = "";
+      return;
+    }
+    const tool = (name, ok, ver) =>
+      `<span class="tag ${ok ? "valid" : "expired"}">${esc(name)} ${ok ? "✓" + (ver ? " " + esc(ver) : "") : "✗"}</span>`;
+    const creds = p.awsCreds
+      ? `<span class="tag valid">AWS creds ✓</span>`
+      : `<span class="tag expired">AWS creds ✗ (set in ⚙️ Config or ~/.aws)</span>`;
+    const region = p.awsRegion ? ` · region <code>${esc(p.awsRegion)}</code>` : "";
+    const profile = p.awsProfile ? ` · profile <code>${esc(p.awsProfile)}</code>` : "";
+    el.innerHTML = `<div class="script-preflight">${tool("aws", p.aws, p.awsVersion)} ${tool("node", p.node)} ${tool("python3", p.python3)} ${creds}${region}${profile}</div>`;
+  }
+
+  function renderScriptsList() {
+    const box = $("scripts-list");
+    if (!box) return;
+    if (!scriptState.list.length) {
+      box.innerHTML = '<div class="empty">No scripts found under scripts/user/.</div>';
+      return;
+    }
+    box.innerHTML = scriptState.list
+      .map((s) => {
+        const run = scriptState.runs.find((r) => r.script === s.name);
+        const out = (scriptState.outputs[s.name] || []).join("\n");
+        return `
+        <div class="script-card">
+          <div class="script-head">
+            <strong class="script-name">${esc(s.name)}</strong>
+            <span class="tag">${esc(s.runner || "no runner")}</span>
+            <span class="script-status ${run ? "running" : ""}">${run ? "● running (pid " + run.pid + ")" : "idle"}</span>
+          </div>
+          ${s.usage ? `<div class="script-usage">${esc(s.usage)}</div>` : ""}
+          <div class="script-controls">
+            <input class="script-args" placeholder="args: --dry-run -i i-0abc123  |  or [&quot;--dry-run&quot;,&quot;-i&quot;,&quot;i-0abc123&quot;]" spellcheck="false" />
+            <button class="run-btn" data-run="${escAttr(s.name)}" ${run ? "disabled" : ""}>▶ Run</button>
+            <button class="stop-btn" data-stop="${escAttr(s.name)}" ${run ? "" : "disabled"}>■ Stop</button>
+          </div>
+          <pre class="script-out log-box" id="script-out-${escAttr(s.name)}">${esc(out)}</pre>
+        </div>`;
+      })
+      .join("");
+    box.querySelectorAll("[data-run]").forEach((b) =>
+      b.addEventListener("click", async () => {
+        const name = b.dataset.run;
+        const card = b.closest(".script-card");
+        const args = card ? card.querySelector(".script-args").value : "";
+        const res = await api.scriptsRun(name, args);
+        if (!res.ok) {
+          appendScriptOutput(name, `⚠️ ${res.error}\n`);
+          return;
+        }
+        scriptState.runs.push({ script: name, runId: res.runId, pid: res.pid });
+        renderScriptsList();
+      }),
+    );
+    box.querySelectorAll("[data-stop]").forEach((b) =>
+      b.addEventListener("click", async () => {
+        const name = b.dataset.stop;
+        await api.scriptsStop(name);
+        appendScriptOutput(name, "■ stopped by user\n");
+        scriptState.runs = scriptState.runs.filter((r) => r.script !== name);
+        renderScriptsList();
+      }),
+    );
+  }
+
+  async function refreshScripts() {
+    const res = await api.scriptsList();
+    if (!res.ok) {
+      const box = $("scripts-list");
+      if (box) box.innerHTML = `<div class="empty">${esc(res.error || "failed to list")}</div>`;
+      return;
+    }
+    scriptState.list = res.scripts || [];
+    scriptState.runs = res.runs || [];
+    scriptState.preflight = res.preflight || null;
+    renderScriptsPreflight();
+    renderScriptsList();
+  }
+  api.onScriptOutput((d) => {
+    if (d && d.script) appendScriptOutput(d.script, d.text || "");
+  });
+  api.onScriptsUpdate((d) => {
+    scriptState.runs = (d && d.runs) || [];
+    renderScriptsList();
+  });
+  $("scripts-refresh").addEventListener("click", refreshScripts);
+
   // ── Quit (stops backend services via main's before-quit) ──
   document.getElementById("quit-btn").addEventListener("click", () => {
     if (window.confirm("Quit Frontdesk Operator? Backend services will stop.")) api.quit();
@@ -832,5 +1153,6 @@
     if (document.querySelector("#tab-config").classList.contains("active")) refreshConfig();
     if (document.querySelector("#tab-about").classList.contains("active")) refreshAbout();
     if (document.querySelector("#tab-chat").classList.contains("active")) refreshChatSessions();
+    if (document.querySelector("#tab-scripts").classList.contains("active")) refreshScripts();
   }, 15000);
 })();
