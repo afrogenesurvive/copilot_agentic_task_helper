@@ -702,6 +702,76 @@ export const sheetsTools = [
   },
 ];
 
+/** Google Photos Picker tools (reuses the shared Gmail OAuth client; requires
+ *  the GMAIL_REFRESH_TOKEN to be granted the photospicker.mediaitems.readonly
+ *  scope). Picker-only by design: the Library API can no longer read a user's
+ *  own library (only app-created content), and this project does not upload.
+ *  Each session needs a human to open pickerUri in a browser and select items. */
+export const photosTools = [
+  {
+    name: "photos_picker_start",
+    description:
+      "Start a Google Photos Picker session. Returns a pickerUri that a HUMAN must open in a browser (signed in as the owning Google account) to select photos/videos from their real library — up to 2000 items per session. Not iframeable. The session and returned baseUrls are short-lived (about an hour).",
+    inputSchema: {
+      type: "object",
+      properties: {
+        maxItemCount: { type: "number", description: "Optional max items the user may pick (default/max 2000)" },
+      },
+    },
+  },
+  {
+    name: "photos_picker_poll",
+    description:
+      "Check the status of a picker session. Returns mediaItemsSet: true once the user has finished picking in the browser and the picked items can be listed/downloaded.",
+    inputSchema: {
+      type: "object",
+      properties: {
+        sessionId: { type: "string", description: "Picker session ID from photos_picker_start" },
+      },
+      required: ["sessionId"],
+    },
+  },
+  {
+    name: "photos_picker_list",
+    description:
+      "List the media items a user selected in a picker session. Returns id, mimeType, baseUrl (time-limited), and metadata (creation time, dimensions) — no filename or album info. Paged via pageToken. Only available once mediaItemsSet is true.",
+    inputSchema: {
+      type: "object",
+      properties: {
+        sessionId: { type: "string", description: "Picker session ID from photos_picker_start" },
+        pageSize: { type: "number", description: "Max results (default 100, max 100)" },
+        pageToken: { type: "string", description: "Pagination token from a previous response's nextPageToken" },
+      },
+      required: ["sessionId"],
+    },
+  },
+  {
+    name: "photos_picker_download",
+    description:
+      "Download the media items a user selected in a picker session to a local directory. Downloads all picked items unless mediaItemIds is given. Files are saved as <creationTime>_<id>.<ext>; do this promptly because baseUrls expire. Returns the saved paths (and any failures).",
+    inputSchema: {
+      type: "object",
+      properties: {
+        sessionId: { type: "string", description: "Picker session ID from photos_picker_start" },
+        outDir: { type: "string", description: "Local directory to save the downloaded files into (created if missing)" },
+        mediaItemIds: { type: "array", items: { type: "string" }, description: "Optional — only download these picked item ids" },
+      },
+      required: ["sessionId", "outDir"],
+    },
+  },
+  {
+    name: "photos_picker_delete",
+    description: "Delete (clean up) a Google Photos Picker session once you are done with it.",
+    inputSchema: {
+      type: "object",
+      properties: {
+        sessionId: { type: "string", description: "Picker session ID from photos_picker_start" },
+      },
+      required: ["sessionId"],
+    },
+  },
+];
+
 /** Combined list of all tools for use by the agent runner */
 export const frontdeskTools = [
   {
@@ -718,4 +788,4 @@ export const frontdeskTools = [
   },
 ];
 
-export const allTools = [...trelloTools, ...gmailTools, ...driveTools, ...calendarTools, ...webSearchTools, ...sheetsTools, ...frontdeskTools];
+export const allTools = [...trelloTools, ...gmailTools, ...driveTools, ...calendarTools, ...photosTools, ...webSearchTools, ...sheetsTools, ...frontdeskTools];

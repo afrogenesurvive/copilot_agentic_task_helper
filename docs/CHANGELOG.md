@@ -1,5 +1,18 @@
 # Changelog
 
+## [0.2.4-1] — 2026-09-03
+
+### Added
+
+- **Google Photos Picker MCP server** — pick a few photos straight from your library in your browser
+  and save them locally via the new `photos_picker_*` tools (start / poll / list / download / delete).
+  Picker-only by design: Google no longer lets third-party apps read a whole photo library, only what
+  you explicitly select.
+
+### Version
+
+- Root + `electron/package.json` bumped `0.2.3` → `0.2.4`.
+
 ## [0.2.3-1] — 2026-09-03
 
 ### Added

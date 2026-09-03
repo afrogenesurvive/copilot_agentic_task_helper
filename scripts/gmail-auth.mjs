@@ -3,8 +3,8 @@
 /**
  * google-auth.mjs — Get a unified Google OAuth2 refresh token
  *
- * Requests scopes for Gmail, Drive, and Calendar so all MCP servers
- * (Gmail, Drive, Calendar) can share one refresh token.
+ * Requests scopes for Gmail, Drive, Calendar, and Photos so all MCP servers
+ * (Gmail, Drive, Calendar, Photos) can share one refresh token.
  *
  * Usage:
  *   node scripts/gmail-auth.mjs
@@ -28,6 +28,15 @@ const SCOPES = [
   "https://www.googleapis.com/auth/drive",
   "https://www.googleapis.com/auth/calendar.events.readonly",
   "https://www.googleapis.com/auth/calendar.events",
+  // Google Photos Library API — post-2025-03-31 app-created scopes (the old
+  // 'photoslibrary' / 'photoslibrary.readonly' scopes were REMOVED by Google):
+  "https://www.googleapis.com/auth/photoslibrary.appendonly",
+  "https://www.googleapis.com/auth/photoslibrary.readonly.appcreateddata",
+  "https://www.googleapis.com/auth/photoslibrary.edit.appcreateddata",
+  // Google Photos Picker API — interactive, user-selected access to the user's
+  // REAL library photos (the only way to touch non-app-created content now).
+  // Requires a browser step where the user picks items each session.
+  "https://www.googleapis.com/auth/photospicker.mediaitems.readonly",
 ];
 const CREDENTIALS_PATH = path.join(ROOT, "safe", "gmail-oauth2.json");
 const TOKEN_PATH = path.join(ROOT, "tokens", "gmail-token.json");
@@ -41,7 +50,7 @@ async function main() {
     process.exit(1);
   }
 
-  console.log("🔑 Starting Google OAuth2 authorization (Gmail + Drive + Calendar)...");
+  console.log("🔑 Starting Google OAuth2 authorization (Gmail + Drive + Calendar + Photos)...");
   console.log(`   Credentials: ${CREDENTIALS_PATH}`);
   console.log(`   Scopes:      ${SCOPES.join(", ")}`);
   console.log("");

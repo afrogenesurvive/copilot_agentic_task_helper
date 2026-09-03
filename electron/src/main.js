@@ -123,7 +123,7 @@ const serviceDefs = {
 
 // The same MCP servers VS Code runs (same .env → same credentials). Separate
 // per-seat instances can be spawned from the Accounts tab (accounts:spawnForSeat).
-const MCP_NAMES = ["trello", "gmail", "drive", "calendar", "sheets", "web-search"];
+const MCP_NAMES = ["trello", "gmail", "drive", "calendar", "photos", "sheets", "web-search"];
 for (const n of MCP_NAMES) {
   serviceDefs[`mcp:${n}`] = { label: `MCP ${n}`, cmd: "node", args: [`mcp/${n}/index.js`], cwd: REPO };
 }

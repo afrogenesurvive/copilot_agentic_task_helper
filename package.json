@@ -1,6 +1,6 @@
 {
   "name": "copilot_agentic_task_helper",
-  "version": "0.2.3",
+  "version": "0.2.4",
   "private": true,
   "description": "Remote Collaborator Chat — Trello-powered chat interface for GitHub Copilot agent interactions",
   "scripts": {
@@ -9,6 +9,7 @@
     "mcp:trello": "node mcp/trello/index.js",
     "mcp:drive": "node mcp/drive/index.js",
     "mcp:calendar": "node mcp/calendar/index.js",
+    "mcp:photos": "node mcp/photos/index.js",
     "mcp:sheets": "node mcp/sheets/index.js",
     "mcp:web-search": "node mcp/web-search/index.js",
     "mcp:webhook": "node mcp/webhook-server/index.js",
