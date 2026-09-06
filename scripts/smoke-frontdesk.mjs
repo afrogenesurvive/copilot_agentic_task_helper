@@ -88,7 +88,7 @@ async function main() {
   check("agent pubkey configured", !!agentPub, agentPub);
   check("webhook api token configured", !!apiToken);
   if (!license || !agentPub) {
-    console.log("\nAborting: missing license/agent key. Run keymanage create-agent-key + issue first.");
+    console.log("\nAborting: missing license/agent key. Run \"npm run keys:agent\" + \"npm run keys:issue\" first.");
     process.exit(1);
   }
 

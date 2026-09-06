@@ -700,7 +700,7 @@ export function loadAgentKeys() {
   const pubFile = path.join(AGENT_KEYS_DIR, "agent-public.key");
   const privFile = path.join(AGENT_KEYS_DIR, "agent-private.key");
   if (!fs.existsSync(pubFile) || !fs.existsSync(privFile)) {
-    throw new Error(`Agent keypair not found in ${AGENT_KEYS_DIR}/ — run "node scripts/keymanage.mjs create-agent-key" first.`);
+    throw new Error(`Agent keypair not found in ${AGENT_KEYS_DIR}/ — run "npm run keys:agent" first.`);
   }
   return {
     publicX: fs.readFileSync(pubFile, "utf8").trim(),

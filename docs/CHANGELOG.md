@@ -1,5 +1,13 @@
 # Changelog
 
+## [0.2.4-2] — 2026-09-06
+
+### Internal
+
+- Private operator helper scripts were removed from the public repository. Local tooling — the
+  `keys:*` npm commands and the Electron Scripts tab — now finds them in their private location
+  automatically.
+
 ## [0.2.4-1] — 2026-09-03
 
 ### Added
