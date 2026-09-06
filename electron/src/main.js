@@ -265,33 +265,41 @@ function readScriptUsage(file) {
 
 function scanUserScripts() {
   if (!fs.existsSync(SCRIPT_ROOT)) return [];
-  let entries;
-  try {
-    entries = fs.readdirSync(SCRIPT_ROOT);
-  } catch {
-    return [];
-  }
+  // Scripts may live directly under scripts/user/ or (private/local-only) under
+  // scripts/user/safe/ — list both so references resolve whichever exists.
+  const safeDir = path.join(SCRIPT_ROOT, "safe");
+  const dirs = [SCRIPT_ROOT];
+  if (fs.existsSync(safeDir)) dirs.push(safeDir);
   const scripts = [];
-  for (const name of entries) {
-    if (name.startsWith(".")) continue;
-    const full = path.join(SCRIPT_ROOT, name);
-    let st;
+  for (const dir of dirs) {
+    let entries;
     try {
-      st = fs.statSync(full);
+      entries = fs.readdirSync(dir);
     } catch {
       continue;
     }
-    if (!st.isFile()) continue;
-    const ext = path.extname(name).toLowerCase();
-    let runner = SCRIPT_RUNNERS[ext] || null;
-    if (!runner && st.mode & 0o111) runner = [full]; // executable-bit fallback
-    scripts.push({
-      name,
-      ext: ext || "(none)",
-      runner: runner ? runner[0] : null,
-      size: st.size,
-      usage: readScriptUsage(full),
-    });
+    const prefix = dir === safeDir ? "safe/" : "";
+    for (const name of entries) {
+      if (name.startsWith(".")) continue;
+      const full = path.join(dir, name);
+      let st;
+      try {
+        st = fs.statSync(full);
+      } catch {
+        continue;
+      }
+      if (!st.isFile()) continue;
+      const ext = path.extname(name).toLowerCase();
+      let runner = SCRIPT_RUNNERS[ext] || null;
+      if (!runner && st.mode & 0o111) runner = [full]; // executable-bit fallback
+      scripts.push({
+        name: prefix + name,
+        ext: ext || "(none)",
+        runner: runner ? runner[0] : null,
+        size: st.size,
+        usage: readScriptUsage(full),
+      });
+    }
   }
   return scripts.sort((a, b) => a.name.localeCompare(b.name));
 }
