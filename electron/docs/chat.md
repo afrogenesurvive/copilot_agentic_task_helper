@@ -19,6 +19,31 @@ for quick questions about queues, logs, or anything else the agent can help with
 - **Send a message** — type and press **Enter** to send; **Shift+Enter** inserts a newline.
 - **Refresh** — re-syncs the current session from disk.
 
+## Agentic operator mode (tool access)
+
+Operator chats are agentic — the model can **chain tools** to actually get things done, and tool
+activity appears inline as chips/result bubbles:
+
+- **Read-only tools run automatically** (no prompt): Trello reads (`get_card`, `list_cards`,
+  `get_lists`, `get_card_actions`), Gmail reads (`list_messages`, `get_message`), web
+  (`web_search`, `web_fetch`), plus scoped local reads — `fs_list_dir`, `fs_read_file`
+  (allowlisted to `scripts/user`, `logs`, `tasks`, `docs`, `notes.txt`), `task_read_today`, and
+  `queue_list_priority` / `queue_list_misc`.
+- **State-changing actions ask for approval first**: a card appears with the tool + its
+  parameters and **Approve / Deny / ■ Stop** buttons. This covers Trello writes (create/update/
+  comment/checklists), `gmail_send_message`, and local writes like `task_check_item` and
+  `queue_clear_item`.
+- **Stop** aborts the running loop at any time; pending approvals auto-deny after ~2 minutes.
+- Results from Trello/Gmail/web/queues/files are sanitized before they're fed back to the model.
+
+The loop is bounded (max ~8 tool steps per message), then the model gives its final answer. Full
+history (including tool calls + results) is persisted, so a session can be continued later with
+full context.
+
+**Configuration** — set `OPERATOR_CHAT_TOOLS=false` in config to fall back to plain Q&A with no
+tools. Tools are only ever enabled on the **operator** channel; frontdesk chats remain read-only,
+tool-less Q&A by design.
+
 ## Persistence
 
 Every session is saved to its own file under `logs/electron_chat/`, so chats survive restarts and

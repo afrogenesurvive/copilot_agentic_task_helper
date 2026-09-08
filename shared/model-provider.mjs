@@ -110,17 +110,47 @@ export async function checkOllamaHealth() {
 }
 
 /**
- * Call the configured provider with tool calling.
- * @param {object} opts
- * @param {string} opts.systemMessage — system prompt
- * @param {string} opts.userContext   — user message / task or event context
- * @param {Array} [opts.tools]        — tool defs from shared/tool-manifest.js
- * @param {number} [opts.temperature] — defaults to LLM_TEMPERATURE or 0.1
- * @returns {Promise<{toolCall: {name: string, arguments: object}|null, reply: string|null, usage: object|null}>}
+ * Normalize OpenAI-shaped items into Anthropic Messages content blocks.
+ * Items: user / assistant (optionally with `tool_calls`) / tool (with
+ * `tool_call_id`). System is passed separately (top-level for Anthropic).
  */
-export async function callChat({ systemMessage, userContext, tools = [], temperature }) {
-  keyGuard();
+function toAnthropicMessages(items) {
+  const out = [];
+  for (const m of items) {
+    if (!m || m.role === "system") continue;
+    if (m.role === "tool") {
+      const last = out[out.length - 1];
+      if (!last || last.role !== "assistant") continue; // tool_result must follow its tool_use
+      last.content.push({
+        type: "tool_result",
+        tool_use_id: m.tool_call_id,
+        content: String(m.content ?? ""),
+      });
+      continue;
+    }
+    if (m.role === "assistant") {
+      const content = [];
+      if (m.content) content.push({ type: "text", text: String(m.content) });
+      for (const tc of m.tool_calls || []) {
+        let input = {};
+        try {
+          input = typeof tc.function?.arguments === "string" ? JSON.parse(tc.function.arguments) : tc.function?.arguments || {};
+        } catch {
+          input = {};
+        }
+        content.push({ type: "tool_use", id: tc.id || `call_${out.length}`, name: tc.function?.name, input });
+      }
+      out.push({ role: "assistant", content });
+      continue;
+    }
+    out.push({ role: m.role, content: String(m.content ?? "") });
+  }
+  return out;
+}
 
+/** Shared guard: key presence + Ollama health + default temperature. */
+async function resolveCallParams({ temperature }) {
+  keyGuard();
   // Fail fast if Ollama is down (instead of retrying / timing out)
   if (getProvider() === "ollama") {
     const healthy = await checkOllamaHealth();
@@ -130,21 +160,54 @@ export async function callChat({ systemMessage, userContext, tools = [], tempera
       );
     }
   }
-
-  const temp = temperature ?? parseFloat(process.env.LLM_TEMPERATURE || "0.1");
-
-  if (getProvider() === "anthropic") {
-    return callAnthropic({ systemMessage, userContext, tools, temperature: temp });
-  }
-  return callOpenAiCompatible({ systemMessage, userContext, tools, temperature: temp });
+  return temperature ?? parseFloat(process.env.LLM_TEMPERATURE || "0.1");
 }
 
-/** Anthropic Messages API — different request/response shape from OpenAI. */
-async function callAnthropic({ systemMessage, userContext, tools, temperature }) {
+/**
+ * Call the configured provider with tool calling (single user message).
+ * @param {object} opts
+ * @param {string} opts.systemMessage — system prompt
+ * @param {string} opts.userContext   — user message / task or event context
+ * @param {Array} [opts.tools]        — tool defs from shared/tool-manifest.js
+ * @param {number} [opts.temperature] — defaults to LLM_TEMPERATURE or 0.1
+ * @returns {Promise<{toolCall: {name: string, arguments: object}|null, reply: string|null, usage: object|null}>}
+ */
+export async function callChat({ systemMessage, userContext, tools = [], temperature }) {
+  const temp = await resolveCallParams({ temperature });
+  return requestWithTools({ systemMessage, messages: [{ role: "user", content: userContext }], tools, temperature: temp });
+}
+
+/**
+ * Call the configured provider with an explicit multi-turn history (agentic
+ * loops that feed tool results back). `messages` are OpenAI-shaped items:
+ *   - { role: "user"|"system", content }
+ *   - { role: "assistant", content?, tool_calls?: [{ id, type:"function", function:{ name, arguments } }] }
+ *   - { role: "tool", content, tool_call_id }
+ * @param {object} opts
+ * @param {string} opts.systemMessage — system prompt (sent as system role)
+ * @param {Array}  opts.messages      — ordered conversation (see above)
+ * @param {Array}  [opts.tools]       — tool defs from shared/tool-manifest.js
+ * @param {number} [opts.temperature] — defaults to LLM_TEMPERATURE or 0.1
+ * @returns {Promise<{toolCall: {name: string, arguments: object}|null, reply: string|null, usage: object|null}>}
+ */
+export async function callChatHistory({ systemMessage, messages = [], tools = [], temperature }) {
+  const temp = await resolveCallParams({ temperature });
+  return requestWithTools({ systemMessage, messages, tools, temperature: temp });
+}
+
+async function requestWithTools({ systemMessage, messages, tools, temperature }) {
+  if (getProvider() === "anthropic") {
+    return callAnthropic({ systemMessage, messages, tools, temperature });
+  }
+  return callOpenAiCompatible({ systemMessage, messages, tools, temperature });
+}
+
+/** Anthropic Messages API — multi-turn messages converted to content blocks. */
+async function callAnthropic({ systemMessage, messages, tools, temperature }) {
   const body = {
     model: getModelName(),
     system: systemMessage,
-    messages: [{ role: "user", content: userContext }],
+    messages: toAnthropicMessages(messages),
     tools: tools.map((t) => ({
       name: t.name,
       description: t.description,
@@ -197,13 +260,23 @@ async function callAnthropic({ systemMessage, userContext, tools, temperature })
 }
 
 /** OpenAI-compatible path — shared by deepseek, openai, and ollama. */
-async function callOpenAiCompatible({ systemMessage, userContext, tools, temperature }) {
+async function callOpenAiCompatible({ systemMessage, messages, tools, temperature }) {
   const provider = getProvider();
   const body = {
     model: getModelName(),
     messages: [
-      { role: "system", content: systemMessage },
-      { role: "user", content: userContext },
+      ...(systemMessage ? [{ role: "system", content: systemMessage }] : []),
+      ...(messages || []).map((m) => {
+        if (m.role === "tool") {
+          return { role: "tool", content: String(m.content ?? ""), tool_call_id: m.tool_call_id };
+        }
+        if (m.role === "assistant") {
+          const msg = { role: "assistant", content: String(m.content ?? "") };
+          if (m.tool_calls && m.tool_calls.length) msg.tool_calls = m.tool_calls;
+          return msg;
+        }
+        return { role: m.role, content: String(m.content ?? "") };
+      }),
     ],
     tools: mapTools(tools),
     tool_choice: "auto",

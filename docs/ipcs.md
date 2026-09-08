@@ -44,10 +44,18 @@ preload bridge ([`electron/src/preload.js`](../electron/src/preload.js#L7)) as `
 | `accountsSpawnForSeat(sub)` | [`accounts:spawnForSeat`](../electron/src/main.js#L449) | Spawns dedicated `mcp:gmail:<sub>` / `mcp:trello:<sub>` with per-seat env |
 | `accountsStopForSeat(sub)` | [`accounts:stopForSeat`](../electron/src/main.js#L450) | Stops the per-seat MCP instances |
 | `appVersion()` | [`app:version`](../electron/src/main.js#L550) | `{ok, name, version}` — app name/version (About tab) |
-| `chatList()` | [`chat:list`](../electron/src/main.js#L560) | `{ok, sessions}` — chats under `logs/electron_chat/` |
-| `chatNew(title?)` | [`chat:new`](../electron/src/main.js#L561) | Creates a new chat log file, returns `{ok, id}` |
-| `chatHistory(id)` | [`chat:history`](../electron/src/main.js#L568) | `{ok, entries}` — full transcript of a chat |
-| `chatSend(id, message)` | [`chat:send`](../electron/src/main.js#L569) | Appends the user message, calls the configured LLM, appends the reply, returns `{ok, reply, model}` |
+| `scriptsList()` | [`scripts:list`](../electron/src/main.js#L977) | `{ok, preflight, scripts, runs}` — runnable scripts under the operator scripts folder (safe subfolder included) |
+| `scriptsRun(name, payload)` | [`scripts:run`](../electron/src/main.js#L983) | Runs a script — raw args string, or `{values, extra}` from a `.params.json` form |
+| `scriptsStop(target)` | [`scripts:stop`](../electron/src/main.js#L984) | Stops a running script |
+| `scriptsRunning()` | [`scripts:running`](../electron/src/main.js#L985) | `{ok, runs}` |
+| `scriptsPick(opts)` | [`scripts:pick`](../electron/src/main.js#L987) | Native file/folder dialog for form fields → `{ok, path}` |
+| `chatList()` | [`chat:list`](../electron/src/main.js#L1151) | `{ok, sessions}` — chats under `logs/electron_chat/` |
+| `chatNew(title?, origin?)` | [`chat:new`](../electron/src/main.js#L1152) | Starts a new chat session (origin: operator default, or frontdesk) |
+| `chatHistory(id)` | [`chat:history`](../electron/src/main.js#L1160) | `{ok, entries}` — full transcript (agentic tool turns included) |
+| `chatSend(id, message)` | [`chat:send`](../electron/src/main.js#L1161) | Operator: runs the agentic tool loop (reads auto, mutating actions ask first), streaming steps via `chat:step`. Frontdesk/tool-less: plain LLM Q&A |
+| `chatDecide(token, approved, editedArgs?)` | [`chat:decide`](../electron/src/main.js#L1163) | Approve/Deny a proposed tool call (optional edited JSON args) |
+| `chatStop(id)` | [`chat:stop`](../electron/src/main.js#L1174) | Stop the running agent loop for a session |
+| `onChatStep(cb)` | `chat:step` (push) | Live chat entries + approval requests (see [`preload.js`](../electron/src/preload.js#L1)) |
 
 ## Security notes
 
@@ -56,6 +64,9 @@ preload bridge ([`electron/src/preload.js`](../electron/src/preload.js#L7)) as `
   are never sent to the renderer (only connected/configured booleans + user emails).
 - Per-seat MCP spawns pass credentials as child-process env overrides — never over IPC.
 - Chat LLM calls run in the main process; chat transcripts are written under `logs/electron_chat/`.
+- Tools (read-only run automatically; mutating actions show an Approve/Deny prompt) are only enabled on
+  the **operator** channel — frontdesk chats never get tools. External tool results are sanitized before
+  being fed back to the model.
 
 ## Loopback OAuth ([`electron/src/main/oauth.js`](../electron/src/main/oauth.js#L1))
 

@@ -49,6 +49,8 @@ electron/
 - [`electron/package.json`](../electron/package.json#L1) — scripts (`start`, `dev`, `dist:mac`) + Electron deps
 - [`electron/src/main.js`](../electron/src/main.js#L1) — service manager, IPC, tray, notifications, tools
 - [`electron/src/main/oauth.js`](../electron/src/main/oauth.js#L1) — loopback Google OAuth (bind account → seat)
+- [`electron/src/main/chat-agent.mjs`](../electron/src/main/chat-agent.mjs#L1) — operator chat agentic loop (tools + approvals)
+- [`electron/src/main/local-tools.mjs`](../electron/src/main/local-tools.mjs#L1) — operator local tools (fs/tasks/queues)
 - [`electron/src/preload.js`](../electron/src/preload.js#L7) — `contextBridge` → `window.api`
 - [`electron/src/renderer/`](../electron/src/renderer/index.html#L1) — `index.html`, `style.css`, `app.js` (vanilla, no build step)
 
@@ -81,6 +83,26 @@ DeepSeek (default), OpenAI, Anthropic, and a local Ollama server — via `LLM_PR
 - Saving any provider key **auto-restarts** the agent runner and webhook server (if running) so they
   pick up the new provider too; MCP servers and the tunnel are untouched.
 - The Chat header shows the active `provider · model` chip.
+
+## Operator Chat (agentic)
+
+Operator chats mirror the VS Code agent experience — the model can **chain tools** to actually complete
+requests, with tool activity shown inline as chips and result bubbles:
+
+- **Read-only tools run automatically** — Trello/Gmail reads, web search/fetch, and scoped local reads
+  (files under operator folders, today's daily task file, the pending-queue lists).
+- **State-changing actions ask first** — a card shows the tool and its parameters with **Approve / Deny**
+  (args editable before you approve); **Stop** aborts the loop.
+- Local file access is allowlisted to operator folders; secrets and private folders are never exposed to
+  the model, and external tool results are sanitized before being fed back.
+- Tool access is **operator-channel only** — frontdesk chats stay read-only Q&A by design. Disable tools
+  entirely with `OPERATOR_CHAT_TOOLS=false`. See [`electron/docs/chat.md`](electron/docs/chat.md).
+
+## Scripts tab
+
+- Runs executables under the operator scripts folder (bash/node/python3) — manual only.
+- A `<script>.params.json` sidecar generates a typed form (text / number / checkbox / dropdown / file
+  picker); scripts without one keep the raw args box. See [`electron/docs/scripts.md`](electron/docs/scripts.md).
 
 ## Notes
 

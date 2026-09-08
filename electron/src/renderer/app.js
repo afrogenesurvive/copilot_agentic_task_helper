@@ -915,8 +915,8 @@
     api.openExternal(a.getAttribute("href"));
   });
 
-  // ── Chat (prompt the configured LLM; each chat persists to its own log file) ──
-  const chatState = { sessions: [], current: null, entries: [], sending: false };
+  // ── Chat (agentic for the operator channel; each chat persists to its own log file) ──
+  const chatState = { sessions: [], current: null, entries: [], sending: false, pending: null };
 
   // Show the currently active LLM provider/model in the Chat header.
   async function refreshLlmChip() {
@@ -947,10 +947,18 @@
   }
   async function openChat(id) {
     chatState.current = id;
+    chatState.pending = null;
     const res = await api.chatHistory(id);
     chatState.entries = (res.ok && res.entries) || [];
     renderChat();
     refreshChatSessions();
+  }
+  function fmtArgs(args) {
+    try {
+      return JSON.stringify(args || {}, null, 0);
+    } catch {
+      return String(args);
+    }
   }
   function renderChat() {
     const box = $("chat-box");
@@ -958,16 +966,123 @@
       box.innerHTML = '<div class="empty">Start a new chat or pick a session.</div>';
       return;
     }
-    box.innerHTML =
-      chatState.entries
-        .map((e) => {
-          const role = e.role === "user" ? "user" : e.role === "system" ? "system" : "assistant";
-          const who = role === "user" ? "You" : role === "system" ? "System" : "Agent";
-          const meta = e.model ? ` · <span class="chat-model">${esc(e.model)}</span>` : "";
-          return `<div class="chat-msg ${role}"><div class="chat-role">${who}${meta}</div><div class="chat-body">${esc(e.content || "")}</div></div>`;
-        })
-        .join("") || '<div class="empty">No messages.</div>';
+    const rows = [];
+    for (const e of chatState.entries) {
+      const role = e.role === "user" ? "user" : e.role === "system" ? "system" : e.role === "tool" ? "tool" : "assistant";
+      if (role === "system") {
+        if (e.content === "session created") continue;
+        rows.push(`<div class="chat-msg system"><div class="chat-role">System</div><div class="chat-body">${esc(e.content || "")}</div></div>`);
+        continue;
+      }
+      if (role === "tool") {
+        const prefix = e.error && !e.ok ? "⚠️ " : "";
+        rows.push(`<div class="chat-msg tool"><div class="chat-role">🛠 ${esc(e.name || "tool")}</div><div class="chat-body">${esc(prefix + String(e.content || ""))}</div></div>`);
+        continue;
+      }
+      const who = role === "user" ? "You" : "Agent";
+      const chips = [];
+      if (e.model) chips.push(`<span class="chat-model">${esc(e.model)}</span>`);
+      const toks = usageTotal(e.usage);
+      if (toks) chips.push(`<span class="chat-tok">${toks} tok</span>`);
+      const meta = chips.length ? ` · ${chips.join(" · ")}` : "";
+      // Assistant turns that ran tools show chips (auto read-only or approved actions).
+      if (role === "assistant" && Array.isArray(e.toolCalls) && e.toolCalls.length) {
+        for (const tc of e.toolCalls) {
+          rows.push(`<div class="chat-tool"><span class="chat-tool-name">${esc(tc.name)}</span><code class="chat-tool-args">${esc(fmtArgs(tc.args))}</code></div>`);
+        }
+        continue;
+      }
+      rows.push(`<div class="chat-msg ${role}"><div class="chat-role">${who}${meta}</div><div class="chat-body">${esc(e.content || "")}</div></div>`);
+    }
+    // Live approval card for a pending mutating tool call (args are editable).
+    if (chatState.pending && chatState.sending) {
+      const p = chatState.pending;
+      rows.push(
+        `<div class="chat-approve">` +
+          `<div class="chat-approve-title">⚠️ Action needs your approval</div>` +
+          `<div class="chat-approve-name">${esc(p.name)}</div>` +
+          `<textarea class="chat-approve-edit" spellcheck="false">${esc(fmtArgsJson(p.args))}</textarea>` +
+          `<div class="chat-approve-btns">` +
+          `<button class="primary" data-approve="1">Approve</button>` +
+          `<button data-deny="1">Deny</button>` +
+          `<button data-stopchat="1">■ Stop</button>` +
+          `</div>` +
+          `<div class="chat-approve-err" data-approve-err=""></div>` +
+        `</div>`,
+      );
+    }
+    box.innerHTML = rows.join("") || '<div class="empty">No messages.</div>';
+    const ap = box.querySelector("[data-approve]");
+    if (ap) ap.addEventListener("click", approveChat);
+    const dn = box.querySelector("[data-deny]");
+    if (dn) dn.addEventListener("click", denyChat);
+    const st = box.querySelector("[data-stopchat]");
+    if (st) st.addEventListener("click", stopChat);
     box.scrollTop = box.scrollHeight;
+  }
+  function fmtArgsJson(args) {
+    try {
+      return JSON.stringify(args || {}, null, 2);
+    } catch {
+      return String(args || "");
+    }
+  }
+  function usageTotal(usage) {
+    if (!usage || typeof usage !== "object") return 0;
+    if (usage.total_tokens) return usage.total_tokens;
+    return (usage.prompt_tokens || 0) + (usage.completion_tokens || 0);
+  }
+  function approveChat() {
+    const p = chatState.pending;
+    if (!p) return;
+    const edit = document.querySelector(".chat-approve-edit");
+    const errEl = document.querySelector("[data-approve-err]");
+    let editedArgs;
+    if (edit && edit.value.trim()) {
+      try {
+        editedArgs = JSON.parse(edit.value);
+      } catch {
+        if (errEl) errEl.textContent = "Invalid JSON — fix it or Deny.";
+        return;
+      }
+    }
+    chatState.pending = null;
+    renderChat();
+    api.chatDecide(p.token, true, editedArgs !== undefined && typeof editedArgs === "object" ? editedArgs : undefined).catch(() => {});
+  }
+  function denyChat() {
+    const p = chatState.pending;
+    if (!p) return;
+    chatState.pending = null;
+    renderChat();
+    api.chatDecide(p.token, false).catch(() => {});
+  }
+  async function stopChat() {
+    if (chatState.current) {
+      try {
+        await api.chatStop(chatState.current);
+      } catch {
+        /* ignore */
+      }
+    }
+    chatState.pending = null;
+    renderChat();
+  }
+  // Live entries/approvals streamed from the main-process agentic loop.
+  function appendChatStep(data) {
+    if (!data) return;
+    if (data.sessionId && chatState.current !== data.sessionId) return; // live session only
+    if (data.kind === "approval") {
+      chatState.pending = { token: data.token, name: data.name, args: data.args };
+      renderChat();
+      return;
+    }
+    if (data.entry) {
+      const last = chatState.entries[chatState.entries.length - 1];
+      if (last && last.ts === data.entry.ts) return;
+      chatState.entries.push(data.entry);
+      renderChat();
+    }
   }
   function chatMsg(text, isErr) {
     const el = $("chat-status");
@@ -986,18 +1101,32 @@
     chatState.sending = true;
     $("chat-send").disabled = true;
     input.value = "";
-    chatMsg("…");
+    chatState.pending = null;
+    chatMsg("… agent running — reads run automatically; mutating actions ask for approval");
+    const startLen = chatState.entries.length;
     chatState.entries.push({ role: "user", content: text });
     renderChat();
-    const res = await api.chatSend(chatState.current, text);
+    let res;
+    try {
+      res = await api.chatSend(chatState.current, text);
+    } catch (err) {
+      res = { ok: false, error: err.message || "send failed" };
+    }
     chatState.sending = false;
     $("chat-send").disabled = false;
-    if (res.ok) {
-      chatState.entries.push({ role: "assistant", content: res.reply, model: res.model });
-      chatMsg("sent");
-    } else {
-      chatState.entries.push({ role: "assistant", content: `⚠️ ${res.error || "send failed"}`, error: true });
+    chatState.pending = null;
+    if (!res.ok) {
+      // Main normally broadcasts the ⚠ error entry; add a fallback if it didn't.
+      if (chatState.entries.length === startLen + 1) {
+        chatState.entries.push({ role: "assistant", content: `⚠️ ${res.error || "send failed"}` });
+      }
       chatMsg(res.error || "send failed", true);
+    } else {
+      // Streamed steps already appended the assistant reply; fallback if none arrived.
+      if (chatState.entries.length === startLen + 1 && res.reply) {
+        chatState.entries.push({ role: "assistant", content: res.reply, model: res.model });
+      }
+      chatMsg("sent");
     }
     renderChat();
     refreshChatSessions();
@@ -1014,6 +1143,7 @@
     if (!created.ok) return chatMsg(created.error || "Failed to start chat", true);
     chatState.current = created.id;
     chatState.entries = [];
+    chatState.pending = null;
     renderChat();
     refreshChatSessions();
   });
@@ -1021,9 +1151,11 @@
     if (chatState.current) openChat(chatState.current);
     else refreshChatSessions();
   });
+  // Subscribe to live agent steps (tool chips, results, approval requests).
+  api.onChatStep(appendChatStep);
 
   // ── Scripts (scripts/user runner — manual run only) ──
-  const scriptState = { list: [], runs: [], outputs: {}, preflight: null };
+  const scriptState = { list: [], runs: [], outputs: {}, preflight: null, form: {} };
   const scriptCap = 2000; // max buffered lines per script
 
   function appendScriptOutput(script, text) {
@@ -1057,6 +1189,171 @@
     el.innerHTML = `<div class="script-preflight">${tool("aws", p.aws, p.awsVersion)} ${tool("node", p.node)} ${tool("python3", p.python3)} ${creds}${region}${profile}</div>`;
   }
 
+  // A script gets a generated form when its manifest declares fields.
+  function scriptHasForm(s) {
+    const m = s && s.manifest;
+    return !!m && !!m.params && !!m.positionals && m.params.length + m.positionals.length > 0;
+  }
+
+  // Per-script form state (script name -> field key -> value) so the 15s
+  // auto-refresh re-renders without wiping what the user typed.
+  function sfStore(name) {
+    return (scriptState.form[name] = scriptState.form[name] || {});
+  }
+
+  function scriptFieldHTML(s, p) {
+    const key = p.key;
+    const st = sfStore(s.name);
+    const cur = key in st ? st[key] : p.default !== undefined && p.default !== null ? String(p.default) : "";
+    const ph = p.placeholder ? ` placeholder="${escAttr(p.placeholder)}"` : "";
+    const requiredTag = p.required ? '<span class="cfg-required">required</span>' : "";
+    const help = p.help ? `<span class="script-help">${esc(p.help)}</span>` : "";
+    const label = `<span class="script-label" title="${escAttr(p.arg || p.key)}">${esc(p.label || p.key)} ${requiredTag}</span>`;
+
+    if (p.type === "flag") {
+      const on = key in st ? !!st[key] : !!p.default;
+      let html = `<label class="script-check"><input type="checkbox" data-sf="${escAttr(key)}" ${on ? "checked" : ""}/><span>${esc(p.label || key)}</span>${requiredTag}</label>`;
+      if (p.optionalValue) {
+        const vk = key + ":value";
+        const vcur = vk in st ? st[vk] : "";
+        const browse =
+          p.valueType === "file"
+            ? `<button type="button" class="browse-btn" data-browsefor="${escAttr(p.browseFor || "openFile")}" data-browsetarget="${escAttr(vk)}">Browse…</button>`
+            : "";
+        html += `<div class="script-optval${on ? "" : " off"}"><span class="script-label-small">${esc(p.arg || "")}</span><input data-sf="${escAttr(vk)}" value="${escAttr(vcur)}" placeholder="${escAttr(p.valuePlaceholder || "")}" spellcheck="false"/>${browse}</div>`;
+      }
+      return `<div class="script-field flag">${html}${help}</div>`;
+    }
+    if (p.type === "dropdown") {
+      const opts = Array.isArray(p.options) ? p.options : [];
+      const optsHtml =
+        (!p.required && !opts.some((o) => String(o) === cur) ? `<option value=""></option>` : "") +
+        opts.map((o) => `<option value="${escAttr(o)}" ${String(o) === cur ? "selected" : ""}>${esc(o)}</option>`).join("");
+      return `<div class="script-field">${label}<select data-sf="${escAttr(key)}">${optsHtml}</select>${help}</div>`;
+    }
+    if (p.type === "file") {
+      return `<div class="script-field">${label}<div class="script-file-row"><input data-sf="${escAttr(key)}" value="${escAttr(cur)}" placeholder="${escAttr(p.placeholder || "path")}" spellcheck="false"/><button type="button" class="browse-btn" data-browsefor="${escAttr(p.browseFor || "openFile")}" data-browsetarget="${escAttr(key)}">Browse…</button></div>${help}</div>`;
+    }
+    const t = p.type === "number" ? "number" : "text";
+    return `<div class="script-field">${label}<input type="${t}" data-sf="${escAttr(key)}" value="${escAttr(cur)}"${ph} spellcheck="false"/>${help}</div>`;
+  }
+
+  function scriptCardHTML(s) {
+    const run = scriptState.runs.find((r) => r.script === s.name);
+    const out = (scriptState.outputs[s.name] || []).join("\n");
+    const hasForm = scriptHasForm(s);
+    const argsBox = hasForm
+      ? `<input class="script-args script-extra" data-sfextra="1" placeholder="extra args: --verbose  |  or [&quot;--verbose&quot;]" spellcheck="false"/>`
+      : `<input class="script-args" placeholder="args: --dry-run -i i-0abc123  |  or [&quot;--dry-run&quot;,&quot;-i&quot;,&quot;i-0abc123&quot;]" spellcheck="false"/>`;
+    const controls = `
+        <div class="script-controls">
+          ${argsBox}
+          <button class="run-btn" data-run="${escAttr(s.name)}" ${run ? "disabled" : ""}>▶ Run</button>
+          <button class="stop-btn" data-stop="${escAttr(s.name)}" ${run ? "" : "disabled"}>■ Stop</button>
+        </div>`;
+    const form = hasForm
+      ? `<div class="script-form">${[...(s.manifest.positionals || []), ...(s.manifest.params || [])].map((p) => scriptFieldHTML(s, p)).join("")}</div>`
+      : "";
+    return `
+        <div class="script-card" data-card="${escAttr(s.name)}">
+          <div class="script-head">
+            <strong class="script-name">${esc(s.name)}</strong>
+            <span class="tag">${esc(s.runner || "no runner")}</span>
+            <span class="script-status ${run ? "running" : ""}">${run ? "● running (pid " + run.pid + ")" : "idle"}</span>
+            ${hasForm ? '<span class="tag valid" title="Fields from ' + escAttr(s.name) + '.params.json">form</span>' : ""}
+          </div>
+          ${s.usage ? `<div class="script-usage">${esc(s.usage)}</div>` : ""}
+          ${form}
+          ${controls}
+          <pre class="script-out log-box" id="script-out-${escAttr(s.name)}">${esc(out)}</pre>
+        </div>`;
+  }
+
+  function bindScriptCard(card, s) {
+    const name = s.name;
+    // Persist edits so re-renders (run, 15s refresh) keep what was typed.
+    card.querySelectorAll("[data-sf]").forEach((el) => {
+      const save = () => {
+        const st = sfStore(name);
+        st[el.dataset.sf] = el.type === "checkbox" ? el.checked : el.value;
+      };
+      el.addEventListener("input", save);
+      el.addEventListener("change", save);
+    });
+    // Optional-value flags: hide each value row until its own flag is checked.
+    card.querySelectorAll(".script-field.flag").forEach((field) => {
+      const chk = field.querySelector('.script-check input[type="checkbox"]');
+      const row = field.querySelector(".script-optval");
+      if (chk && row) chk.addEventListener("change", () => row.classList.toggle("off", !chk.checked));
+    });
+
+    const runBtn = card.querySelector("[data-run]");
+    if (runBtn)
+      runBtn.addEventListener("click", async () => {
+        const st = scriptState.list.find((x) => x.name === name);
+        if (!st) return;
+        let payload;
+        if (scriptHasForm(st)) {
+          const values = {};
+          for (const p of [...(st.manifest.positionals || []), ...(st.manifest.params || [])]) {
+            const el = card.querySelector(`[data-sf="${p.key}"]`);
+            if (!el) continue;
+            if (p.type === "flag") {
+              values[p.key] = el.checked;
+              if (p.optionalValue) {
+                const ve = card.querySelector(`[data-sf="${p.key}:value"]`);
+                if (ve) values[p.key + ":value"] = ve.value;
+              }
+            } else {
+              values[p.key] = el.value;
+            }
+          }
+          const missing = [...(st.manifest.positionals || []), ...(st.manifest.params || [])].filter((p) => {
+            if (!p.required) return false;
+            return p.type === "flag" ? !values[p.key] : !String(values[p.key] || "").trim();
+          });
+          if (missing.length) {
+            appendScriptOutput(name, `⚠️ ${missing.map((p) => `"${p.label || p.key}" is required`).join("; ")}\n`);
+            return;
+          }
+          const extraEl = card.querySelector("[data-sfextra]");
+          payload = { values, extra: extraEl ? extraEl.value : "" };
+        } else {
+          const argsEl = card.querySelector(".script-args");
+          payload = argsEl ? argsEl.value : "";
+        }
+        const res = await api.scriptsRun(name, payload);
+        if (!res.ok) {
+          appendScriptOutput(name, `⚠️ ${res.error}\n`);
+          return;
+        }
+        scriptState.runs.push({ script: name, runId: res.runId, pid: res.pid });
+        renderScriptsList();
+      });
+    const stopBtn = card.querySelector("[data-stop]");
+    if (stopBtn)
+      stopBtn.addEventListener("click", async () => {
+        await api.scriptsStop(name);
+        appendScriptOutput(name, "■ stopped by user\n");
+        scriptState.runs = scriptState.runs.filter((r) => r.script !== name);
+        renderScriptsList();
+      });
+    card.querySelectorAll("[data-browsetarget]").forEach((btn) =>
+      btn.addEventListener("click", async () => {
+        const res = await api.scriptsPick({ browseFor: btn.dataset.browsefor || "openFile" });
+        if (!res.ok) {
+          appendScriptOutput(name, `⚠️ ${res.error}\n`);
+          return;
+        }
+        if (res.canceled || !res.path) return;
+        const targetKey = btn.dataset.browsetarget;
+        sfStore(name)[targetKey] = res.path;
+        const target = card.querySelector(`[data-sf="${targetKey}"]`);
+        if (target) target.value = res.path;
+      }),
+    );
+  }
+
   function renderScriptsList() {
     const box = $("scripts-list");
     if (!box) return;
@@ -1064,50 +1361,12 @@
       box.innerHTML = '<div class="empty">No scripts found under scripts/user/.</div>';
       return;
     }
-    box.innerHTML = scriptState.list
-      .map((s) => {
-        const run = scriptState.runs.find((r) => r.script === s.name);
-        const out = (scriptState.outputs[s.name] || []).join("\n");
-        return `
-        <div class="script-card">
-          <div class="script-head">
-            <strong class="script-name">${esc(s.name)}</strong>
-            <span class="tag">${esc(s.runner || "no runner")}</span>
-            <span class="script-status ${run ? "running" : ""}">${run ? "● running (pid " + run.pid + ")" : "idle"}</span>
-          </div>
-          ${s.usage ? `<div class="script-usage">${esc(s.usage)}</div>` : ""}
-          <div class="script-controls">
-            <input class="script-args" placeholder="args: --dry-run -i i-0abc123  |  or [&quot;--dry-run&quot;,&quot;-i&quot;,&quot;i-0abc123&quot;]" spellcheck="false" />
-            <button class="run-btn" data-run="${escAttr(s.name)}" ${run ? "disabled" : ""}>▶ Run</button>
-            <button class="stop-btn" data-stop="${escAttr(s.name)}" ${run ? "" : "disabled"}>■ Stop</button>
-          </div>
-          <pre class="script-out log-box" id="script-out-${escAttr(s.name)}">${esc(out)}</pre>
-        </div>`;
-      })
-      .join("");
-    box.querySelectorAll("[data-run]").forEach((b) =>
-      b.addEventListener("click", async () => {
-        const name = b.dataset.run;
-        const card = b.closest(".script-card");
-        const args = card ? card.querySelector(".script-args").value : "";
-        const res = await api.scriptsRun(name, args);
-        if (!res.ok) {
-          appendScriptOutput(name, `⚠️ ${res.error}\n`);
-          return;
-        }
-        scriptState.runs.push({ script: name, runId: res.runId, pid: res.pid });
-        renderScriptsList();
-      }),
-    );
-    box.querySelectorAll("[data-stop]").forEach((b) =>
-      b.addEventListener("click", async () => {
-        const name = b.dataset.stop;
-        await api.scriptsStop(name);
-        appendScriptOutput(name, "■ stopped by user\n");
-        scriptState.runs = scriptState.runs.filter((r) => r.script !== name);
-        renderScriptsList();
-      }),
-    );
+    box.innerHTML = scriptState.list.map(scriptCardHTML).join("");
+    box.querySelectorAll(".script-card").forEach((card) => {
+      const nm = card.dataset.card;
+      const s = scriptState.list.find((x) => x.name === nm);
+      if (s) bindScriptCard(card, s);
+    });
   }
 
   async function refreshScripts() {

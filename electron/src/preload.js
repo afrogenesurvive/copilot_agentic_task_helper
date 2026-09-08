@@ -47,9 +47,11 @@ contextBridge.exposeInMainWorld("api", {
   openExternal: (url) => ipcRenderer.invoke("open:external", url),
   // Scripts (scripts/user runner — manual run only)
   scriptsList: () => ipcRenderer.invoke("scripts:list"),
-  scriptsRun: (name, args) => ipcRenderer.invoke("scripts:run", name, args),
+  // payload: legacy string (raw args) OR { values, extra } from a form-manifest card
+  scriptsRun: (name, payload) => ipcRenderer.invoke("scripts:run", name, payload),
   scriptsStop: (target) => ipcRenderer.invoke("scripts:stop", target),
   scriptsRunning: () => ipcRenderer.invoke("scripts:running"),
+  scriptsPick: (opts) => ipcRenderer.invoke("scripts:pick", opts), // { browseFor } -> { path }
   onScriptOutput: (cb) => {
     const listener = (_e, data) => cb(data);
     ipcRenderer.on("scripts:output", listener);
@@ -70,6 +72,13 @@ contextBridge.exposeInMainWorld("api", {
   chatNew: (title, origin) => ipcRenderer.invoke("chat:new", title, origin),  // origin: 'operator' | 'frontdesk' (default operator)
   chatHistory: (id) => ipcRenderer.invoke("chat:history", id),
   chatSend: (id, message) => ipcRenderer.invoke("chat:send", id, message),
+  chatDecide: (token, approved, editedArgs) => ipcRenderer.invoke("chat:decide", token, approved, editedArgs), // approve/deny a proposed tool call
+  chatStop: (id) => ipcRenderer.invoke("chat:stop", id), // stop the running agentic loop
+  onChatStep: (cb) => {
+    const listener = (_e, data) => cb(data);
+    ipcRenderer.on("chat:step", listener);
+    return () => ipcRenderer.removeListener("chat:step", listener);
+  },
   // Appearance
   getTheme: () => ipcRenderer.invoke("app:getTheme"),
   setTheme: (theme) => ipcRenderer.invoke("app:setTheme", theme),

@@ -11,7 +11,7 @@
  *
  * No operator license is required. Run:  cd electron && npm start
  */
-const { app, BrowserWindow, Tray, Menu, Notification, ipcMain, nativeImage, nativeTheme } = require("electron");
+const { app, BrowserWindow, dialog, Tray, Menu, Notification, ipcMain, nativeImage, nativeTheme } = require("electron");
 const path = require("path");
 const fs = require("fs");
 const { spawn } = require("child_process");
@@ -263,6 +263,79 @@ function readScriptUsage(file) {
   }
 }
 
+// Load a script's UI manifest from a sidecar JSON placed next to the script
+// (<script>.params.json in the same folder). Drives the Scripts-tab form:
+// typed fields whose values get assembled into argv in buildArgv(). The .json
+// sidecars are never listed as runnable scripts (no runner for .json).
+function readScriptManifest(full) {
+  try {
+    const raw = fs.readFileSync(full + ".params.json", "utf8");
+    const m = JSON.parse(raw);
+    if (!m || typeof m !== "object") return null;
+    return {
+      params: Array.isArray(m.params) ? m.params : [],
+      positionals: Array.isArray(m.positionals) ? m.positionals : [],
+    };
+  } catch {
+    return null;
+  }
+}
+
+function manifestValue(values, key) {
+  const v = values ? values[key] : undefined;
+  return v === undefined || v === null ? "" : String(v).trim();
+}
+
+// Required-field check against form values; returns an error string or null.
+function validateForm(manifest, values) {
+  const errors = [];
+  const check = (p) => {
+    if (!p || typeof p !== "object" || !p.key || !p.required) return;
+    const filled =
+      p.type === "flag"
+        ? values[p.key] === true || values[p.key] === "true" || values[p.key] === "on"
+        : manifestValue(values, p.key) !== "";
+    if (!filled) errors.push(`"${p.label || p.key}" is required`);
+  };
+  for (const p of manifest.positionals || []) check(p);
+  for (const p of manifest.params || []) check(p);
+  return errors.length ? errors.join("; ") : null;
+}
+
+// Convert form values (+ optional raw extra-args text) into an argv array using
+// the manifest. Order: positionals first, then named params (each sorted by the
+// optional numeric `position`), then any raw extra args appended verbatim.
+function buildArgv(manifest, values, extraText) {
+  const val = values && typeof values === "object" ? values : {};
+  const argv = [];
+  const pushParam = (p) => {
+    if (!p || typeof p !== "object" || !p.key) return;
+    if (p.type === "flag") {
+      const on = val[p.key] === true || val[p.key] === "true" || val[p.key] === "on" || val[p.key] === 1;
+      if (!on) return;
+      if (p.arg) argv.push(p.arg);
+      if (p.optionalValue) {
+        const vv = manifestValue(val, p.key + ":value");
+        if (vv) argv.push(vv);
+      }
+      return;
+    }
+    const v = manifestValue(val, p.key);
+    if (v === "") return;
+    if (p.arg) argv.push(p.arg);
+    argv.push(v);
+  };
+  const order = (a, b) => {
+    const pa = typeof a.position === "number" ? a.position : 0;
+    const pb = typeof b.position === "number" ? b.position : 0;
+    return pa - pb;
+  };
+  for (const p of (manifest.positionals || []).slice().sort(order)) pushParam(p);
+  for (const p of (manifest.params || []).slice().sort(order)) pushParam(p);
+  argv.push(...parseArgs(extraText));
+  return argv;
+}
+
 function scanUserScripts() {
   if (!fs.existsSync(SCRIPT_ROOT)) return [];
   // Scripts may live directly under scripts/user/ or (private/local-only) under
@@ -292,12 +365,14 @@ function scanUserScripts() {
       const ext = path.extname(name).toLowerCase();
       let runner = SCRIPT_RUNNERS[ext] || null;
       if (!runner && st.mode & 0o111) runner = [full]; // executable-bit fallback
+      if (!runner) continue; // only runnable files become cards (skips *.params.json sidecars)
       scripts.push({
         name: prefix + name,
         ext: ext || "(none)",
-        runner: runner ? runner[0] : null,
+        runner: runner[0],
         size: st.size,
         usage: readScriptUsage(full),
+        manifest: readScriptManifest(full),
       });
     }
   }
@@ -380,7 +455,12 @@ function parseArgs(text) {
   return out;
 }
 
-function runUserScript(scriptName, argsText) {
+// Run a script. `payload` is either:
+//   - the legacy string of raw args (JSON array or whitespace-separated), or
+//   - an object { values: {key: v}, extra: "raw text" } produced by the Scripts
+//     tab form (manifest-driven). argv is built HERE from the manifest so the
+//     renderer never hand-assembles shell tokens.
+function runUserScript(scriptName, payload) {
   const name = String(scriptName || "");
   const full = path.join(SCRIPT_ROOT, name);
   if (!isInsideScriptsUser(full)) return { ok: false, error: "script must live under scripts/user/" };
@@ -398,7 +478,19 @@ function runUserScript(scriptName, argsText) {
       error: `no runner for .${ext || "unknown"} (supported: .sh .command .mjs .js .py, or an executable file)`,
     };
 
-  const args = parseArgs(argsText);
+  let args;
+  if (payload && typeof payload === "object" && !Array.isArray(payload)) {
+    // Form-driven: { values, extra }. The manifest must exist; required fields
+    // are enforced here (the renderer only gives fast client-side feedback).
+    const manifest = readScriptManifest(full);
+    if (!manifest)
+      return { ok: false, error: `no UI manifest (${path.basename(full)}.params.json) for this script` };
+    const problem = validateForm(manifest, payload.values);
+    if (problem) return { ok: false, error: problem };
+    args = buildArgv(manifest, payload.values, payload.extra);
+  } else {
+    args = parseArgs(payload); // legacy raw text
+  }
   const runId = `run-${Date.now()}-${Math.floor(Math.random() * 1e4)}`;
   const child = spawn(runner[0], [...runner.slice(1), full, ...args], {
     cwd: REPO,
@@ -655,6 +747,24 @@ function chatOriginOf(entries) {
   return sys && CHAT_ORIGINS.has(sys.origin) ? sys.origin : CHAT_ORIGIN_DEFAULT;
 }
 
+// Stream a chat step (new persisted entry or an approval request) to every
+// window — the renderer appends/re-renders from these so the chat is live.
+function chatBroadcast(payload) {
+  for (const w of BrowserWindow.getAllWindows()) {
+    try {
+      w.webContents.send("chat:step", payload);
+    } catch {
+      /* window gone */
+    }
+  }
+}
+
+// One pending operator approval per session; resolved via chat:decide. A
+// session's agent loop can also be aborted (Stop button).
+const pendingApprovals = new Map(); // token -> { resolve, sessionId, timer }
+const chatAborts = new Map(); // sessionId -> AbortController
+const operatorChatToolsEnabled = () => process.env.OPERATOR_CHAT_TOOLS !== "false";
+
 function chatSessionPath(id) {
   const safe = String(id || "").replace(/[^A-Za-z0-9._-]/g, "");
   return safe ? path.join(CHAT_DIR, `${safe}.jsonl`) : null;
@@ -663,8 +773,9 @@ function chatAppend(id, entry) {
   const p = chatSessionPath(id);
   if (!p) return { ok: false, error: "invalid session id" };
   fs.mkdirSync(CHAT_DIR, { recursive: true });
-  fs.appendFileSync(p, JSON.stringify({ ts: new Date().toISOString(), ...entry }) + "\n", "utf8");
-  return { ok: true, path: p };
+  const stamped = { ts: new Date().toISOString(), ...entry };
+  fs.appendFileSync(p, JSON.stringify(stamped) + "\n", "utf8");
+  return { ok: true, path: p, entry: stamped };
 }
 function chatReadHistory(id) {
   const p = chatSessionPath(id);
@@ -727,27 +838,84 @@ async function chatSend(id, message) {
   const text = String(message || "").trim();
   if (!text) return { ok: false, error: "empty message" };
   if (!chatSessionPath(id)) return { ok: false, error: "invalid session id" };
-  // Build context from existing history (before persisting this message).
   const hist = chatReadHistory(id);
   const origin = chatOriginOf(hist.entries); // channel is fixed per session — never from message text
-  const transcript = (hist.entries || [])
-    .slice(-40)
-    .map((e) => `${e.role === "user" ? "User" : e.role === "system" ? "System" : "Assistant"}: ${e.content}`)
-    .join("\n\n");
-  chatAppend(id, { role: "user", content: text, origin });
-  const context = transcript ? `${transcript}\n\nUser: ${text}` : text;
-  const systemMessage = CHAT_SYSTEM_PROMPTS[origin] || CHAT_SYSTEM_PROMPTS[CHAT_ORIGIN_DEFAULT];
+  const userEntry = chatAppend(id, { role: "user", content: text, origin }).entry;
+  const basePrompt = CHAT_SYSTEM_PROMPTS[origin] || CHAT_SYSTEM_PROMPTS[CHAT_ORIGIN_DEFAULT];
+  // The operator channel is the agentic VS Code-chat mirror; frontdesk stays read-only chat.
+  const toolsEnabled = origin === "operator" && operatorChatToolsEnabled();
+  const systemMessage = toolsEnabled
+    ? `${basePrompt}\n\nYou are running in an agentic desktop console with operator tool access. ` +
+      "Read-only tools (list/get/search) run automatically; every state-changing action is shown to the operator " +
+      "for approval before it executes — do not ask permission or apologize for mutating actions, just propose them. " +
+      "Use tools to actually complete requests and then answer concisely with what you did. Never fabricate tool results."
+    : basePrompt;
   try {
-    const mod = await import(pathToFileURL(path.join(REPO, "shared", "model-provider.mjs")).href);
-    const { callChat, getModelName } = mod;
-    const { reply, usage } = await callChat({ systemMessage, userContext: context, tools: [] });
-    const replyText = reply != null ? String(reply) : "(no reply)";
+    const provider = await import(pathToFileURL(path.join(REPO, "shared", "model-provider.mjs")).href);
+    const { callChat, getModelName } = provider;
     const model = typeof getModelName === "function" ? getModelName() : undefined;
-    chatAppend(id, { role: "assistant", content: replyText, model, origin, usage: usage || undefined });
-    return { ok: true, reply: replyText, model, origin };
+
+    if (!toolsEnabled) {
+      // Legacy single-shot Q&A (also covers any frontdesk-channel session).
+      const transcript = (hist.entries || [])
+        .slice(-40)
+        .map((e) => `${e.role === "user" ? "User" : e.role === "system" ? "System" : "Assistant"}: ${e.content}`)
+        .join("\n\n");
+      const context = transcript ? `${transcript}\n\nUser: ${text}` : text;
+      const { reply, usage } = await callChat({ systemMessage, userContext: context, tools: [] });
+      const replyText = reply != null ? String(reply) : "(no reply)";
+      chatBroadcast({ sessionId: id, entry: chatAppend(id, { role: "assistant", content: replyText, model, origin, usage: usage || undefined }).entry });
+      return { ok: true, reply: replyText, model, origin };
+    }
+
+    // Agentic operator path — multi-turn tool loop with approval gating.
+    const agent = await import(pathToFileURL(path.join(__dirname, "main", "chat-agent.mjs")).href);
+    // Operator-only local tools (scoped fs/tasks/queues) ride alongside the
+    // shared executor's cloud tools. Local reads auto-run; local writes ask.
+    const local = await import(pathToFileURL(path.join(__dirname, "main", "local-tools.mjs")).href);
+    const localNames = new Set(local.LOCAL_TOOLS.map((t) => t.name));
+    const executor = await import(pathToFileURL(path.join(REPO, "mcp", "agent-runner", "tool-executor.js")).href);
+    const executeTool = async (name, args) =>
+      localNames.has(name) ? local.runLocalTool(REPO, name, args) : executor.executeToolCall(name, args, { isFrontdesk: false });
+    const controller = new AbortController();
+    chatAborts.set(id, controller);
+    const persistEntry = (entry) => {
+      const r = chatAppend(id, { ...entry, origin });
+      if (r.ok && r.entry) chatBroadcast({ sessionId: id, entry: r.entry });
+      return r.entry || entry;
+    };
+    const requestApproval = (proposal) =>
+      new Promise((resolve) => {
+        const token = `ap-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
+        const timer = setTimeout(() => {
+          pendingApprovals.delete(token);
+          resolve({ approved: false, reason: "approval timed out (no response)" });
+        }, 120000);
+        pendingApprovals.set(token, { resolve, sessionId: id, timer });
+        chatBroadcast({ sessionId: id, kind: "approval", token, name: proposal.name, args: proposal.args });
+      });
+    const res = await agent.runOperatorAgent({
+      systemMessage,
+      entries: [...hist.entries, userEntry], // full prior history + the new user message
+      persistEntry,
+      requestApproval,
+      signal: controller.signal,
+      model,
+      tools: [...agent.OPERATOR_TOOLS, ...local.LOCAL_TOOLS],
+      readTools: new Set([...agent.OPERATOR_READ_TOOLS, ...local.LOCAL_READ_NAMES]),
+      execute: executeTool,
+    });
+    chatAborts.delete(id);
+    return { ok: true, origin, model, reply: res.reply, usage: res.usage };
   } catch (err) {
-    chatAppend(id, { role: "assistant", content: `⚠️ ${err.message}`, origin, error: true });
-    return { ok: false, error: err.message };
+    chatAborts.delete(id);
+    if (err && err.code === "ABORTED") {
+      chatBroadcast({ sessionId: id, entry: chatAppend(id, { role: "assistant", content: "■ stopped by user", origin }).entry });
+      return { ok: true, stopped: true, origin };
+    }
+    const msg = `⚠️ ${err.message || err}`;
+    chatBroadcast({ sessionId: id, entry: chatAppend(id, { role: "assistant", content: msg, origin, error: true }).entry });
+    return { ok: false, error: err.message || err, origin };
   }
 }
 
@@ -812,9 +980,36 @@ function registerIpc() {
     scripts: scanUserScripts(),
     runs: activeRuns(),
   }));
-  ipcMain.handle("scripts:run", (_e, name, args) => runUserScript(name, args));
+  ipcMain.handle("scripts:run", (_e, name, payload) => runUserScript(name, payload));
   ipcMain.handle("scripts:stop", (_e, target) => stopUserScript(target));
   ipcMain.handle("scripts:running", () => ({ ok: true, runs: activeRuns() }));
+  // Native file/folder picker for `file`-type script fields (Browse…).
+  ipcMain.handle("scripts:pick", async (_e, opts) => {
+    try {
+      const o = opts && typeof opts === "object" ? opts : {};
+      const win =
+        BrowserWindow.getFocusedWindow() || (mainWindow && !mainWindow.isDestroyed() ? mainWindow : null);
+      const common = { title: o.title || "Choose", buttonLabel: o.buttonLabel || "Choose" };
+      let result;
+      if (o.browseFor === "saveFile") {
+        result = win
+          ? await dialog.showSaveDialog(win, common)
+          : await dialog.showSaveDialog(common);
+      } else if (o.browseFor === "openDirectory") {
+        result = win
+          ? await dialog.showOpenDialog(win, { ...common, properties: ["openDirectory", "createDirectory"] })
+          : await dialog.showOpenDialog({ ...common, properties: ["openDirectory", "createDirectory"] });
+      } else {
+        result = win
+          ? await dialog.showOpenDialog(win, { ...common, properties: ["openFile"] })
+          : await dialog.showOpenDialog({ ...common, properties: ["openFile"] });
+      }
+      if (result.canceled || !result.filePaths || !result.filePaths.length) return { ok: true, canceled: true };
+      return { ok: true, path: result.filePaths[0] };
+    } catch (err) {
+      return { ok: false, error: err.message };
+    }
+  });
 
   ipcMain.handle("health", async () => {
     try {
@@ -964,6 +1159,36 @@ function registerIpc() {
   });
   ipcMain.handle("chat:history", (_e, id) => chatReadHistory(id));
   ipcMain.handle("chat:send", (_e, id, message) => chatSend(id, message));
+  // Agentic-chat approvals: renderer Approve/Deny/Edit on a proposed tool call.
+  ipcMain.handle("chat:decide", (_e, token, approved, editedArgs) => {
+    const p = pendingApprovals.get(token);
+    if (!p) return { ok: false, error: "no such pending approval" };
+    clearTimeout(p.timer);
+    pendingApprovals.delete(token);
+    const answer = { approved: !!approved };
+    if (approved && editedArgs && typeof editedArgs === "object") answer.editedArgs = editedArgs;
+    p.resolve(answer);
+    return { ok: true };
+  });
+  // Stop the running agentic loop for a session (and any pending approval in it).
+  ipcMain.handle("chat:stop", (_e, id) => {
+    const ctrl = chatAborts.get(id);
+    if (ctrl) {
+      try {
+        ctrl.abort();
+      } catch {
+        /* ignore */
+      }
+    }
+    for (const [token, p] of pendingApprovals) {
+      if (p.sessionId === id) {
+        clearTimeout(p.timer);
+        pendingApprovals.delete(token);
+        p.resolve({ approved: false, reason: "stopped by user" });
+      }
+    }
+    return { ok: true };
+  });
 
   ipcMain.handle("open:external", (_e, url) => {
     const { shell } = require("electron");

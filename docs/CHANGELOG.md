@@ -1,5 +1,20 @@
 # Changelog
 
+## [0.2.4-3] — 2026-09-07
+
+### Added
+
+- **Scripts tab forms** — put a `<script>.params.json` next to a script and its card becomes a typed
+  form (text, number, checkbox, dropdown, file picker with a Browse button). Scripts without one keep
+  the plain raw-args box.
+- **Agentic operator Chat** — operator chats can now chain tools to actually get things done. Read-only
+  calls (Trello/Gmail reads, web search, plus local reads like today's task list and the pending
+  queues) run automatically; anything that changes state shows an **Approve / Deny** card (with
+  editable parameters) before it runs, and you can **Stop** at any time. Results from outside sources
+  are sanitized before the model sees them.
+- Chat stays read-only Q&A on the **frontdesk** channel and stays plain Q&A entirely if you set
+  `OPERATOR_CHAT_TOOLS=false`.
+
 ## [0.2.4-2] — 2026-09-06
 
 ### Internal
