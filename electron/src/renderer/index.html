@@ -39,6 +39,12 @@
         <main>
       <!-- Dashboard -->
       <section id="tab-dashboard" class="tab active">
+        <p style="color:var(--muted);font-size:0.72rem;margin:0 0 0.6rem;line-height:1.4">
+          <b>Operator-only.</b> This app is the operator's single console — it shows every local
+          service, seat (🔑 Licenses), and per-seat account binding (🔐 Accounts &amp; Keys) at
+          once. Seat licenses &amp; bindings gate the <b>public chat webapp</b>, not this app;
+          collaborators (seats) never see this dashboard — each only uses their own webapp chat.
+        </p>
         <div id="svc-tabs" class="svc-tabs"></div>
         <div id="svc-detail" class="panel svc-detail">
           <div class="empty">Loading services…</div>
@@ -131,6 +137,10 @@
         <div class="panel">
           <h3>👥 Frontdesk sessions</h3>
           <div id="sessions-box">loading…</div>
+          <p style="color:var(--muted);font-size:0.72rem;margin-top:0.6rem;line-height:1.4">
+            Webapp visitor sessions, seen from the operator's side. The visitors (seats) never
+            see this view — they only use their own webapp chat.
+          </p>
         </div>
       </section>
 
@@ -142,6 +152,10 @@
             <button id="licenses-refresh">Refresh</button>
           </div>
           <div id="licenses-box">loading…</div>
+          <p style="color:var(--muted);font-size:0.72rem;margin-top:0.6rem;line-height:1.4">
+            <b>Operator-only</b> — lists every seat license at once. Seats gate <b>webapp login</b>
+            for collaborators, not this app; collaborators never see this table.
+          </p>
         </div>
       </section>
 
@@ -157,6 +171,11 @@
             Connect a Google account or set a Trello key/token per seat. The agent uses these when acting
             on behalf of that seat. <b>▶ Spawn MCP</b> launches dedicated MCP instances bound to the seat's
             accounts (instead of the shared VS Code ones).
+          </p>
+          <p style="color:var(--muted);font-size:0.72rem;margin-top:0.6rem;line-height:1.4">
+            <b>Operator-only:</b> this view shows <em>all</em> seats at once. Seats &amp; bindings gate the
+            <b>public chat webapp</b> (login + which accounts the agent uses for that seat); collaborators
+            never see this app — each only uses their own webapp chat.
           </p>
         </div>
       </section>
@@ -288,6 +307,7 @@
           <div id="about-info">
             <p class="hint" id="about-version"></p>
             <p class="hint">Frontdesk Operator — Electron control plane for the frontdesk v2 stack. Monitor queues, logs, sessions, licenses and MCP services; run the configured LLM from the Chat tab.</p>
+            <p class="hint"><b>Operator-only:</b> seat licenses &amp; per-seat account bindings gate the <b>public chat webapp</b> (collaborator login + the accounts the agent acts with). This app shows every seat at once; collaborators never see it — each only uses their own webapp chat.</p>
           </div>
           <div id="about-guide" class="hidden">
             <div class="guide-layout">

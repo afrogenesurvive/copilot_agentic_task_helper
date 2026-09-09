@@ -9,12 +9,12 @@ preload bridge ([`electron/src/preload.js`](../electron/src/preload.js#L7)) as `
 
 | `window.api` method | IPC channel | Returns |
 | ------------------- | ----------- | ------- |
-| `svcList()` | [`svc:list`](../electron/src/main.js#L1034) | Array of `{name,label,configured,running,pid,health}` for every service (webhook, runner, tunnel, `mcp:*`) |
-| `svcStart(name)` | [`svc:start`](../electron/src/main.js#L1035) | `{ok, pid?, already?}` |
-| `svcStop(name)` | [`svc:stop`](../electron/src/main.js#L1036) | `{ok}` |
-| `svcRestart(name)` | [`svc:restart`](../electron/src/main.js#L1037) | `{ok}` — stop then start a service (waits ~700 ms for the old process to free its port) |
-| `svcLog(name, lines?)` | [`svc:log`](../electron/src/main.js#L1038) | Tail of a service's stdout/stderr ring buffer |
-| `svcReregisterWebhooks()` | [`webhook:reregister`](../electron/src/main.js#L1039) | Re-runs the Trello/Gmail/Calendar/Drive registration scripts, then restarts the webhook service: `{ok, steps:[{label, ok, output}], webhookRestarted}` |
+| `svcList()` | [`svc:list`](../electron/src/main.js#L1045) | Array of `{name,label,configured,running,managed,external,pid,health}` for every service (webhook, runner, tunnel, `mcp:*`). `external` = up but started outside the dashboard (Start/Restart/Stop disabled) |
+| `svcStart(name)` | [`svc:start`](../electron/src/main.js#L1046) | `{ok, pid?, already?}` |
+| `svcStop(name)` | [`svc:stop`](../electron/src/main.js#L1047) | `{ok}` |
+| `svcRestart(name)` | [`svc:restart`](../electron/src/main.js#L1048) | `{ok}` — stop then start a service (waits ~700 ms for the old process to free its port) |
+| `svcLog(name, lines?)` | [`svc:log`](../electron/src/main.js#L1049) | Tail of a service's stdout/stderr ring buffer |
+| `svcReregisterWebhooks()` | [`webhook:reregister`](../electron/src/main.js#L1050) | Re-runs the Trello/Gmail/Calendar/Drive registration scripts; restarts the webhook service only when the dashboard manages it (an external server is left running — registration alone applies): `{ok, steps:[{label, ok, output}], webhookRestarted}` |
 | `health()` | [`health`](../electron/src/main.js#L1079) | `{ok, json}` from `:3199/health` |
 | `queue()` | [`queue:get`](../electron/src/main.js#L1087) | `/api/queue-status` result |
 | `eventsClear(id, queue)` | [`events:clear`](../electron/src/main.js#L1094) | PATCH `/events/:id?queue=` |

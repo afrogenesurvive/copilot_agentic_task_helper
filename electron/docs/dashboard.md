@@ -10,13 +10,19 @@ local services this app manages, with live output for each one.
 - **Service tabs** — one button per service. They appear in the following states:
 
   - `● running` — the process is up (title shows the pid).
+  - `● running (external)` — the process is up but was started **outside** the dashboard (for
+    example the webhook server run as a background daemon). It can't be controlled from here, so
+    its Start / Restart / Stop buttons are disabled.
   - `○ stopped` — the service is configured but not running.
   - `not configured` — no runnable command is set (for example the Cloudflare tunnel when no
     tunnel token/ID is configured).
 
 - **Detail panel** for the selected service:
-  - Status line (`● running (pid N)` / `○ stopped` / `not configured`).
-  - **▶ Start**, **⏹ Stop**, and **Refresh** buttons.
+  - Status line (`● running (pid N)` / `● running (external — started outside the dashboard)` /
+    `○ stopped` / `not configured`).
+  - **▶ Start**, **↻ Restart**, **⏹ Stop**, and **Refresh** buttons. For external services the
+    Start / Restart / Stop buttons are disabled — the dashboard can only control processes it
+    started itself.
   - A live health JSON summary when the service exposes one (e.g. the webhook server).
   - A read-only tail of the service's most recent output (last ~500 lines), auto-scrolled.
 
@@ -43,6 +49,9 @@ local services this app manages, with live output for each one.
 
 ## Notes
 
+- **Operator-only:** this dashboard is the operator's single view of every local service, seat,
+  license, and account binding. Seats/collaborators of the public chat webapp never see it —
+  they only use their own webapp chat.
 - Starting/stopping here only affects **local** processes. The Dashboard does not change what is
   deployed on Netlify — that hosting is configured separately (see `netlify-setup.md`).
 - A service that exits shows `[process exited code=N]` at the end of its output and reverts to

@@ -23,5 +23,7 @@ Session entries are read from the dated JSONL files under
 
 - This is a read-only, tail-style view of the most recent records — older entries are kept in
   the files but not all are shown here.
-- Frontdesk session data (and the accounts that map to them) is separate from the operator
-  dashboard itself; for per-seat Google/Trello bindings see the 🔐 Accounts & Keys tab.
+- These are **webapp visitor sessions, seen by the operator**. The visitors (seats) never see
+  this view — they only use their own webapp chat.
+- Session data (and the accounts that map to them) is separate from the operator dashboard
+  itself; for per-seat Google/Trello bindings see the 🔐 Accounts & Keys tab.

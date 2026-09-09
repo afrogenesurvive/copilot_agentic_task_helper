@@ -196,23 +196,31 @@ function stopService(name) {
 async function serviceHealth(name) {
   const def = serviceDefs[name] || {};
   const entry = running[name];
-  const isUp = !!entry && entry.proc.exitCode === null && entry.proc.signalCode === null && !entry.proc.killed;
-  let port = null;
-  if (isUp && def.port) {
+  // "managed" = Electron spawned this process and it's still alive.
+  const managed = !!entry && entry.proc.exitCode === null && entry.proc.signalCode === null && !entry.proc.killed;
+  // Live /health probe on the service port. Also detects services that are up
+  // but were started OUTSIDE the dashboard (e.g. webhook launched via nohup) —
+  // they report running:true with managed:false so Start/Restart/Stop stay disabled.
+  let health = null;
+  if (def.port) {
     try {
       const res = await fetch(`http://localhost:${def.port}/health`, { signal: AbortSignal.timeout(2000) });
-      if (res.ok) port = await res.json();
+      if (res.ok) health = await res.json();
     } catch {
-      port = null;
+      health = null;
     }
   }
+  const isUp = managed || (def.port != null && health !== null);
+  const external = isUp && !managed;
   return {
     name,
     label: (entry && entry.label) || def.label || name,
     configured: (def.args && def.args.length > 0) || !!entry,
     running: isUp,
-    pid: entry ? entry.proc.pid : null,
-    health: port,
+    managed,
+    external,
+    pid: managed ? entry.proc.pid : null,
+    health,
   };
 }
 
@@ -1008,9 +1016,12 @@ async function reregisterWebhooks() {
     });
   }
   // Restart the webhook service so it loads the new registrations + code.
+  // If the webhook is up but was started outside the dashboard (nohup), it
+  // can't be managed/restarted here — the re-registration alone still applies.
   let webhookRestarted = false;
-  if (running.webhook) webhookRestarted = await restartService("webhook");
-  else startService("webhook");
+  const whStatus = await serviceHealth("webhook");
+  if (whStatus.running && whStatus.managed) webhookRestarted = await restartService("webhook");
+  else if (!whStatus.running) startService("webhook");
   return { ok: true, steps, webhookRestarted };
 }
 

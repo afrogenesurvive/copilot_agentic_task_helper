@@ -27,8 +27,15 @@ The frontdesk agent uses the seat's accounts when it acts on that seat's behalf 
 posting to boards, etc.). Binding a Google account or setting a Trello key per seat lets each
 seat act with its own identity rather than the shared `.env` credentials.
 
+This tab (like every view in this app) is **operator-only** — it shows *all* seats at once.
+Seats/accounts gate the **public chat webapp**: a license lets a collaborator log in, and these
+bindings scope the agent's tools when acting for that seat. Collaborators never see this view;
+they only use their own webapp chat.
+
 ## Notes
 
+- **Operator-only:** this app shows every seat's bindings at once. Collaborators (seats) never
+  see it — these bindings only affect the agent acting on their behalf in the public webapp.
 - **Connect Google** opens a browser flow and records the resulting token for that seat.
 - Spawned per-seat MCP instances appear on the 📊 Dashboard so you can watch their output.
 - Clearing a binding does not revoke the underlying Google/Trello access globally — it only

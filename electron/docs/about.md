@@ -35,3 +35,6 @@ expand) and it shows up in this list.
 - The version shown comes from the app package (`electron/package.json`).
 - This app is the **operator control plane**; the public-facing chat webapp and its hosting are
   described in 🌐 Netlify / Frontdesk Setup.
+- **Who sees what:** this app is operator-only and shows every seat, license, and account
+  binding at once. Seat licenses and bindings gate the **public chat webapp** — collaborators
+  (seats) never see this dashboard, only their own webapp chat.

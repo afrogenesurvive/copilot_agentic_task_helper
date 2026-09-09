@@ -32,4 +32,7 @@ the results show up here after a refresh.
 ## Notes
 
 - This tab is **read-only** — you cannot create or revoke licenses from here.
-- Licenses gate webapp login; they are not required to run this operator app itself.
+- Licenses gate **webapp login** for collaborators; they are not required to run this operator
+  app itself.
+- **Operator-only:** this table lists *every* seat license at once. A seat (collaborator) never
+  sees this — they only log into their own chat webapp with their license key.

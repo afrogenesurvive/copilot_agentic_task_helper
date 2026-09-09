@@ -64,7 +64,7 @@
           s.running ? "running" : s.configured ? "stopped" : "error",
           s.name === dash.selected ? "active" : "",
         ].join(" ");
-        return `<button class="${cls}" data-svc="${esc(s.name)}" title="${s.running ? "running" : s.configured ? "stopped" : "not configured"}">${esc(s.label)}</button>`;
+        return `<button class="${cls}" data-svc="${esc(s.name)}" title="${s.running ? (s.external ? "running (external — started outside the dashboard)" : "running") : s.configured ? "stopped" : "not configured"}">${esc(s.label)}</button>`;
       })
       .join("");
     strip.querySelectorAll("button").forEach((b) =>
@@ -86,8 +86,13 @@
     }
     const s = (svcs || (await api.svcList())).find((x) => x.name === name);
     if (!s) return;
+    const canControl = s.running && !s.external;
     const statusClass = s.running ? "running" : s.configured ? "stopped" : "error";
-    const statusText = s.running ? `● running${s.pid ? ` (pid ${s.pid})` : ""}` : s.configured ? "○ stopped" : "not configured";
+    const statusText = s.running
+      ? `● running${s.external ? " (external — started outside the dashboard)" : s.pid ? ` (pid ${s.pid})` : ""}`
+      : s.configured
+        ? "○ stopped"
+        : "not configured";
     detail.innerHTML = `
       <div class="svc-head">
         <div>
@@ -95,14 +100,14 @@
           <div class="svc-status ${statusClass}">${statusText}</div>
         </div>
         <div class="svc-actions">
-          <button data-start="${esc(s.name)}" ${s.running ? "disabled" : ""}>▶ Start</button>
-          <button data-restart="${esc(s.name)}" ${!s.running ? "disabled" : ""} title="Restart this service (stop + start)">↻ Restart</button>
-          <button data-stop="${esc(s.name)}" ${!s.running ? "disabled" : ""}>⏹ Stop</button>
+          <button data-start="${esc(s.name)}" ${s.running ? "disabled" : ""} title="${s.external ? "Already running outside the dashboard" : "Start this service"}">▶ Start</button>
+          <button data-restart="${esc(s.name)}" ${!canControl ? "disabled" : ""} title="Restart this service (stop + start)">↻ Restart</button>
+          <button data-stop="${esc(s.name)}" ${!canControl ? "disabled" : ""}>⏹ Stop</button>
           <button id="svc-refresh">Refresh</button>
         </div>
       </div>
       ${s.name === "webhook" ? `<div class="svc-actions svc-reregister">
-        <button id="svc-reregister" title="Restart the webhook server and re-run the Trello/Gmail/Calendar/Drive registration scripts">🔁 Restart &amp; re-register webhooks</button>
+        <button id="svc-reregister" title="${s.external ? "Re-run Trello/Gmail/Calendar/Drive registration scripts — the running server is not managed by the dashboard, so it won't be restarted" : "Restart the webhook server and re-run the Trello/Gmail/Calendar/Drive registration scripts"}">🔁 ${s.external ? "Re-register webhooks" : "Restart &amp; re-register webhooks"}</button>
         <span class="svc-rereg-status" id="svc-rereg-status"></span>
       </div>` : ""}
       <div class="svc-health">${s.health ? "health: " + esc(JSON.stringify(s.health)) : s.running ? "—" : "not running"}</div>
@@ -129,7 +134,10 @@
         btn.disabled = true;
         btn.textContent = "⏳ Re-registering…";
       }
-      if (st) st.textContent = "Running Trello → Gmail → Calendar → Drive setup, then restarting the webhook server (≈20–60s)…";
+      if (st)
+        st.textContent = s.external
+          ? "Re-running Trello → Gmail → Calendar → Drive registration scripts (server already running outside the dashboard — not restarted)…"
+          : "Running Trello → Gmail → Calendar → Drive setup, then restarting the webhook server (≈20–60s)…";
       const res = await api.svcReregisterWebhooks();
       if (st) {
         const parts = (res.steps || []).map((x) => {
@@ -141,7 +149,7 @@
       }
       if (btn) {
         btn.disabled = false;
-        btn.textContent = "🔁 Restart & re-register webhooks";
+        btn.textContent = s.external ? "🔁 Re-register webhooks" : "🔁 Restart & re-register webhooks";
       }
       // No immediate re-render: the dashboard's 15s poll updates the running
       // state, keeping this ✅/❌ summary visible until then.

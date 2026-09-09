@@ -1,5 +1,24 @@
 # Changelog
 
+## [0.2.5-2] — 2026-09-09
+
+### Electron dashboard
+
+- Services started outside the dashboard (for example the webhook server run as a background
+  daemon) are now correctly shown as **running (external)** instead of appearing stopped.
+- External services can't be controlled from the dashboard, so their **Start / Restart / Stop**
+  buttons are disabled; the webhook card switches to a **Re-register webhooks** action that updates
+  the registration scripts without trying to restart a server the dashboard doesn't own.
+
+### Seats & accounts vs the operator dashboard (clarity)
+
+- Made explicit that the dashboard is **operator-only**: it lists every seat license and per-seat
+  Google/Trello account binding at once. Seat licenses and bindings belong to the **public chat
+  webapp** (collaborator login + which accounts the agent uses for that seat).
+- Collaborators (seats) never see this app — each only uses their own webapp chat. This is now
+  stated on the 📊 Dashboard, 🔑 Licenses, 👥 Sessions, 🔐 Accounts & Keys and ℹ️ About views and in
+  the matching in-app guide pages.
+
 ## [0.2.5-1] — 2026-09-08
 
 ### Webhook server reliability
