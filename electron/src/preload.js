@@ -47,6 +47,7 @@ contextBridge.exposeInMainWorld("api", {
   toolsManifest: () => ipcRenderer.invoke("tools:manifest"),
   trello: (action, params) => ipcRenderer.invoke("tools:trello", action, params),
   gmail: (action, params) => ipcRenderer.invoke("tools:gmail", action, params),
+  whatsapp: (action, params) => ipcRenderer.invoke("tools:whatsapp", action, params),
   openExternal: (url) => ipcRenderer.invoke("open:external", url),
   // Scripts (scripts/user runner — manual run only)
   scriptsList: () => ipcRenderer.invoke("scripts:list"),

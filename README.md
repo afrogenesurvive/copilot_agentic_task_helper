@@ -18,6 +18,7 @@ A system that connects GitHub Copilot with external services (Trello, Gmail, Goo
 - `mcp/drive/` — MCP server for Google Drive API access
 - `mcp/calendar/` — MCP server for Google Calendar API access
 - `mcp/netlify/` — MCP server for Netlify API access (sites, env vars, deploys)
+- `mcp/whatsapp/` — MCP server for Meta WhatsApp Cloud API access (text/template sends, phone numbers, inbound inbox)
 - `mcp/webhook-server/` — Express server that receives and relays webhook notifications
 - `webapp/` — Static web app for the collaborator chat interface
 

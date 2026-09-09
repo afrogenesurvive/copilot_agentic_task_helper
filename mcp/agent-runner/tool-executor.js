@@ -13,6 +13,11 @@
 import config from "../../shared/config-loader.cjs";
 config.loadEnvInto(process.env);
 import { getSeatAccounts } from "../../scripts/frontdesk-accounts.mjs";
+import fs from "fs";
+import path from "path";
+import { fileURLToPath } from "url";
+
+const __dirname = path.dirname(fileURLToPath(import.meta.url));
 
 // ── Frontdesk Allowlist — only these tools can be called for frontdesk events ──
 const FRONTDESK_ALLOWLIST = new Set([
@@ -270,6 +275,196 @@ async function webFetchPage(url) {
   };
 }
 
+// ── WhatsApp Cloud API helpers (Meta Cloud API, official) ──
+
+const WHATSAPP_TOKEN = process.env.WHATSAPP_ACCESS_TOKEN || "";
+const WHATSAPP_WABA_ID = process.env.WHATSAPP_WABA_ID || "";
+const WHATSAPP_ACTIVE_PHONE = process.env.WHATSAPP_PHONE_NUMBER_ID || "";
+const WHATSAPP_API_VERSION = process.env.WHATSAPP_API_VERSION || "v25.0";
+const WHATSAPP_INBOX_DIR = path.resolve(__dirname, "..", "..", "safe", "whatsapp", "inbox");
+
+async function waGraph(pathname, { method = "GET", body } = {}) {
+  if (!WHATSAPP_TOKEN) throw new Error("WHATSAPP_ACCESS_TOKEN is not set");
+  const url = `https://graph.facebook.com/${WHATSAPP_API_VERSION}${pathname}`;
+  const res = await fetch(url, {
+    method,
+    headers: { Authorization: `Bearer ${WHATSAPP_TOKEN}`, "Content-Type": "application/json" },
+    body: body !== undefined ? JSON.stringify(body) : undefined,
+  });
+  const text = await res.text();
+  let json = null;
+  try {
+    json = text ? JSON.parse(text) : null;
+  } catch {
+    json = { raw: text };
+  }
+  if (!res.ok) {
+    const e = (json && json.error) || {};
+    throw new Error(`WhatsApp API ${res.status}${e.code ? ` (${e.code})` : ""}: ${e.message || res.statusText}`);
+  }
+  return json;
+}
+
+function waPhoneId(args) {
+  return (args && args.phoneNumberId) || WHATSAPP_ACTIVE_PHONE;
+}
+
+function waReadInbox(limit) {
+  const want = Math.max(Number(limit) || 20, 1);
+  let files = [];
+  try {
+    files = fs.existsSync(WHATSAPP_INBOX_DIR)
+      ? fs.readdirSync(WHATSAPP_INBOX_DIR).filter((f) => f.endsWith(".jsonl")).sort().reverse()
+      : [];
+  } catch {
+    return [];
+  }
+  const records = [];
+  for (const file of files) {
+    if (records.length >= want * 10) break;
+    let lines = [];
+    try {
+      lines = fs.readFileSync(path.join(WHATSAPP_INBOX_DIR, file), "utf8").split("\n").filter(Boolean);
+    } catch {
+      continue;
+    }
+    for (const line of lines.reverse()) {
+      try {
+        records.push(JSON.parse(line));
+      } catch {
+        /* skip malformed line */
+      }
+      if (records.length >= want * 10) break;
+    }
+  }
+  return records;
+}
+
+async function whatsappStatus(args) {
+  const phoneId = waPhoneId(args);
+  const result = {
+    configured: {
+      accessToken: Boolean(WHATSAPP_TOKEN),
+      wabaId: WHATSAPP_WABA_ID || null,
+      activePhoneId: WHATSAPP_ACTIVE_PHONE || null,
+      apiVersion: WHATSAPP_API_VERSION,
+    },
+    connected: false,
+  };
+  if (WHATSAPP_TOKEN && phoneId) {
+    const data = await waGraph(`/${phoneId}?fields=id,display_phone_number,verified_name,quality_rating,code_verification_status,status`);
+    result.connected = Boolean(data && data.status === "CONNECTED");
+    result.activeNumber = {
+      phoneNumberId: phoneId,
+      displayPhoneNumber: data && data.display_phone_number,
+      verifiedName: data && data.verified_name,
+      qualityRating: data && data.quality_rating,
+      status: data && data.status,
+    };
+  }
+  return { ok: true, tool: "whatsapp_status", result };
+}
+
+async function whatsappListNumbers(args) {
+  const wabaId = (args && args.wabaId) || WHATSAPP_WABA_ID;
+  if (!wabaId) throw new Error("No WhatsApp Business Account — pass wabaId or set WHATSAPP_WABA_ID");
+  const data = await waGraph(`/${wabaId}/phone_numbers`);
+  const trimmed = ((data && data.data) || []).map((n) => ({
+    phoneNumberId: n.id,
+    displayPhoneNumber: n.display_phone_number,
+    verifiedName: n.verified_name,
+    qualityRating: n.quality_rating,
+  }));
+  return { ok: true, tool: "whatsapp_list_numbers", result: trimmed };
+}
+
+async function whatsappListMessages(args) {
+  const contact = (args && args.contact) || null;
+  const limit = Math.min(Math.max(Number((args && args.limit) || 20), 1), 100);
+  const records = waReadInbox(limit * 10);
+  const filtered = contact ? records.filter((r) => r.waId === contact || r.from === contact || r.to === contact) : records;
+  const messages = filtered.slice(0, limit).map((r) => ({
+    direction: r.direction || "in",
+    waId: r.waId || null,
+    from: r.from || null,
+    to: r.to || null,
+    ts: r.ts || null,
+    type: r.type || "text",
+    text: r.text || r.body || null,
+    messageId: r.messageId || null,
+  }));
+  return { ok: true, tool: "whatsapp_list_messages", result: { total: filtered.length, count: messages.length, messages } };
+}
+
+async function whatsappSendText(args) {
+  const to = (args && args.to) || "";
+  const body = (args && args.body) || "";
+  if (!to) throw new Error("Missing required parameter: to (E.164, e.g. +15551234567)");
+  if (!body) throw new Error("Missing required parameter: body");
+  const phoneId = waPhoneId(args);
+  if (!phoneId) throw new Error("No phone number target — pass phoneNumberId or set WHATSAPP_PHONE_NUMBER_ID");
+  const data = await waGraph(`/${phoneId}/messages`, {
+    method: "POST",
+    body: {
+      messaging_product: "whatsapp",
+      recipient_type: "individual",
+      to,
+      type: "text",
+      text: { preview_url: Boolean(args.previewUrl), body },
+    },
+  });
+  return {
+    ok: true,
+    tool: "whatsapp_send_text",
+    result: {
+      to,
+      messageId: data && data.messages && data.messages[0] && data.messages[0].id,
+      phoneNumberId: phoneId,
+    },
+  };
+}
+
+async function whatsappSendTemplate(args) {
+  const to = (args && args.to) || "";
+  const templateName = (args && args.templateName) || "";
+  const language = (args && args.language) || "en_US";
+  if (!to) throw new Error("Missing required parameter: to (E.164, e.g. +15551234567)");
+  if (!templateName) throw new Error("Missing required parameter: templateName");
+  const phoneId = waPhoneId(args);
+  if (!phoneId) throw new Error("No phone number target — pass phoneNumberId or set WHATSAPP_PHONE_NUMBER_ID");
+  const params = (args && args.params) || [];
+  const template = { name: templateName, language: { code: language } };
+  if (Array.isArray(params) && params.length > 0) {
+    template.components = [{ type: "body", parameters: params.map((p) => ({ type: "text", text: String(p) })) }];
+  }
+  const data = await waGraph(`/${phoneId}/messages`, {
+    method: "POST",
+    body: { messaging_product: "whatsapp", recipient_type: "individual", to, type: "template", template },
+  });
+  return {
+    ok: true,
+    tool: "whatsapp_send_template",
+    result: {
+      to,
+      templateName,
+      messageId: data && data.messages && data.messages[0] && data.messages[0].id,
+      phoneNumberId: phoneId,
+    },
+  };
+}
+
+async function whatsappMarkRead(args) {
+  const messageId = (args && args.messageId) || "";
+  if (!messageId) throw new Error("Missing required parameter: messageId (wamid)");
+  const phoneId = waPhoneId(args);
+  if (!phoneId) throw new Error("No phone number target — pass phoneNumberId or set WHATSAPP_PHONE_NUMBER_ID");
+  await waGraph(`/${phoneId}/messages`, {
+    method: "POST",
+    body: { messaging_product: "whatsapp", status: "read", message_id: messageId },
+  });
+  return { ok: true, tool: "whatsapp_mark_read", result: { messageId, phoneNumberId: phoneId } };
+}
+
 // ── Frontdesk reply (via webhook server — it owns the encryption + session) ──
 
 async function frontdeskReply(sub, text) {
@@ -307,6 +502,12 @@ const HANDLERS = {
   gmail_send_message: (args) => gmailSendMessage(args.to, args.subject, args.body),
   web_search: (args) => webSearchDuckDuckGo(args.query, args.maxResults),
   web_fetch: (args) => webFetchPage(args.url),
+  whatsapp_status: (args) => whatsappStatus(args),
+  whatsapp_list_numbers: (args) => whatsappListNumbers(args),
+  whatsapp_list_messages: (args) => whatsappListMessages(args),
+  whatsapp_send_text: (args) => whatsappSendText(args),
+  whatsapp_send_template: (args) => whatsappSendTemplate(args),
+  whatsapp_mark_read: (args) => whatsappMarkRead(args),
   frontdesk_reply: (args) => frontdeskReply(args.sub, args.text),
 };
 

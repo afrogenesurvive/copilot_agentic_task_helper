@@ -24,6 +24,9 @@ local services this app manages, with live output for each one.
     Start / Restart / Stop buttons are disabled — the dashboard can only control processes it
     started itself.
   - A live health JSON summary when the service exposes one (e.g. the webhook server).
+  - For the **MCP whatsapp** service, a WhatsApp summary line: token/WABA configured (✅/❌),
+    the **active phone number** (test vs live) and connected status, plus a **List numbers**
+    helper to copy phone-number IDs into Config.
   - A read-only tail of the service's most recent output (last ~500 lines), auto-scrolled.
 
 ## Services you can manage
@@ -33,8 +36,9 @@ local services this app manages, with live output for each one.
 - **Agent runner** — the autonomous runner that processes priority queue items and daily tasks.
 - **Cloudflare tunnel** — only appears as "configured" when `CLOUDFLARE_TUNNEL_TOKEN` or
   `CLOUDFLARE_TUNNEL_ID` is set in config.
-- **MCP `<name>`** — `trello`, `gmail`, `drive`, `calendar`, `sheets`, `web-search`. Each starts
-  the matching MCP server with the credentials from your current config.
+- **MCP `<name>`** — `trello`, `gmail`, `drive`, `calendar`, `sheets`, `web-search`, `whatsapp`.
+  Each starts the matching MCP server with the credentials from your current config. The
+  **MCP whatsapp** card additionally shows the active number and connection status (see above).
 - **Per-seat MCP instances** — when you spawn MCPs for a seat from the 🔐 Accounts tab, their
   services also show up here so you can start/stop and inspect them.
 

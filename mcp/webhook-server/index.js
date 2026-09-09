@@ -39,6 +39,7 @@ import { trelloHandler } from "./handlers/trello.js";
 import { gmailHandler } from "./handlers/gmail.js";
 import { drivePushHandler } from "./handlers/drive.js";
 import { calendarPushHandler } from "./handlers/calendar.js";
+import { whatsappHandler } from "./handlers/whatsapp.js";
 import { google } from "googleapis";
 import { OAuth2Client } from "google-auth-library";
 import {
@@ -122,7 +123,9 @@ app.use((req, res, next) => {
   next();
 });
 
-app.use(express.json({ limit: "1mb" }));
+// Capture the raw body bytes so handlers (e.g. WhatsApp X-Hub-Signature-256
+// verification) can HMAC the exact payload Meta sent.
+app.use(express.json({ limit: "1mb", verify: (req, _res, buf) => { req.rawBody = buf; } }));
 app.use(express.urlencoded({ extended: true }));
 
 // ── Static webapp (tunnel-served copy; same files as the Netlify host) ──
@@ -214,6 +217,11 @@ app.post("/webhooks/drive/push", asyncRoute(drivePushHandler));
 /* ── Google Calendar push notifications ── */
 
 app.post("/webhooks/calendar/push", asyncRoute(calendarPushHandler));
+
+/* ── WhatsApp Cloud API push notifications ── */
+
+app.get("/webhooks/whatsapp/push", asyncRoute(whatsappHandler));
+app.post("/webhooks/whatsapp/push", asyncRoute(whatsappHandler));
 
 /* ── Event queue endpoints (dual-queue aware) ──
  *

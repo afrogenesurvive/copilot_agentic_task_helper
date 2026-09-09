@@ -123,7 +123,7 @@ const serviceDefs = {
 
 // The same MCP servers VS Code runs (same .env → same credentials). Separate
 // per-seat instances can be spawned from the Accounts tab (accounts:spawnForSeat).
-const MCP_NAMES = ["trello", "gmail", "drive", "calendar", "photos", "sheets", "web-search"];
+const MCP_NAMES = ["trello", "gmail", "drive", "calendar", "photos", "sheets", "web-search", "whatsapp"];
 for (const n of MCP_NAMES) {
   serviceDefs[`mcp:${n}`] = { label: `MCP ${n}`, cmd: "node", args: [`mcp/${n}/index.js`], cwd: REPO };
 }
@@ -687,6 +687,52 @@ async function gmailAction(action, params = {}) {
   }
 }
 
+async function whatsappAction(action, params = {}) {
+  const token = process.env.WHATSAPP_ACCESS_TOKEN;
+  if (!token) return { ok: false, error: "WHATSAPP_ACCESS_TOKEN not set (⚙️ Config → WhatsApp)" };
+  const version = process.env.WHATSAPP_API_VERSION || "v25.0";
+  const base = `https://graph.facebook.com/${version}`;
+  const headers = { Authorization: `Bearer ${token}`, "Content-Type": "application/json" };
+  try {
+    if (action === "list_numbers") {
+      const waba = params.wabaId || process.env.WHATSAPP_WABA_ID;
+      if (!waba) return { ok: false, error: "WHATSAPP_WABA_ID not set" };
+      const res = await fetch(`${base}/${waba}/phone_numbers`, { headers });
+      const data = await res.json();
+      if (!res.ok) return { ok: false, status: res.status, error: (data.error && data.error.message) || res.statusText };
+      const numbers = (data.data || []).map((n) => ({ id: n.id, display: n.display_phone_number, name: n.verified_name, quality: n.quality_rating }));
+      return { ok: true, result: numbers };
+    }
+    if (action === "status") {
+      const pid = params.phoneNumberId || process.env.WHATSAPP_PHONE_NUMBER_ID;
+      const info = {
+        configured: {
+          token: true,
+          wabaId: process.env.WHATSAPP_WABA_ID || null,
+          activePhoneId: process.env.WHATSAPP_PHONE_NUMBER_ID || null,
+          testPhoneId: process.env.WHATSAPP_TEST_PHONE_NUMBER_ID || null,
+        },
+        connected: false,
+      };
+      if (pid) {
+        const res = await fetch(
+          `${base}/${pid}?fields=id,display_phone_number,verified_name,quality_rating,code_verification_status,status`,
+          { headers },
+        );
+        const data = await res.json();
+        info.connected = res.ok && data && data.status === "CONNECTED";
+        info.activeNumber = res.ok ? data : (data.error && data.error.message);
+      } else {
+        info.hint = "Set WHATSAPP_PHONE_NUMBER_ID (find IDs via the WhatsApp → Numbers quick action).";
+      }
+      return { ok: true, result: info };
+    }
+    return { ok: false, error: `unknown whatsapp action ${action}` };
+  } catch (err) {
+    return { ok: false, error: err.message };
+  }
+}
+
 function googleStatus() {
   return {
     connected: !!(process.env.GMAIL_CLIENT_ID && process.env.GMAIL_REFRESH_TOKEN),
@@ -1168,6 +1214,7 @@ function registerIpc() {
   ipcMain.handle("tools:manifest", () => toolsManifest());
   ipcMain.handle("tools:trello", (_e, action, params) => trelloAction(action, params));
   ipcMain.handle("tools:gmail", (_e, action, params) => gmailAction(action, params));
+  ipcMain.handle("tools:whatsapp", (_e, action, params) => whatsappAction(action, params));
   ipcMain.handle("google:status", () => googleStatus());
 
   ipcMain.handle("accounts:list", async () => {

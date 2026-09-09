@@ -20,6 +20,9 @@ Settings are grouped into sections, each field showing its **source tag** (`conf
 - **Webhook** — port, base URL, API token, CORS origins, autostart, reminder interval.
 - **Trello** — API key/token, board and list IDs, webhook model IDs/actions.
 - **Gmail / Google** — client ID/secret, refresh token, user, Pub/Sub topic/subscription.
+- **WhatsApp** — Meta Cloud API: system-user access token, WABA ID, active phone-number ID
+  (test or burner), optional test-number ID, API version, app secret + webhook verify token.
+  See `whatsapp.md` for how to set up the free test number and a real (burner) number.
 - **Frontdesk** — use-Trello / log-to-Trello toggles, agent public key, session TTL, HMAC
   secret, auth passphrase.
 - **Tunnel** — Cloudflare tunnel token / ID / domain.

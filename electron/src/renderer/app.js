@@ -78,6 +78,23 @@
     await renderSvcDetail(dash.selected, svcs);
   }
 
+  // WhatsApp MCP server dashboard details — configured token/WABA, which number
+  // is active (test vs live) and its connection status, plus a list-numbers helper.
+  async function waSvcDetailHTML() {
+    const res = await api.whatsapp("status");
+    if (!res.ok || !res.result) {
+      return `<div class="svc-wa">💬 <b>WhatsApp (Meta Cloud API):</b> not configured — set the WHATSAPP_* keys in ⚙️ Config, then start this service.</div>`;
+    }
+    const c = res.result.configured || {};
+    const n = res.result.activeNumber;
+    const numLine =
+      n && typeof n === "object"
+        ? `${n.displayPhoneNumber || n.phoneNumberId || "?"} — ${n.status || "?"}${n.qualityRating ? ` (${n.qualityRating})` : ""}`
+        : c.activePhoneId || "no active number set";
+    return `<div class="svc-wa">💬 <b>WhatsApp (Meta Cloud API):</b> token ${c.accessToken ? "✅" : "❌"} · WABA ${c.wabaId ? "✅" : "❌"} · active ${esc(numLine)}${res.result.connected ? " · connected ✅" : " · not connected"}
+      <button type="button" id="wa-list-numbers" title="Copy phone-number IDs into Config">List numbers</button> <span id="wa-dash-nums"></span></div>`;
+  }
+
   async function renderSvcDetail(name, svcs) {
     const detail = $("svc-detail");
     if (!name) {
@@ -111,6 +128,7 @@
         <span class="svc-rereg-status" id="svc-rereg-status"></span>
       </div>` : ""}
       <div class="svc-health">${s.health ? "health: " + esc(JSON.stringify(s.health)) : s.running ? "—" : "not running"}</div>
+      ${s.name === "mcp:whatsapp" ? await waSvcDetailHTML() : ""}
       <pre class="svc-detail-log" id="svc-detail-log">${esc((await api.svcLog(s.name, 500)).join("\n") || "")}</pre>
     `;
     detail.querySelector("[data-start]")?.addEventListener("click", async () => {
@@ -127,6 +145,14 @@
       setTimeout(refreshDashboard, r === false ? 0 : 900);
     });
     detail.querySelector("#svc-refresh")?.addEventListener("click", () => renderSvcDetail(s.name));
+    detail.querySelector("#wa-list-numbers")?.addEventListener("click", async () => {
+      const r = await api.whatsapp("list_numbers");
+      const out = detail.querySelector("#wa-dash-nums");
+      if (!out) return;
+      out.innerHTML = r.ok && Array.isArray(r.result)
+        ? r.result.map((x) => `<code>${esc(x.id)} — ${esc(x.display || "")}</code>`).join(" · ")
+        : `<span class="err">${esc((r && r.error) || "unknown error")}</span>`;
+    });
     detail.querySelector("#svc-reregister")?.addEventListener("click", async () => {
       const btn = detail.querySelector("#svc-reregister");
       const st = detail.querySelector("#svc-rereg-status");
@@ -583,6 +609,7 @@
     { prefix: "web_", label: "Web Search" },
     { prefix: "sheets_", label: "Sheets" },
     { prefix: "frontdesk_", label: "Frontdesk" },
+    { prefix: "whatsapp_", label: "WhatsApp" },
   ];
 
   async function refreshTools() {
@@ -663,6 +690,28 @@
       : `<div class="empty">Error: ${esc(res.error)}</div>`;
   });
 
+  // WhatsApp quick actions — status + list_numbers let you discover & copy the
+  // test/live phone-number IDs into the WhatsApp Config section (number picker).
+  async function runWhatsapp(action, params) {
+    const res = await api.whatsapp(action, params);
+    const box = $("whatsapp-result");
+    if (!res.ok) {
+      box.innerHTML = `<div class="empty">Error: ${esc(res.error)}</div>`;
+      return;
+    }
+    const data = Array.isArray(res.result) ? res.result : [res.result];
+    box.innerHTML =
+      data
+        .slice(0, 20)
+        .map((r) => {
+          const line = r && r.id ? `${r.id} — ${esc(r.display || r.displayPhoneNumber || r.name || "")}` : JSON.stringify(r).slice(0, 160);
+          return `• <code>${esc(line)}</code>`;
+        })
+        .join("<br/>") || "(empty)";
+  }
+  document.querySelector('[data-act="wa-status"]').addEventListener("click", () => runWhatsapp("status"));
+  document.querySelector('[data-act="wa-numbers"]').addEventListener("click", () => runWhatsapp("list_numbers"));
+
   // ── Config (config.json) — sectioned field editor with source annotations ──
   const escAttr = (s) => esc(s).replace(/"/g, "&quot;");
   const CONFIG_FIELDS = [
@@ -706,6 +755,17 @@
     { key: "GMAIL_TOPIC_NAME", label: "Gmail Pub/Sub Topic", section: "Gmail / Google", secret: false },
     { key: "GMAIL_PUBSUB_SUBSCRIPTION", label: "Gmail Pub/Sub Subscription", section: "Gmail / Google", secret: false },
     { key: "GOOGLE_APPLICATION_CREDENTIALS", label: "Google App Credentials Path", section: "Gmail / Google", secret: false },
+    // WhatsApp (Meta Cloud API) — one WABA holds the free test number + a real
+    // (burner) number sharing the same system-user token. Active "from" number
+    // = WHATSAPP_PHONE_NUMBER_ID; run the Tools → WhatsApp → "Numbers" action
+    // to discover and copy the test/live phone-number IDs here.
+    { key: "WHATSAPP_ACCESS_TOKEN", label: "Access Token (system user)", section: "WhatsApp", secret: true },
+    { key: "WHATSAPP_WABA_ID", label: "WhatsApp Business Account ID", section: "WhatsApp", secret: false },
+    { key: "WHATSAPP_PHONE_NUMBER_ID", label: "Active Phone Number ID", section: "WhatsApp", secret: false },
+    { key: "WHATSAPP_TEST_PHONE_NUMBER_ID", label: "Test Number ID (free sandbox)", section: "WhatsApp", secret: false },
+    { key: "WHATSAPP_API_VERSION", label: "Graph API Version", section: "WhatsApp", secret: false },
+    { key: "WHATSAPP_APP_SECRET", label: "App Secret (webhook verify)", section: "WhatsApp", secret: true },
+    { key: "WHATSAPP_WEBHOOK_VERIFY_TOKEN", label: "Webhook Verify Token", section: "WhatsApp", secret: true },
     // Frontdesk
     { key: "FRONTDESK_USE_TRELLO", label: "Use Trello for Frontdesk", section: "Frontdesk", secret: false, options: ["true", "false"] },
     { key: "FRONTDESK_LOG_TO_TRELLO", label: "Log Frontdesk to Trello", section: "Frontdesk", secret: false, options: ["true", "false"] },
@@ -1052,6 +1112,7 @@
     { file: "accounts.md", title: "🔐 Accounts & Keys" },
     { file: "config.md", title: "⚙️ Config" },
     { file: "tools.md", title: "🧰 Tools" },
+    { file: "whatsapp.md", title: "💬 WhatsApp" },
     { file: "scripts.md", title: "📜 Scripts" },
     { file: "chat.md", title: "💬 Chat" },
     { file: "appearance.md", title: "🎨 Appearance" },

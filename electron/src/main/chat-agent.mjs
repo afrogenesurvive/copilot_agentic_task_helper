@@ -36,6 +36,13 @@ const SUPPORTED_TOOLS = new Set([
   "gmail_send_message",
   "web_search",
   "web_fetch",
+  // WhatsApp (Meta Cloud API) — reads auto-run; sends require approval
+  "whatsapp_status",
+  "whatsapp_list_numbers",
+  "whatsapp_list_messages",
+  "whatsapp_send_text",
+  "whatsapp_send_template",
+  "whatsapp_mark_read",
 ]);
 
 // Read-only tools run automatically; anything else requires operator approval.
@@ -48,6 +55,10 @@ const READ_TOOLS = new Set([
   "gmail_get_message",
   "web_search",
   "web_fetch",
+  // WhatsApp reads — run automatically (no approval needed)
+  "whatsapp_status",
+  "whatsapp_list_numbers",
+  "whatsapp_list_messages",
 ]);
 
 export const OPERATOR_TOOLS = (allTools || []).filter((t) => SUPPORTED_TOOLS.has(t.name));

@@ -47,6 +47,8 @@ const DEFAULTS = {
   LOG_LEVEL: "info",
   OPERATOR_AUTOSTART: "true",
   TRUST_PROXY: "1",
+  // WhatsApp (Meta Cloud API) — annotation defaults only (never written)
+  WHATSAPP_API_VERSION: "v25.0",
 };
 
 /** True when config.json exists (primary source present). */

@@ -1,5 +1,21 @@
 # Changelog
 
+## [0.2.6-1] — 2026-09-09
+
+### WhatsApp (Meta Cloud API) MCP integration
+
+- New `mcp/whatsapp/` MCP server (stdio) exposing `whatsapp_status`, `whatsapp_list_numbers`,
+  `whatsapp_list_messages`, `whatsapp_send_text`, `whatsapp_send_template`, `whatsapp_mark_read`.
+- Tool schemas added to `shared/tool-manifest.js` (`whatsappTools` appended to `allTools`).
+- The shared tool executor now runs the WhatsApp tools; the Electron operator chat advertises
+  them (reads auto-run, sends ask for operator approval).
+- Electron UI: new WhatsApp Config section, a Tools manifest group with Status/Numbers quick
+  actions, an MCP dashboard service card showing the active number/connection, and a new in-app
+  WhatsApp guide covering both number setups (free Meta test number and real burner number).
+- Inbound webhook route receives and sanitizes incoming WhatsApp messages, logs them, and adds
+  them to the notification queue for agent processing.
+- Version 0.2.6.
+
 ## [0.2.5-2] — 2026-09-09
 
 ### Electron dashboard

@@ -788,4 +788,91 @@ export const frontdeskTools = [
   },
 ];
 
-export const allTools = [...trelloTools, ...gmailTools, ...driveTools, ...calendarTools, ...photosTools, ...webSearchTools, ...sheetsTools, ...frontdeskTools];
+/** WhatsApp Business Platform (Meta Cloud API) tools — official Cloud API only.
+ *  One WABA holds the free test number + a real (burner) number sharing the same
+ *  system-user token. The "from" number defaults to WHATSAPP_PHONE_NUMBER_ID;
+ *  every tool accepts an optional `phoneNumberId` to pick test vs live.
+ *  Inbound message history comes from the local inbox written by the
+ *  /webhooks/whatsapp/push handler (Cloud API GET only returns outbound). */
+export const whatsappTools = [
+  {
+    name: "whatsapp_status",
+    description:
+      "Check WhatsApp Cloud API connectivity and the active 'from' profile. Reports whether WHATSAPP_ACCESS_TOKEN / WHATSAPP_WABA_ID are set, resolves the active phone number (default WHATSAPP_PHONE_NUMBER_ID, or pick another via phoneNumberId), and shows that number's Cloud API status (e.g. CONNECTED), quality rating, and verification state. Run this first when WhatsApp calls fail.",
+    inputSchema: {
+      type: "object",
+      properties: {
+        phoneNumberId: { type: "string", description: "Optional phone number ID to check (test or live). Defaults to WHATSAPP_PHONE_NUMBER_ID." },
+      },
+    },
+  },
+  {
+    name: "whatsapp_list_numbers",
+    description:
+      "List every phone number on the configured WhatsApp Business Account (WABA): display phone number, verified name, quality rating, and verification state. Use this to discover your free test number vs a real (burner) number and to get their phone_number_id for config or a phoneNumberId argument. Pass wabaId or set WHATSAPP_WABA_ID.",
+    inputSchema: {
+      type: "object",
+      properties: {
+        wabaId: { type: "string", description: "WhatsApp Business Account ID (optional if WHATSAPP_WABA_ID is set)" },
+      },
+    },
+  },
+  {
+    name: "whatsapp_list_messages",
+    description:
+      "Read recent WhatsApp messages that arrived via the /webhooks/whatsapp/push webhook (persisted to the local inbox). Optionally filter to one contact (E.164 wa_id, e.g. +15551234567) to view that thread. Returns direction, from/to, timestamp, type, and text per message. Local history only — messages received before the webhook was registered will not appear.",
+    inputSchema: {
+      type: "object",
+      properties: {
+        contact: { type: "string", description: "Optional E.164 contact (wa_id) to filter to, e.g. +15551234567" },
+        limit: { type: "number", description: "Max messages to return (default 20, max 100)" },
+      },
+    },
+  },
+  {
+    name: "whatsapp_send_text",
+    description:
+      "Send a free-form text message to a WhatsApp user from the configured business number. IMPORTANT: Cloud API only delivers free-form (non-template) messages inside the open 24-hour customer-service window — the recipient must have messaged your number recently (or within 24h of your last reply). For business-initiated sends outside that window use whatsapp_send_template. 'to' must be a full E.164 number with country code, e.g. +15551234567. Returns the Cloud API message id (wamid).",
+    inputSchema: {
+      type: "object",
+      properties: {
+        to: { type: "string", description: "Recipient E.164 number, e.g. +15551234567" },
+        body: { type: "string", description: "Message text to send" },
+        previewUrl: { type: "boolean", description: "Render link previews in the message (default false)" },
+        phoneNumberId: { type: "string", description: "From-number ID (defaults to WHATSAPP_PHONE_NUMBER_ID)" },
+      },
+      required: ["to", "body"],
+    },
+  },
+  {
+    name: "whatsapp_send_template",
+    description:
+      "Send an approved WhatsApp message template — the only way to business-initiate a message outside the 24-hour window. templateName must match a template approved for the sending number (e.g. hello_world); language is the template locale (e.g. en_US); params are positional values substituted into the template body in order (omit for templates with no variables). Returns the Cloud API message id (wamid).",
+    inputSchema: {
+      type: "object",
+      properties: {
+        to: { type: "string", description: "Recipient E.164 number, e.g. +15551234567" },
+        templateName: { type: "string", description: "Name of an approved template, e.g. hello_world" },
+        language: { type: "string", description: "Template locale code (default en_US)" },
+        params: { type: "array", items: { type: "string" }, description: "Positional body parameters in template order (optional)" },
+        phoneNumberId: { type: "string", description: "From-number ID (defaults to WHATSAPP_PHONE_NUMBER_ID)" },
+      },
+      required: ["to", "templateName"],
+    },
+  },
+  {
+    name: "whatsapp_mark_read",
+    description:
+      "Mark an inbound WhatsApp message as read (updates the read receipt the sender sees). messageId is the Cloud API message id (wamid) from the inbox/webhook. The message must belong to the same phone number.",
+    inputSchema: {
+      type: "object",
+      properties: {
+        messageId: { type: "string", description: "Cloud API message id (wamid) to mark read" },
+        phoneNumberId: { type: "string", description: "From-number ID (defaults to WHATSAPP_PHONE_NUMBER_ID)" },
+      },
+      required: ["messageId"],
+    },
+  },
+];
+
+export const allTools = [...trelloTools, ...gmailTools, ...driveTools, ...calendarTools, ...photosTools, ...webSearchTools, ...sheetsTools, ...frontdeskTools, ...whatsappTools];
