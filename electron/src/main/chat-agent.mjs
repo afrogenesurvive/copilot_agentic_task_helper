@@ -87,23 +87,23 @@ function toProviderMessages(history) {
     } else if (e.role === "tool") {
       items.push({ role: "tool", content: String(e.content ?? ""), tool_call_id: e.toolCallId });
     } else if (e.role === "assistant") {
+      // DeepSeek thinking mode: assistant turns emit a reasoning_content field,
+      // and DeepSeek requires it to be passed back to continue a conversation.
+      // Attach it only when the persisted entry has one (pre-fix turns never will).
+      const msg = { role: "assistant", content: String(e.content ?? "") };
+      if (e.reasoning_content != null) msg.reasoning_content = e.reasoning_content;
       const tcs = Array.isArray(e.toolCalls) ? e.toolCalls : [];
       if (tcs.length) {
-        items.push({
-          role: "assistant",
-          content: String(e.content ?? ""),
-          tool_calls: tcs.map((t) => ({
-            id: t.id,
-            type: "function",
-            function: {
-              name: t.name,
-              arguments: typeof t.args === "string" ? t.args : JSON.stringify(t.args ?? {}),
-            },
-          })),
-        });
-      } else {
-        items.push({ role: "assistant", content: String(e.content ?? "") });
+        msg.tool_calls = tcs.map((t) => ({
+          id: t.id,
+          type: "function",
+          function: {
+            name: t.name,
+            arguments: typeof t.args === "string" ? t.args : JSON.stringify(t.args ?? {}),
+          },
+        }));
       }
+      items.push(msg);
     }
   }
   return items;
@@ -154,6 +154,7 @@ export async function runOperatorAgent({
 
   let rounds = 0;
   let lastUsage = null;
+  let lastReasoning = null;
   while (rounds < MAX_ROUNDS) {
     throwIfAborted();
     const res = await provider({
@@ -163,11 +164,12 @@ export async function runOperatorAgent({
       temperature,
     });
     if (res && res.usage) lastUsage = res.usage;
+    if (res && res.reasoning_content) lastReasoning = res.reasoning_content;
 
     // Plain-text answer → done.
     if (!res || !res.toolCall) {
       const reply = String((res && res.reply) || "(no reply)");
-      const final = await record({ role: "assistant", content: reply, model, usage: lastUsage || undefined });
+      const final = await record({ role: "assistant", content: reply, model, usage: lastUsage || undefined, reasoning_content: res?.reasoning_content || undefined });
       return { ok: true, reply, model, usage: lastUsage || undefined, entry: final };
     }
 
@@ -190,7 +192,7 @@ export async function runOperatorAgent({
       throwIfAborted();
       if (!approved) {
         const reason = (decision && decision.reason) || "denied by operator";
-        await record({ role: "assistant", content: "", toolCalls: [{ id: callId, name, args }] });
+        await record({ role: "assistant", content: "", toolCalls: [{ id: callId, name, args }], reasoning_content: res?.reasoning_content || undefined });
         await record({ role: "tool", toolCallId: callId, name, content: `[operator denied ${name}: ${reason}]` });
         rounds++;
         continue;
@@ -198,7 +200,7 @@ export async function runOperatorAgent({
       if (decision.editedArgs) execArgs = decision.editedArgs;
     }
 
-    await record({ role: "assistant", content: "", toolCalls: [{ id: callId, name, args: execArgs }] });
+    await record({ role: "assistant", content: "", toolCalls: [{ id: callId, name, args: execArgs }], reasoning_content: res?.reasoning_content || undefined });
 
     let result;
     try {
@@ -221,7 +223,7 @@ export async function runOperatorAgent({
   }
 
   const msg = "[stopped: reached the maximum number of tool steps for one message]";
-  const final = await record({ role: "assistant", content: msg, model, usage: lastUsage || undefined });
+  const final = await record({ role: "assistant", content: msg, model, usage: lastUsage || undefined, reasoning_content: lastReasoning || undefined });
   return { ok: true, reply: msg, model, usage: lastUsage, entry: final };
 }
 

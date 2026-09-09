@@ -272,6 +272,9 @@ async function callOpenAiCompatible({ systemMessage, messages, tools, temperatur
         }
         if (m.role === "assistant") {
           const msg = { role: "assistant", content: String(m.content ?? "") };
+          // DeepSeek thinking mode requires prior reasoning_content to be passed
+          // back when a conversation continues — preserve it if the caller kept it.
+          if (m.reasoning_content != null) msg.reasoning_content = m.reasoning_content;
           if (m.tool_calls && m.tool_calls.length) msg.tool_calls = m.tool_calls;
           return msg;
         }
@@ -309,20 +312,23 @@ async function callOpenAiCompatible({ systemMessage, messages, tools, temperatur
   const usage = data.usage || null;
   const message = data.choices?.[0]?.message;
   const toolCall = message?.tool_calls?.[0];
+  // DeepSeek thinking mode emits reasoning_content on every assistant reply;
+  // callers must store it and pass it back to continue a conversation.
+  const reasoningContent = message?.reasoning_content || null;
 
   if (!toolCall) {
     const reply = message?.content || null;
-    return { toolCall: null, reply, usage };
+    return { toolCall: null, reply, usage, reasoning_content: reasoningContent };
   }
 
   let args;
   try {
     args = JSON.parse(toolCall.function.arguments);
   } catch {
-    return { toolCall: null, reply: message?.content || null, usage };
+    return { toolCall: null, reply: message?.content || null, usage, reasoning_content: reasoningContent };
   }
 
-  return { toolCall: { name: toolCall.function.name, arguments: args }, reply: message?.content || null, usage };
+  return { toolCall: { name: toolCall.function.name, arguments: args }, reply: message?.content || null, usage, reasoning_content: reasoningContent };
 }
 
 function getNumCtx() {

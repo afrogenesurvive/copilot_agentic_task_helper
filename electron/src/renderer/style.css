@@ -1290,3 +1290,92 @@ th {
 .markdown a[data-ext]:hover {
   text-decoration: underline;
 }
+
+/* ── Collapsible sections / accordions ── */
+.caret {
+  display: inline-block;
+  width: 0.9em;
+  flex: none;
+  color: var(--muted);
+  font-size: 0.72rem;
+}
+
+/* Config sections */
+.config-sec-head {
+  display: flex;
+  align-items: center;
+  gap: 0.3rem;
+  cursor: pointer;
+  user-select: none;
+}
+.config-sec-head:hover .caret {
+  color: var(--accent);
+}
+.config-section.collapsed .config-sec-body {
+  display: none;
+}
+
+/* Tools manifest accordion groups */
+.manifest-group {
+  border-bottom: 1px solid var(--border);
+}
+.manifest-group .manifest-head {
+  display: flex;
+  align-items: center;
+  gap: 0.35rem;
+  padding: 0.4rem 0.4rem;
+  cursor: pointer;
+  user-select: none;
+  font-weight: 600;
+  font-size: 0.78rem;
+  color: var(--accent);
+}
+.manifest-group .manifest-head:hover {
+  background: rgba(143, 143, 176, 0.08);
+}
+.manifest-group .manifest-head .count {
+  color: var(--muted);
+  font-weight: 400;
+  font-size: 0.66rem;
+  background: rgba(143, 143, 176, 0.14);
+  border-radius: 999px;
+  padding: 0.02rem 0.45rem;
+}
+.manifest-group.collapsed .manifest-body {
+  display: none;
+}
+
+/* Script cards (collapsible body) */
+.script-head {
+  cursor: pointer;
+  user-select: none;
+}
+.script-head:hover .caret {
+  color: var(--accent);
+}
+.script-card.collapsed .script-body {
+  display: none;
+}
+
+/* Webhook re-register action (Dashboard) */
+.svc-reregister {
+  margin: 0 0 0.4rem;
+  flex-wrap: wrap;
+}
+.svc-rereg-status {
+  font-size: 0.72rem;
+  color: var(--muted);
+  line-height: 1.4;
+}
+
+/* Queue clear-all + log day/refresh controls */
+.clear-all {
+  color: var(--err);
+  border-color: rgba(231, 76, 60, 0.55);
+}
+.clear-all:hover {
+  background: rgba(231, 76, 60, 0.12);
+}
+#log-day-status {
+  font-size: 0.7rem;
+}

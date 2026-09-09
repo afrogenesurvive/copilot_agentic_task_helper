@@ -20,7 +20,14 @@ import { fileURLToPath } from "url";
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const REPO = path.resolve(__dirname, "..");
-const LOG_DIR = path.resolve(process.env.LOG_DIR || path.join(REPO, "logs"));
+// Resolve LOG_DIR against the repo root, NOT the cwd. .env sets LOG_DIR=logs
+// (relative); when a process is started from a subfolder (e.g. the webhook
+// server launched from mcp/webhook-server/) a cwd-relative resolve would scatter
+// logs into that subfolder — which for the webhook server sits inside the
+// directory it watches in dev mode. Anchoring to REPO keeps every component's
+// logs in <repo>/logs no matter where it was started. Absolute LOG_DIR values
+// pass through path.resolve unchanged.
+const LOG_DIR = process.env.LOG_DIR ? path.resolve(REPO, process.env.LOG_DIR) : path.join(REPO, "logs");
 
 const LEVELS = { debug: 10, info: 20, warn: 30, error: 40 };
 const MIN_LEVEL = LEVELS[String(process.env.LOG_LEVEL || "info").toLowerCase()] ?? LEVELS.info;

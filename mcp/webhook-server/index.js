@@ -64,6 +64,9 @@ import {
 import { startGoogleOAuth, handleGoogleOAuthCallback } from "./lib/oauth.js";
 import { getSeatAccounts } from "../../scripts/frontdesk-accounts.mjs";
 import { log as logEvent } from "../../shared/logger.mjs";
+import { ensureWatch as ensureGmailWatch } from "./lib/gmail-watch.js";
+import { startCalendarWatch as renewCalendarWatch, getCalendarWatchStatus } from "./scripts/setup-calendar-watch.js";
+import { startDriveWatch as renewDriveWatch, getDriveWatchStatus } from "./scripts/setup-drive-watch.js";
 import { callChat, getModelName } from "../../shared/model-provider.mjs";
 
 const app = express();
@@ -178,6 +181,16 @@ app.use(
   }),
 );
 
+/* ── Async route wrapper ──
+ *
+ * Express 4 does not catch rejected promises from async route handlers — an
+ * unhandled rejection would crash the whole process (Node >= 15 default), which
+ * is exactly how an event (Trello/Gmail/Drive) used to take the server down
+ * mid-processing. Wrapping async handlers routes rejections to the error
+ * middleware below (logged) instead of killing the daemon.
+ */
+const asyncRoute = (fn) => (req, res, next) => Promise.resolve(fn(req, res, next)).catch(next);
+
 /* ── Health check ── */
 
 app.get("/health", (_req, res) => {
@@ -191,16 +204,16 @@ app.post("/webhooks/trello", trelloHandler);
 
 /* ── Gmail push notifications ── */
 
-app.post("/webhooks/gmail/push", gmailHandler);
-app.get("/webhooks/gmail/push", gmailHandler);
+app.post("/webhooks/gmail/push", asyncRoute(gmailHandler));
+app.get("/webhooks/gmail/push", asyncRoute(gmailHandler));
 
 /* ── Google Drive push notifications ── */
 
-app.post("/webhooks/drive/push", drivePushHandler);
+app.post("/webhooks/drive/push", asyncRoute(drivePushHandler));
 
 /* ── Google Calendar push notifications ── */
 
-app.post("/webhooks/calendar/push", calendarPushHandler);
+app.post("/webhooks/calendar/push", asyncRoute(calendarPushHandler));
 
 /* ── Event queue endpoints (dual-queue aware) ──
  *
@@ -248,6 +261,15 @@ app.patch("/events/:id", (req, res) => {
   } else {
     res.status(404).json({ error: "Event not found in queue: " + queueName });
   }
+});
+
+// DELETE /events?queue=… — Clear ALL events from a named queue
+app.delete("/events", (req, res) => {
+  const queueName = req.query.queue || "misc_notifications";
+  const pending = readEvents(queueName, { cleared: false }).length;
+  clearEvents(queueName);
+  logEvent({ source: "webhook", subSource: "queue", level: "info", message: `cleared all ${pending} pending event(s) from ${queueName}` });
+  res.json({ status: "cleared_all", queue: queueName, cleared: pending });
 });
 
 /* ── Status API endpoints (for the frontdesk webapp) ──
@@ -606,6 +628,55 @@ function printPriorityReminder() {
 const reminderInterval = setInterval(printPriorityReminder, REMINDER_INTERVAL);
 console.log(`   ⏰ [REMINDER] Priority queue reminder active every ${REMINDER_INTERVAL / 1000}s`);
 
+/* ── Google push-channel auto-renew ──
+ *
+ * Gmail/Calendar/Drive watch channels expire (Gmail + Calendar ~7 days,
+ * Drive ~1 day). Renew each before it expires so push notifications keep
+ * landing in the queues/logs the Electron app displays. Only runs when Google
+ * creds AND a WEBHOOK_BASE_URL are configured; otherwise it skips quietly.
+ */
+
+async function renewGoogleWatches() {
+  const hasCreds = process.env.GMAIL_CLIENT_ID && process.env.GMAIL_CLIENT_SECRET && process.env.GMAIL_REFRESH_TOKEN;
+  const base = process.env.WEBHOOK_BASE_URL;
+  if (!hasCreds || !base) {
+    console.log("   ⏭️ [WATCH] Auto-renew skipped — Google creds or WEBHOOK_BASE_URL not set");
+    return;
+  }
+  const renew = async (label, fn) => {
+    try {
+      const out = await fn();
+      const exp = out && out.expiration;
+      logEvent({ source: "webhook", subSource: "watch", level: "info", message: `${label} watch renewed`, data: { expiresAt: exp ? new Date(Number(exp)).toISOString() : undefined } });
+      console.log(`   ✅ [WATCH] ${label} renewed${exp ? ` (expires ${new Date(Number(exp)).toISOString()})` : ""}`);
+    } catch (err) {
+      logEvent({ source: "webhook", subSource: "watch", level: "warn", message: `${label} watch renew failed: ${err.message}` });
+      console.error(`   ❌ [WATCH] ${label} renew failed: ${err.message}`);
+    }
+  };
+
+  // Gmail: ensureWatch starts/renews only if missing or expiring within 6h.
+  try {
+    const st = await ensureGmailWatch({ renewBeforeMs: 6 * 60 * 60 * 1000 });
+    const exp = st && st.expiration;
+    logEvent({ source: "webhook", subSource: "watch", level: "info", message: "gmail watch ok", data: { expiresAt: exp ? new Date(Number(exp)).toISOString() : undefined } });
+  } catch (err) {
+    logEvent({ source: "webhook", subSource: "watch", level: "warn", message: `gmail watch check failed: ${err.message}` });
+    console.error(`   ❌ [WATCH] gmail ensure failed: ${err.message}`);
+  }
+
+  // Calendar (~7d) and Drive (~1d) channels: re-register if expiring soon/missing.
+  const cw = getCalendarWatchStatus();
+  if (!cw || Date.now() > Number(cw.expiration) - 6 * 3600 * 1000) await renew("calendar", () => renewCalendarWatch());
+  const dw = getDriveWatchStatus();
+  if (!dw || Date.now() > Number(dw.expiration) - 2 * 3600 * 1000) await renew("drive", () => renewDriveWatch());
+}
+
+setInterval(() => {
+  renewGoogleWatches().catch((err) => console.error(`   ❌ [WATCH] renew loop error: ${err.message}`));
+}, 30 * 60 * 1000);
+renewGoogleWatches().catch((err) => console.error(`   ❌ [WATCH] initial renew error: ${err.message}`));
+
 /* ── Dev auto-reload — watches source files, exits on change ──
  *
  * When WEBHOOK_DEV_WATCH=true, watches the webhook-server directory.
@@ -618,18 +689,52 @@ console.log(`   ⏰ [REMINDER] Priority queue reminder active every ${REMINDER_I
  */
 
 if (process.env.WEBHOOK_DEV_WATCH) {
-  const watchDir = path.resolve(__dirname);
-  console.log(`   👀 [WATCH] Watching for file changes (auto-restart on save)...`);
-  let restartTimer = null;
-  fs.watch(watchDir, { recursive: true }, (eventType, filename) => {
-    if (!filename || filename.includes("node_modules") || filename.startsWith(".")) return;
-    if (restartTimer) clearTimeout(restartTimer);
-    restartTimer = setTimeout(() => {
-      console.log(`\n   🔄 [WATCH] ${filename} changed — restarting...\n`);
-      server.close(() => process.exit(0));
-    }, 300);
-  });
+  // Dev auto-restart is ONLY safe when a supervisor loop (npm run webhook:dev)
+  // is attached to an interactive terminal and ready to restart us. Under bare
+  // nohup/background (stdin is not a TTY) a self-exit would leave the server
+  // down permanently. So refuse to arm the watcher unless stdin is a TTY — this
+  // is the definitive guard against "server stops when an event fires": no
+  // matter what gets written into this folder (server.log, logs/, etc.), a
+  // non-TTY daemon can never exit itself.
+  if (!process.stdin.isTTY) {
+    console.log(`   ⏭️ [WATCH] WEBHOOK_DEV_WATCH is set but stdin is not a TTY — dev auto-restart DISABLED (safe under nohup)`);
+  } else {
+    const watchDir = path.resolve(__dirname);
+    console.log(`   👀 [WATCH] Watching for file changes (auto-restart on save)...`);
+    let restartTimer = null;
+    fs.watch(watchDir, { recursive: true }, (eventType, filename) => {
+      // Only react to source/config files — never to our own logs. server.log is
+      // written into this same folder, so watching everything would make the
+      // server exit every time it logs; under bare nohup it would not restart.
+      if (!filename) return;
+      const name = String(filename);
+      if (name.includes("node_modules")) return;
+      const base = path.basename(name);
+      if (base.startsWith(".") || base === "server.log" || /\.(log|pid|jsonl)$/.test(base)) return;
+      if (!/\.(js|mjs|cjs|json)$/.test(name)) return;
+      if (restartTimer) clearTimeout(restartTimer);
+      restartTimer = setTimeout(() => {
+        console.log(`\n   🔄 [WATCH] ${name} changed — restarting...\n`);
+        server.close(() => process.exit(0));
+      }, 300);
+    });
+  }
 }
+
+/* ── Error handling middleware ──
+ *
+ * Registered after all routes. Sync throws and async-route rejections (via
+ * asyncRoute) land here: logged to the terminal, and a 500 returned to the
+ * caller — but the process keeps running. Without this, an unhandled rejection
+ * on any webhook event would terminate the whole server.
+ */
+// eslint-disable-next-line no-unused-vars
+app.use((err, req, res, next) => {
+  console.error(`   ❌ [HTTP] Unhandled error on ${req.method} ${req.originalUrl}:`, err && (err.stack || err.message || err));
+  if (!res.headersSent) {
+    res.status(500).json({ error: "internal_error" });
+  }
+});
 
 /* ── Start server ── */
 

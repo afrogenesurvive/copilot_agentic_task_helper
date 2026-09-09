@@ -96,10 +96,15 @@
         </div>
         <div class="svc-actions">
           <button data-start="${esc(s.name)}" ${s.running ? "disabled" : ""}>▶ Start</button>
+          <button data-restart="${esc(s.name)}" ${!s.running ? "disabled" : ""} title="Restart this service (stop + start)">↻ Restart</button>
           <button data-stop="${esc(s.name)}" ${!s.running ? "disabled" : ""}>⏹ Stop</button>
           <button id="svc-refresh">Refresh</button>
         </div>
       </div>
+      ${s.name === "webhook" ? `<div class="svc-actions svc-reregister">
+        <button id="svc-reregister" title="Restart the webhook server and re-run the Trello/Gmail/Calendar/Drive registration scripts">🔁 Restart &amp; re-register webhooks</button>
+        <span class="svc-rereg-status" id="svc-rereg-status"></span>
+      </div>` : ""}
       <div class="svc-health">${s.health ? "health: " + esc(JSON.stringify(s.health)) : s.running ? "—" : "not running"}</div>
       <pre class="svc-detail-log" id="svc-detail-log">${esc((await api.svcLog(s.name, 500)).join("\n") || "")}</pre>
     `;
@@ -111,7 +116,36 @@
       await api.svcStop(s.name);
       refreshDashboard();
     });
+    detail.querySelector("[data-restart]")?.addEventListener("click", async () => {
+      const r = await api.svcRestart(s.name);
+      // restartService waits ~700ms for the old process to free its port.
+      setTimeout(refreshDashboard, r === false ? 0 : 900);
+    });
     detail.querySelector("#svc-refresh")?.addEventListener("click", () => renderSvcDetail(s.name));
+    detail.querySelector("#svc-reregister")?.addEventListener("click", async () => {
+      const btn = detail.querySelector("#svc-reregister");
+      const st = detail.querySelector("#svc-rereg-status");
+      if (btn) {
+        btn.disabled = true;
+        btn.textContent = "⏳ Re-registering…";
+      }
+      if (st) st.textContent = "Running Trello → Gmail → Calendar → Drive setup, then restarting the webhook server (≈20–60s)…";
+      const res = await api.svcReregisterWebhooks();
+      if (st) {
+        const parts = (res.steps || []).map((x) => {
+          if (x.ok) return `✅ ${x.label}`;
+          const tail = (x.output || x.error || "").split("\n").filter(Boolean).slice(-2).join(" · ");
+          return `❌ ${x.label} — ${tail}`;
+        });
+        st.textContent = `Webhook restarted: ${res.webhookRestarted ? "yes" : "no"}. ${parts.join(" | ")}`;
+      }
+      if (btn) {
+        btn.disabled = false;
+        btn.textContent = "🔁 Restart & re-register webhooks";
+      }
+      // No immediate re-render: the dashboard's 15s poll updates the running
+      // state, keeping this ✅/❌ summary visible until then.
+    });
     const box = $("svc-detail-log");
     if (box) box.scrollTop = box.scrollHeight;
   }
@@ -156,7 +190,7 @@
   }
 
   // ── Logs (Live + Files) ──
-  const logState = { entries: [], paused: false, filters: { source: "", subSource: "", level: "", search: "" } };
+  const logState = { entries: [], dayEntries: [], day: null, dayPath: null, dayMap: {}, paused: false, filters: { source: "", subSource: "", level: "", search: "" } };
   let logRenderTimer = null;
 
   function logMatchesFilters(e) {
@@ -196,8 +230,10 @@
 
   function renderLogEntries() {
     const box = $("log-box");
-    const list = logState.entries.filter(logMatchesFilters);
-    const shown = list.slice(-500);
+    // Live mode filters the streaming buffer; day mode filters that day's snapshot.
+    const pool = logState.day ? logState.dayEntries : logState.entries;
+    const list = pool.filter(logMatchesFilters);
+    const shown = logState.day ? list.slice(-3000) : list.slice(-500);
     box.innerHTML = shown.map((e, i) => logRowHTML(e, i)).join("") || '<div class="empty">No matching log entries.</div>';
     box.querySelectorAll(".log-fold").forEach((btn) =>
       btn.addEventListener("click", () => {
@@ -220,10 +256,94 @@
   }
 
   async function refreshLogs() {
+    if (logState.day) {
+      await loadLogDay(logState.day);
+      return;
+    }
     const res = await api.logsQuery({ ...logState.filters, limit: 500 });
     if (Array.isArray(res)) logState.entries = res;
     else if (res && Array.isArray(res.entries)) logState.entries = res.entries;
     renderLogEntries();
+  }
+
+  // ── Live log: browse a specific day (snapshot of logs/live/YYYY-MM-DD.jsonl) ──
+  async function logDayPaths() {
+    const res = await api.logsFiles();
+    const files = Array.isArray(res) ? res : [];
+    const days = [];
+    for (const f of files) {
+      const m = /(\d{4}-\d{2}-\d{2})\.jsonl$/.exec(f.name || "");
+      if (m && f.source === "live") days.push({ date: m[1], path: f.path });
+    }
+    days.sort((a, b) => (a.date < b.date ? 1 : -1));
+    return days;
+  }
+
+  async function populateLogDaySelect() {
+    const sel = $("log-day");
+    if (!sel) return;
+    try {
+      const days = await logDayPaths();
+      logState.dayMap = {};
+      for (const d of days) logState.dayMap[d.date] = d.path;
+      sel.innerHTML =
+        '<option value="__live__">🔴 Live (auto)</option>' +
+        days.map((d) => `<option value="${escAttr(d.date)}">📅 ${d.date}</option>`).join("");
+      sel.value = logState.day || "__live__";
+    } catch {
+      /* leave dropdown at defaults on failure */
+    }
+  }
+
+  async function loadLogDay(date) {
+    const status = $("log-day-status");
+    if (!Object.keys(logState.dayMap).length) await populateLogDaySelect();
+    const filePath = logState.dayMap[date];
+    if (!filePath) {
+      if (status) status.textContent = `⚠️ No unified live log file for ${date}.`;
+      logState.dayEntries = [];
+      renderLogEntries();
+      return;
+    }
+    const res = await api.logsFile(filePath, 10000);
+    const lines = (res && res.ok && res.lines) || [];
+    const entries = [];
+    for (const line of lines) {
+      try {
+        const e = JSON.parse(line);
+        entries.push({
+          ts: e.ts,
+          source: e.source || "app",
+          subSource: e.subSource,
+          level: e.level || "info",
+          message: e.message || "",
+          ...(e.data !== undefined ? { data: e.data } : {}),
+        });
+      } catch {
+        /* skip malformed lines */
+      }
+    }
+    logState.dayPath = filePath;
+    logState.dayEntries = entries;
+    if (status) status.textContent = `📅 ${date} — ${entries.length} entries (snapshot from logs/live). Filters apply; select 🔴 Live to resume streaming.`;
+    renderLogEntries();
+  }
+
+  function setLogDay(date) {
+    const sel = $("log-day");
+    const status = $("log-day-status");
+    if (!date || date === "__live__") {
+      logState.day = null;
+      logState.dayPath = null;
+      logState.dayEntries = [];
+      if (sel) sel.value = "__live__";
+      if (status) status.textContent = "";
+      refreshLogs();
+      return;
+    }
+    logState.day = date;
+    if (sel) sel.value = date;
+    loadLogDay(date);
   }
 
   function bindLogFilters() {
@@ -246,6 +366,14 @@
       logState.entries = [];
       renderLogEntries();
     });
+    // Browse a specific day's unified log + refresh the current view.
+    $("log-day")?.addEventListener("change", (e) => setLogDay(e.target.value));
+    $("log-refresh")?.addEventListener("click", async () => {
+      await populateLogDaySelect();
+      if (logState.day) await loadLogDay(logState.day);
+      else await refreshLogs();
+    });
+    populateLogDaySelect().catch(() => {}); // fill the date dropdown (best-effort)
     $("logs-sub-live").addEventListener("click", () => {
       $("logs-sub-live").classList.add("active");
       $("logs-sub-files").classList.remove("active");
@@ -263,7 +391,7 @@
 
   function bindLogStream() {
     api.onLogEntry((entry) => {
-      if (logState.paused) return;
+      if (logState.paused || logState.day) return; // pause streaming while browsing a day snapshot
       logState.entries.push(entry);
       if (logState.entries.length > 2000) logState.entries.splice(0, logState.entries.length - 2000);
       scheduleLogRender();
@@ -435,18 +563,66 @@
   $("accounts-refresh").addEventListener("click", refreshAccounts);
 
   // ── Tools ──
+  // The shared manifest is grouped by server (name prefix) into collapsible
+  // accordion sections. Expansion state persists across re-renders; all start collapsed.
+  const toolsState = { open: new Set() };
+  const MANIFEST_GROUPS = [
+    { prefix: "trello_", label: "Trello" },
+    { prefix: "gmail_", label: "Gmail" },
+    { prefix: "drive_", label: "Drive" },
+    { prefix: "calendar_", label: "Calendar" },
+    { prefix: "photos_", label: "Photos" },
+    { prefix: "web_", label: "Web Search" },
+    { prefix: "sheets_", label: "Sheets" },
+    { prefix: "frontdesk_", label: "Frontdesk" },
+  ];
+
   async function refreshTools() {
     const res = await api.toolsManifest();
     if (!res.ok) {
       $("manifest-box").innerHTML = `<div class="empty">${esc(res.error)}</div>`;
       return;
     }
-    $("manifest-box").innerHTML = (res.tools || [])
-      .map((t) => {
-        const props = Object.keys(t.inputSchema?.properties || {});
-        return `<div class="manifest-tool"><span class="tname">${esc(t.name)}</span><div class="tdesc">${esc(t.description || "")}</div><div class="tdesc">params: ${esc(props.join(", ") || "none")}</div></div>`;
+    const tools = res.tools || [];
+    const groups = MANIFEST_GROUPS.map((g) => ({ label: g.label, items: [] }));
+    const other = { label: "Other", items: [] };
+    for (const t of tools) {
+      const g = groups.find((x) => t.name && t.name.startsWith(x.prefix));
+      (g || other).items.push(t);
+    }
+    const all = [...groups.filter((g) => g.items.length), ...(other.items.length ? [other] : [])];
+    $("manifest-box").innerHTML = all
+      .map((g) => {
+        const open = toolsState.open.has(g.label);
+        const rows = g.items
+          .map((t) => {
+            const props = Object.keys(t.inputSchema?.properties || {});
+            return `<div class="manifest-tool"><span class="tname">${esc(t.name)}</span><div class="tdesc">${esc(t.description || "")}</div><div class="tdesc">params: ${esc(props.join(", ") || "none")}</div></div>`;
+          })
+          .join("");
+        return `<div class="manifest-group${open ? "" : " collapsed"}">
+          <div class="manifest-head" data-manifest-sec="${escAttr(g.label)}" title="click to expand/collapse"><span class="caret">${open ? "▾" : "▸"}</span>${esc(g.label)} <span class="count">${g.items.length}</span></div>
+          <div class="manifest-body">${rows}</div>
+        </div>`;
       })
       .join("");
+    $("manifest-box").querySelectorAll("[data-manifest-sec]").forEach((h) =>
+      h.addEventListener("click", () => {
+        const root = h.closest(".manifest-group");
+        if (!root) return;
+        const label = h.dataset.manifestSec;
+        const caret = h.querySelector(".caret");
+        if (toolsState.open.has(label)) {
+          toolsState.open.delete(label);
+          root.classList.add("collapsed");
+          if (caret) caret.textContent = "▸";
+        } else {
+          toolsState.open.add(label);
+          root.classList.remove("collapsed");
+          if (caret) caret.textContent = "▾";
+        }
+      }),
+    );
   }
 
   async function runTrello(action, params) {
@@ -553,7 +729,7 @@
     { key: "APPEARANCE_THEME", label: "Appearance Theme", section: "Appearance", secret: false, options: ["light", "dark", "system"] },
   ];
 
-  const configState = { values: {}, sources: {}, dirty: new Set(), raw: false };
+  const configState = { values: {}, sources: {}, dirty: new Set(), raw: false, open: new Set() };
 
   // Provider-aware metadata for the ⚙️ Config "LLM Provider" section — mirrors
   // shared/model-provider.mjs. Which keys apply per provider, the required API
@@ -634,10 +810,17 @@
       </div>`;
   }
 
-  // Build the "LLM Provider" config section: provider picker + only the active
-  // provider's fields (plus the shared temperature). Editing stays consistent —
-  // inactive providers' values are preserved in configState and only written to
-  // config.json when you actually change them.
+  // One collapsible config section: a clickable <h4> header + a hideable body.
+  // Open state lives in configState.open so re-renders (provider change, 15s
+  // auto-refresh) don't wipe it. Sections start closed by default.
+  function configSectionHTML(name, inner) {
+    const open = configState.open.has(name);
+    return `<div class="config-section${open ? "" : " collapsed"}">
+      <h4 class="config-sec-head" data-config-sec="${escAttr(name)}" title="click to expand/collapse"><span class="caret">${open ? "▾" : "▸"}</span>${esc(name)}</h4>
+      <div class="config-sec-body">${inner}</div>
+    </div>`;
+  }
+
   function llmProviderSectionHTML() {
     const pick = CONFIG_FIELDS.find((f) => f.key === "LLM_PROVIDER");
     const temp = CONFIG_FIELDS.find((f) => f.key === "LLM_TEMPERATURE");
@@ -649,7 +832,8 @@
       rows.push(configFieldHTML({ ...def, placeholder: f.placeholder, providerRequired: !!f.required }));
     }
     if (temp) rows.push(configFieldHTML(temp));
-    return `<div class="config-section">${pick ? `<h4>LLM Provider</h4>${configFieldHTML(pick)}` : ""}<div class="provider-panel">${rows.join("")}</div></div>`;
+    const inner = `${pick ? configFieldHTML(pick) : ""}<div class="provider-panel">${rows.join("")}</div>`;
+    return configSectionHTML("LLM Provider", inner);
   }
 
   function renderConfigForm() {
@@ -675,10 +859,26 @@
       sec.fields.push(f);
     }
     wrap.innerHTML = sections
-      .map((s) =>
-        s.name === "LLM Provider" ? llmProviderSectionHTML() : `<div class="config-section"><h4>${esc(s.name)}</h4>${s.fields.map(configFieldHTML).join("")}</div>`,
-      )
+      .map((s) => (s.name === "LLM Provider" ? llmProviderSectionHTML() : configSectionHTML(s.name, s.fields.map(configFieldHTML).join(""))))
       .join("");
+    // Collapse/expand toggle — click a section header.
+    wrap.querySelectorAll("[data-config-sec]").forEach((h) =>
+      h.addEventListener("click", () => {
+        const sec = h.closest(".config-section");
+        if (!sec) return;
+        const name = h.dataset.configSec;
+        const caret = h.querySelector(".caret");
+        if (configState.open.has(name)) {
+          configState.open.delete(name);
+          sec.classList.add("collapsed");
+          if (caret) caret.textContent = "▸";
+        } else {
+          configState.open.add(name);
+          sec.classList.remove("collapsed");
+          if (caret) caret.textContent = "▾";
+        }
+      }),
+    );
     wrap.querySelectorAll("[data-cfield]").forEach((el) =>
       el.addEventListener("input", (e) => {
         const k = e.currentTarget.dataset.cfield;
@@ -1155,7 +1355,7 @@
   api.onChatStep(appendChatStep);
 
   // ── Scripts (scripts/user runner — manual run only) ──
-  const scriptState = { list: [], runs: [], outputs: {}, preflight: null, form: {} };
+  const scriptState = { list: [], runs: [], outputs: {}, preflight: null, form: {}, open: new Set() };
   const scriptCap = 2000; // max buffered lines per script
 
   function appendScriptOutput(script, text) {
@@ -1254,23 +1454,43 @@
     const form = hasForm
       ? `<div class="script-form">${[...(s.manifest.positionals || []), ...(s.manifest.params || [])].map((p) => scriptFieldHTML(s, p)).join("")}</div>`
       : "";
+    // Everything below the head (usage/form/controls/output) is collapsible;
+    // cards start collapsed. Expansion state persists in scriptState.open.
+    const isOpen = scriptState.open.has(s.name);
+    const body = `<div class="script-body">${s.usage ? `<div class="script-usage">${esc(s.usage)}</div>` : ""}${form}${controls}<pre class="script-out log-box" id="script-out-${escAttr(s.name)}">${esc(out)}</pre></div>`;
     return `
-        <div class="script-card" data-card="${escAttr(s.name)}">
-          <div class="script-head">
+        <div class="script-card${isOpen ? "" : " collapsed"}" data-card="${escAttr(s.name)}">
+          <div class="script-head" data-script-toggle="${escAttr(s.name)}" title="click to expand/collapse">
+            <span class="caret">${isOpen ? "▾" : "▸"}</span>
             <strong class="script-name">${esc(s.name)}</strong>
             <span class="tag">${esc(s.runner || "no runner")}</span>
             <span class="script-status ${run ? "running" : ""}">${run ? "● running (pid " + run.pid + ")" : "idle"}</span>
             ${hasForm ? '<span class="tag valid" title="Fields from ' + escAttr(s.name) + '.params.json">form</span>' : ""}
           </div>
-          ${s.usage ? `<div class="script-usage">${esc(s.usage)}</div>` : ""}
-          ${form}
-          ${controls}
-          <pre class="script-out log-box" id="script-out-${escAttr(s.name)}">${esc(out)}</pre>
+          ${body}
         </div>`;
+  }
+
+  function toggleScriptCard(card, name) {
+    if (!card || !name) return;
+    const caret = card.querySelector("[data-script-toggle] .caret");
+    if (scriptState.open.has(name)) {
+      scriptState.open.delete(name);
+      card.classList.add("collapsed");
+      if (caret) caret.textContent = "▸";
+    } else {
+      scriptState.open.add(name);
+      card.classList.remove("collapsed");
+      if (caret) caret.textContent = "▾";
+    }
   }
 
   function bindScriptCard(card, s) {
     const name = s.name;
+    // Collapse/expand on header click.
+    card.querySelector("[data-script-toggle]")?.addEventListener("click", () => toggleScriptCard(card, name));
+    // Keep a running script expanded so its live output stays visible.
+    if (scriptState.runs.some((r) => r.script === name)) scriptState.open.add(name);
     // Persist edits so re-renders (run, 15s refresh) keep what was typed.
     card.querySelectorAll("[data-sf]").forEach((el) => {
       const save = () => {
@@ -1328,6 +1548,7 @@
           return;
         }
         scriptState.runs.push({ script: name, runId: res.runId, pid: res.pid });
+        scriptState.open.add(name); // expand so live output is visible
         renderScriptsList();
       });
     const stopBtn = card.querySelector("[data-stop]");
@@ -1391,6 +1612,19 @@
   });
   $("scripts-refresh").addEventListener("click", refreshScripts);
 
+  // ── Queue: clear-all (hard-clear a whole queue) ──
+  function bindQueueClearAll() {
+    const hook = (id, queue, label) => {
+      $(id)?.addEventListener("click", async () => {
+        if (!window.confirm(`Clear ALL items from the ${label} queue?\nThis permanently removes every item (pending + cleared) from ${queue === "priority" ? "priority.jsonl" : "misc_notifications.jsonl"}.`)) return;
+        await api.eventsClearAll(queue);
+        refreshQueue();
+      });
+    };
+    hook("queue-clear-priority", "priority", "Priority");
+    hook("queue-clear-misc", "misc_notifications", "Misc notifications");
+  }
+
   // ── Quit (stops backend services via main's before-quit) ──
   document.getElementById("quit-btn").addEventListener("click", () => {
     if (window.confirm("Quit Frontdesk Operator? Backend services will stop.")) api.quit();
@@ -1403,6 +1637,7 @@
   bindLogFilters();
   bindLogStream();
   bindLogFiles();
+  bindQueueClearAll();
   setInterval(() => {
     // Light background refresh of health + dashboard while visible
     if (document.querySelector("#tab-dashboard").classList.contains("active")) refreshDashboard();

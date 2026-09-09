@@ -98,7 +98,7 @@ async function fetchDriveChanges() {
       pageToken: savedToken,
       spaces: "drive",
       fields:
-        "changes(fileId,file(id,name,mimeType,size,parents,createdTime,modifiedTime,lastModifyingUser,owners,webViewLink,shared,md5Checksum,version,copyRequiresWriterPermission,viewedByMe,viewedByMeTime,isAppAuthorized,capabilities(canEdit,canShare,canRename,canDelete,canMoveChildrenWithinDrive)),trashed),newStartPageToken,teamDriveId",
+        "changes(fileId,file(id,name,mimeType,size,parents,createdTime,modifiedTime,lastModifyingUser,owners,webViewLink,shared,md5Checksum,version,copyRequiresWriterPermission,viewedByMe,viewedByMeTime,isAppAuthorized,capabilities(canEdit,canShare,canRename,canDelete,canMoveChildrenWithinDrive),trashed)),newStartPageToken,teamDriveId",
     });
 
     const changes = changesRes.data.changes || [];
@@ -112,7 +112,7 @@ async function fetchDriveChanges() {
     const files = changes.map((c) => {
       // Classify the change type based on what we can detect
       let changeClass;
-      if (c.removed || c.trashed) {
+      if (c.removed || c.file?.trashed) {
         changeClass = "deleted";
       } else {
         changeClass = "modified"; // Drive API doesn't distinguish created vs updated in changes feed

@@ -1,5 +1,30 @@
 # Changelog
 
+## [0.2.5-1] — 2026-09-08
+
+### Webhook server reliability
+
+- The webhook server no longer drops offline when webhooks fire. Background auto-restart can no
+  longer trigger on its own, and a single failing Trello/Gmail/Drive push can no longer crash the
+  whole server — errors are logged and it keeps running.
+- Calendar + Drive push handling fixed so stale sync tokens / an invalid field selection no
+  longer make pushes silently report “0 files”.
+- Logs always go to the repo `logs/` folder no matter where the server is started from.
+
+### Electron dashboard
+
+- **Dashboard**: every service card has a **Restart** button; the webhook service also has
+  **Restart & re-register webhooks** (re-runs the Trello/Gmail/Calendar/Drive registration
+  scripts and restarts the server, with per-step ✅/❌ results).
+- **Logs tab**: browse a specific day’s logs, or switch back to live.
+- **Queues**: clear an entire queue in one click.
+- **Chat**: longer conversations now stay correct with DeepSeek’s “thinking” replies
+  (reasoning is threaded through continued turns).
+
+### Version
+
+- App version bumped to 0.2.5.
+
 ## [0.2.4-3] — 2026-09-07
 
 ### Added

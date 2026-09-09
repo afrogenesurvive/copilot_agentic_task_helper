@@ -48,11 +48,17 @@
       <!-- Queue -->
       <section id="tab-queue" class="tab">
         <div class="panel">
-          <h3>🔴 Priority queue</h3>
+          <div class="panel-head">
+            <h3>🔴 Priority queue</h3>
+            <button id="queue-clear-priority" class="clear-all">Clear all</button>
+          </div>
           <div id="queue-priority"></div>
         </div>
         <div class="panel">
-          <h3>📥 Misc notifications</h3>
+          <div class="panel-head">
+            <h3>📥 Misc notifications</h3>
+            <button id="queue-clear-misc" class="clear-all">Clear all</button>
+          </div>
           <div id="queue-misc"></div>
         </div>
       </section>
@@ -89,6 +95,13 @@
               <label class="log-check"><input type="checkbox" id="log-f-autoscroll" checked /> auto-scroll</label>
               <button id="log-pause">⏸ Pause</button>
               <button id="log-clear">Clear</button>
+              <button id="log-refresh" title="Reload / refresh the log view">↻ Refresh</button>
+            </div>
+            <div class="log-filters">
+              <select id="log-day" title="Browse a specific day's unified live log (or leave on Live/auto)">
+                <option value="__live__">🔴 Live (auto)</option>
+              </select>
+              <span id="log-day-status" class="log-check"></span>
             </div>
             <div id="log-box" class="log-box">loading…</div>
           </div>
@@ -180,10 +193,6 @@
       <!-- Tools -->
       <section id="tab-tools" class="tab">
         <div class="panel">
-          <h3>📋 Shared tool manifest</h3>
-          <div id="manifest-box">loading…</div>
-        </div>
-        <div class="panel">
           <h3>⚡ Quick actions</h3>
           <div id="quick-tools">
             <div class="qtool">
@@ -199,6 +208,10 @@
               <div class="qresult" id="gmail-result"></div>
             </div>
           </div>
+        </div>
+        <div class="panel">
+          <h3>📋 Shared tool manifest</h3>
+          <div id="manifest-box">loading…</div>
         </div>
       </section>
 

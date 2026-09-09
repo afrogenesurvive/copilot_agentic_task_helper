@@ -422,6 +422,17 @@ async function fetchCalendarChanges() {
     return { events, count: events.length, isInitialSync, changeCounts };
   } catch (err) {
     console.error(`   ❌ [CALENDAR] fetchCalendarChanges: ${err.message}`);
+    // Google invalidates sync tokens after long idle periods (e.g. while the
+    // tunnel/channel was down) → 410 "Sync token is no longer valid". Clear the
+    // stale token so the next push performs a fresh baseline sync instead of
+    // failing on every push forever.
+    if (/sync token.*(no longer valid|invalid)|code.?[ :]*410/i.test(err.message || "")) {
+      const stale = path.resolve(__dirname, "..", "..", "..", "logs", "notifications", ".calendar-sync-token.json");
+      try {
+        if (fs.existsSync(stale)) fs.unlinkSync(stale);
+        console.error("   🧹 [CALENDAR] Cleared stale sync token — next push will full-sync.");
+      } catch { /* ignore */ }
+    }
     return {};
   }
 }

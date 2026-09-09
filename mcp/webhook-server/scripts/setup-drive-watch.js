@@ -24,7 +24,7 @@ import { google } from "googleapis";
 import { OAuth2Client } from "google-auth-library";
 import fs from "fs";
 import path from "path";
-import { fileURLToPath } from "url";
+import { fileURLToPath, pathToFileURL } from "url";
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const STATE_DIR = path.resolve(__dirname, "..", "..", "..", "logs", "notifications");
@@ -110,7 +110,11 @@ async function main() {
   await startDriveWatch();
 }
 
-main().catch((err) => {
-  console.error(`❌ ${err.message}`);
-  process.exit(1);
-});
+// Only run as a CLI when executed directly — importing this module (e.g. from
+// the webhook server for auto-renewal) must NOT register a new watch.
+if (process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href) {
+  main().catch((err) => {
+    console.error(`❌ ${err.message}`);
+    process.exit(1);
+  });
+}

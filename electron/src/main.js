@@ -951,6 +951,69 @@ async function restartService(name) {
   return true;
 }
 
+// ── Re-register webhook push sources (Trello/Gmail/Calendar/Drive) ──
+// Run each setup script with `node` (repo cwd; the scripts load .env themselves
+// via config-loader), capture their output, then restart the webhook service so
+// it picks up the new registrations + any updated code.
+const WEBHOOK_SETUP_SCRIPTS = [
+  { file: "mcp/webhook-server/scripts/setup-trello-webhook.js", label: "Trello webhooks" },
+  { file: "mcp/webhook-server/scripts/setup-gmail-watch.js", label: "Gmail watch" },
+  { file: "mcp/webhook-server/scripts/setup-calendar-watch.js", label: "Calendar watch" },
+  { file: "mcp/webhook-server/scripts/setup-drive-watch.js", label: "Drive watch" },
+];
+
+function runScriptCapture(cmd, args, timeoutMs = 60000) {
+  return new Promise((resolve) => {
+    let child;
+    try {
+      child = spawn(cmd, args, { cwd: REPO, env: process.env });
+    } catch (err) {
+      return resolve({ ok: false, code: -1, output: `spawn failed: ${err.message}` });
+    }
+    let out = "";
+    let done = false;
+    const finish = (res) => {
+      if (done) return;
+      done = true;
+      clearTimeout(timer);
+      resolve(res);
+    };
+    const timer = setTimeout(() => {
+      try {
+        child.kill("SIGTERM");
+      } catch {
+        /* ignore */
+      }
+      finish({ ok: false, code: -1, output: out + `\n[timed out after ${timeoutMs}ms]` });
+    }, timeoutMs);
+    child.stdout.on("data", (d) => (out += d.toString()));
+    child.stderr.on("data", (d) => (out += d.toString()));
+    child.on("error", (err) => finish({ ok: false, code: -1, output: out, error: err.message }));
+    child.on("close", (code) => finish({ ok: code === 0, code, output: out }));
+  });
+}
+
+async function reregisterWebhooks() {
+  const steps = [];
+  for (const s of WEBHOOK_SETUP_SCRIPTS) {
+    const r = await runScriptCapture("node", [s.file]);
+    const output = String(r.output || "").trim().slice(-3000);
+    steps.push({ label: s.label, ok: !!r.ok, code: r.code ?? null, output, error: r.error || "" });
+    liveLog.addLog({
+      source: "electron",
+      subSource: "webhook",
+      level: r.ok ? "info" : "warn",
+      message: `reregister ${s.label}: ${r.ok ? "ok" : "failed"}`,
+      data: { output },
+    });
+  }
+  // Restart the webhook service so it loads the new registrations + code.
+  let webhookRestarted = false;
+  if (running.webhook) webhookRestarted = await restartService("webhook");
+  else startService("webhook");
+  return { ok: true, steps, webhookRestarted };
+}
+
 // Resolve the active provider + model label for UI display (mirrors the
 // per-provider defaults in shared/model-provider.mjs without importing it).
 function effectiveLlmLabel() {
@@ -971,7 +1034,9 @@ function registerIpc() {
   ipcMain.handle("svc:list", () => Promise.all(Object.keys(serviceDefs).map(serviceHealth)));
   ipcMain.handle("svc:start", (_e, name) => startService(name));
   ipcMain.handle("svc:stop", (_e, name) => stopService(name));
+  ipcMain.handle("svc:restart", (_e, name) => restartService(name));
   ipcMain.handle("svc:log", (_e, name, lines) => serviceTail(name, lines));
+  ipcMain.handle("webhook:reregister", () => reregisterWebhooks());
 
   // User-script runner (scripts/user allowlist, manual run only)
   ipcMain.handle("scripts:list", async () => ({
@@ -1027,6 +1092,7 @@ function registerIpc() {
     }
   });
   ipcMain.handle("events:clear", (_e, id, queue) => webhookApi(`/events/${id}?queue=${queue}`, "PATCH"));
+  ipcMain.handle("events:clearAll", (_e, queue) => webhookApi(`/events?queue=${encodeURIComponent(queue || "misc_notifications")}`, "DELETE"));
   ipcMain.handle("logs:tool", (_e, lines) => webhookApi(`/tool-logs?lines=${lines || 40}`));
   ipcMain.handle("logs:get", (_e, filters) => liveLog.query(filters || {}));
   ipcMain.handle("logs:files", () => liveLog.listLogFiles(path.join(REPO, "logs")));
