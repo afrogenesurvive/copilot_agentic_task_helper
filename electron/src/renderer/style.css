@@ -1379,3 +1379,63 @@ th {
 #log-day-status {
   font-size: 0.7rem;
 }
+
+/* Usage tab — DS-mon status, stat cards, breakdown tables */
+.usage-status {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 0.4rem 0.8rem;
+  margin: 0.5rem 0 0.85rem;
+  font-size: 0.72rem;
+}
+.usage-cards {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.6rem;
+  margin-bottom: 0.9rem;
+}
+.usage-card {
+  flex: 1 1 140px;
+  min-width: 120px;
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  padding: 0.6rem 0.75rem;
+}
+.usage-card-value {
+  font-size: 1.05rem;
+  font-weight: 700;
+  color: var(--text);
+}
+.usage-card-label {
+  font-size: 0.66rem;
+  color: var(--muted);
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  margin-top: 0.15rem;
+}
+.usage-table-wrap {
+  margin-bottom: 1rem;
+}
+.usage-table-wrap h4 {
+  font-size: 0.78rem;
+  color: var(--muted);
+  margin-bottom: 0.4rem;
+}
+.usage-table-wrap table {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: 0.76rem;
+}
+.usage-table-wrap th {
+  text-align: left;
+  color: var(--muted);
+  font-weight: 600;
+  padding: 0.3rem 0.5rem;
+  border-bottom: 1px solid var(--border);
+}
+.usage-table-wrap td {
+  padding: 0.3rem 0.5rem;
+  border-bottom: 1px solid var(--border);
+}

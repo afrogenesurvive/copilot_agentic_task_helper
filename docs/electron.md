@@ -25,7 +25,8 @@ npm run electron:dev       # launch dashboard + autostart the whole backend
 | 🔴 Queue | Priority + misc queues, per-item clear |
 | 📄 Logs | Live unified log stream (filter by source/sub-source/level, fold JSON details) + Log file browser with pretty JSONL view |
 | 👥 Sessions | Frontdesk login/logout sessions |
-| 🔑 Licenses | Seat licenses (valid / expired / revoked) |
+| � Usage | LLM token usage + DS-mon push status + provider credit balance |
+| �🔑 Licenses | Seat licenses (valid / expired / revoked) |
 | 🔐 Accounts & Keys | Bind Google/Trello accounts per seat; ▶ Spawn MCP for a seat |
 | 💬 Chat | Chat with the configured LLM (the agent) directly from the dashboard — each conversation is saved as its own log file |
 | ⚙️ Config | Sectioned field editor with per-key source badges, secret show/hide, Save (edited keys only), Export / Import, Raw JSON toggle |
@@ -67,8 +68,9 @@ Packaged apps read the repo pieces (scripts, shared, mcp, webapp) from `extraRes
 
 A repo-root `config.json` (plain JSON) is the primary config source; `.env` is used when it's absent.
 Manage it from the **⚙️ Config** tab — a sectioned field editor with per-key source badges
-(`config.json` / `.env` / default), secret show/hide, and Save that writes only the keys you change.
-A **Raw JSON** toggle keeps the full-editor view.
+(`config.json` / `.env` / default), secret show/hide, and Save that **merges** just the keys you change
+(other keys are preserved; clearing a field reverts it to `.env`/default). A **Raw JSON** toggle keeps the
+full editor. `npm run config:init` seeds `config.json` from `.env`.
 
 ## LLM providers
 
@@ -83,6 +85,12 @@ DeepSeek (default), OpenAI, Anthropic, and a local Ollama server — via `LLM_PR
 - Saving any provider key **auto-restarts** the agent runner and webhook server (if running) so they
   pick up the new provider too; MCP servers and the tunnel are untouched.
 - The Chat header shows the active `provider · model` chip.
+
+## Usage tracking
+
+Per-LLM-call token usage is buffered locally and pushed to DS-mon when enabled. The **📈 Usage** tab
+shows the push status, a provider-aware credit-balance card, and token totals broken down by provider /
+source / model, with a **Flush now** action. Enable and configure it from **⚙️ Config → Usage tracking**.
 
 ## Operator Chat (agentic)
 

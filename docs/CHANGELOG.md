@@ -1,5 +1,33 @@
 # Changelog
 
+## [0.2.7-1] — 2026-09-09
+
+### Config: config.json + merge-on-save
+
+- **`config.json` created from `.env`** — `npm run config:init` (`scripts/config-from-env.mjs`)
+  mirrors every `.env` key into a repo-root `config.json` (merge-safe; `.env` is left in place as
+  the fallback). A `config.json` is now present, so the ⚙️ Config tab shows `✅ config.json present`.
+- **Saving merges instead of overwriting** — `config:save` now merges the changed keys into
+  `config.json` (new `config-loader.mergeConfig()`), so editing one field no longer wipes the rest
+  of the file. Empty fields are dropped (revert to `.env`/default), mirroring `ai_transcription_agent`.
+- **Usage-tracking keys restart the spawned services** — saving any `USAGE_TRACKING_*` / `DSMON_*`
+  key now restarts the runner + webhook children so `shared/usage-tracker.mjs` picks up the change.
+
+### Usage tracking (DS-mon) in config + UI
+
+- New **Usage tracking** section in the ⚙️ Config tab: enable toggle, DS-mon push URL / token /
+  interval / instance ID, optional AES-256 encryption key (+ key ID), and credit poll interval.
+- New **📈 Usage** sidebar tab: DS-mon push status (enabled, buffer size, last push, instance ID),
+  a provider-aware DeepSeek credit-balance card, and per-LLM-call token totals broken down by
+  provider, source (flow) and model — read from `logs/dsmon_buffer.jsonl`. Includes a **Flush now**
+  action and a persisted poll-interval selector.
+- New IPC: `usage:aggregate`, `usage:credits`, `usage:flush`. New config key `CREDIT_POLL_INTERVAL`
+  (default 60000).
+
+### Docs
+
+- New `electron/docs/usage.md`; `electron/docs/config.md` and the guide index updated.
+
 ## [0.2.6-1] — 2026-09-09
 
 ### WhatsApp (Meta Cloud API) MCP integration

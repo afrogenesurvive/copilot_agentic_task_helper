@@ -1017,6 +1017,7 @@ function setupReadline() {
           userContext: eventContext,
           tools: allTools,
           temperature: 0.1,
+          meta: { source: "webhook-execute" },
         });
 
         if (!toolCall) {
@@ -1113,6 +1114,7 @@ function setupReadline() {
           userContext: taskContext,
           tools: allTools,
           temperature: 0.1,
+          meta: { source: "webhook-execute-task" },
         });
 
         if (!toolCall) {

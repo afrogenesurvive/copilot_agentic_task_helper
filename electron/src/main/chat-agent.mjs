@@ -173,6 +173,7 @@ export async function runOperatorAgent({
       messages: toProviderMessages(history),
       tools,
       temperature,
+      meta: { source: "operator-agent", step: rounds + 1 },
     });
     if (res && res.usage) lastUsage = res.usage;
     if (res && res.reasoning_content) lastReasoning = res.reasoning_content;

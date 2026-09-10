@@ -1,9 +1,11 @@
 /**
  * Config Loader — plain-JSON config with .env fallback (dual CJS/ESM).
  *
- * Precedence:
- *   1. <repo>/config.json  — a plain JSON object of env key/value pairs. PRIMARY.
- *   2. <repo>/.env         — KEY=VALUE lines. FALLBACK when config.json is absent.
+ * Precedence (runtime, per key):
+ *   1. <repo>/config.json  — a plain JSON object of env key/value pairs. PRIMARY
+ *      (wins for every key it defines).
+ *   2. <repo>/.env         — KEY=VALUE lines. FALLBACK for keys absent from
+ *      config.json (and the sole source when config.json does not exist).
  *
  * Used by:
  *   - The Electron operator (CommonJS `require`) to load config at startup and
@@ -49,6 +51,16 @@ const DEFAULTS = {
   TRUST_PROXY: "1",
   // WhatsApp (Meta Cloud API) — annotation defaults only (never written)
   WHATSAPP_API_VERSION: "v25.0",
+  // DS-mon LLM usage tracking — annotation defaults only (never written)
+  USAGE_TRACKING_ENABLED: "false",
+  DSMON_PUSH_URL: "",
+  DSMON_PUSH_TOKEN: "",
+  DSMON_PUSH_INTERVAL: "300000",
+  DSMON_INSTANCE_ID: "",
+  DSMON_ENCRYPTION_KEY: "",
+  DSMON_ENCRYPTION_KEY_ID: "dsmon",
+  // Usage tab — credit-balance poll interval (ms); annotation default only
+  CREDIT_POLL_INTERVAL: "60000",
 };
 
 /** True when config.json exists (primary source present). */
@@ -147,12 +159,42 @@ function readWithSources(defaults = DEFAULTS) {
 }
 
 /**
+ * Read the runtime-effective flat map with per-key precedence.
+ * config.json wins for keys it defines; keys it lacks fall back to .env
+ * (and .env is the sole source when config.json does not exist).
+ */
+function readRuntimeValues() {
+  let cfg = {};
+  let cfgOk = false;
+  let error;
+  if (hasConfigJson()) {
+    try {
+      cfg = readConfigFile() || {};
+      cfgOk = true;
+    } catch (e) {
+      // Corrupt config.json — fall back to .env but surface the error.
+      error = e.message;
+    }
+  }
+  const env = readEnv();
+  // Merge: env first, config.json overrides per key.
+  const merged = { ...env, ...cfg };
+  const source = cfgOk
+    ? "config.json + .env fallback"
+    : hasConfigJson()
+      ? "config.json (invalid — using .env)"
+      : ".env";
+  return { source, values: merged, ...(error ? { error } : {}) };
+}
+
+/**
  * Load the effective config into a target (default process.env).
- * Does NOT overwrite keys already present in the target.
+ * Per-key precedence: config.json > .env. Does NOT overwrite keys already
+ * present in the target.
  * @returns {{source: string, loadedKeys: string[]}}
  */
 function loadEnvInto(target = process.env) {
-  const eff = readEffective();
+  const eff = readRuntimeValues();
   const loadedKeys = [];
   for (const [k, v] of Object.entries(eff.values || {})) {
     if (v == null) continue;
@@ -178,6 +220,33 @@ function saveConfig(values) {
   }
   fs.writeFileSync(CONFIG_PATH, JSON.stringify(values, null, 2) + "\n", "utf8");
   return { ok: true, path: CONFIG_PATH, count: Object.keys(values).length };
+}
+
+/**
+ * Merge the given keys into the existing config.json (partial save).
+ * Unlike saveConfig(), keys already on disk are preserved — only the provided
+ * keys are added/overwritten. Empty-string values are skipped (they mean
+ * "revert to .env / default"), mirroring the ai_transcription_agent semantics.
+ */
+function mergeConfig(values) {
+  if (!values || typeof values !== "object" || Array.isArray(values)) {
+    return { ok: false, error: "config must be a flat JSON object of key/value pairs" };
+  }
+  let existing = {};
+  try {
+    existing = readConfigFile() || {};
+  } catch {
+    existing = {}; // corrupt/absent — start fresh rather than throw
+  }
+  const merged = { ...existing };
+  let changed = 0;
+  for (const [k, v] of Object.entries(values)) {
+    if (v === undefined || v === null || v === "") continue;
+    merged[k] = String(v);
+    changed += 1;
+  }
+  fs.writeFileSync(CONFIG_PATH, JSON.stringify(merged, null, 2) + "\n", "utf8");
+  return { ok: true, path: CONFIG_PATH, count: Object.keys(merged).length, changed };
 }
 
 /**
@@ -248,6 +317,7 @@ module.exports = {
   loadEnvInto,
   applyValues,
   saveConfig,
+  mergeConfig,
   setKey,
   exportConfig,
   importConfig,

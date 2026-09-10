@@ -15,6 +15,8 @@
  * return: { toolCall: { name, arguments } | null, reply: string | null, usage }.
  */
 
+import { recordCall } from "./usage-tracker.mjs";
+
 /**
  * Resolve the active provider from env on every call, so provider/model changes
  * (e.g. saved from the Electron ⚙️ Config tab) apply immediately in long-lived
@@ -172,9 +174,9 @@ async function resolveCallParams({ temperature }) {
  * @param {number} [opts.temperature] — defaults to LLM_TEMPERATURE or 0.1
  * @returns {Promise<{toolCall: {name: string, arguments: object}|null, reply: string|null, usage: object|null}>}
  */
-export async function callChat({ systemMessage, userContext, tools = [], temperature }) {
+export async function callChat({ systemMessage, userContext, tools = [], temperature, meta }) {
   const temp = await resolveCallParams({ temperature });
-  return requestWithTools({ systemMessage, messages: [{ role: "user", content: userContext }], tools, temperature: temp });
+  return requestWithTools({ systemMessage, messages: [{ role: "user", content: userContext }], tools, temperature: temp, meta });
 }
 
 /**
@@ -190,20 +192,37 @@ export async function callChat({ systemMessage, userContext, tools = [], tempera
  * @param {number} [opts.temperature] — defaults to LLM_TEMPERATURE or 0.1
  * @returns {Promise<{toolCall: {name: string, arguments: object}|null, reply: string|null, usage: object|null}>}
  */
-export async function callChatHistory({ systemMessage, messages = [], tools = [], temperature }) {
+export async function callChatHistory({ systemMessage, messages = [], tools = [], temperature, meta }) {
   const temp = await resolveCallParams({ temperature });
-  return requestWithTools({ systemMessage, messages, tools, temperature: temp });
+  return requestWithTools({ systemMessage, messages, tools, temperature: temp, meta });
 }
 
-async function requestWithTools({ systemMessage, messages, tools, temperature }) {
+async function requestWithTools({ systemMessage, messages, tools, temperature, meta }) {
   if (getProvider() === "anthropic") {
-    return callAnthropic({ systemMessage, messages, tools, temperature });
+    return callAnthropic({ systemMessage, messages, tools, temperature, meta });
   }
-  return callOpenAiCompatible({ systemMessage, messages, tools, temperature });
+  return callOpenAiCompatible({ systemMessage, messages, tools, temperature, meta });
+}
+
+/**
+ * Record normalized usage with DS-mon (no-op for ollama / missing usage).
+ * Called centrally on every successful provider response so ALL LLM callers
+ * (agent runner, webhook execute, Electron chat, operator agent) are tracked.
+ */
+function trackUsage(usage, providerId, model, latencyMs, meta) {
+  if (!usage || providerId === "ollama") return;
+  recordCall(usage, {
+    providerId,
+    model,
+    latencyMs,
+    source: meta?.source,
+    step: meta?.step,
+    tool: meta?.tool,
+  });
 }
 
 /** Anthropic Messages API — multi-turn messages converted to content blocks. */
-async function callAnthropic({ systemMessage, messages, tools, temperature }) {
+async function callAnthropic({ systemMessage, messages, tools, temperature, meta }) {
   const body = {
     model: getModelName(),
     system: systemMessage,
@@ -218,6 +237,7 @@ async function callAnthropic({ systemMessage, messages, tools, temperature }) {
     temperature,
   };
 
+  const startedAt = Date.now();
   const res = await fetch(resolveEndpoint(), {
     method: "POST",
     headers: {
@@ -247,6 +267,8 @@ async function callAnthropic({ systemMessage, messages, tools, temperature }) {
       }
     : null;
 
+  trackUsage(usage, getProvider(), body.model, Date.now() - startedAt, meta);
+
   const toolUse = (data.content || []).find((b) => b && b.type === "tool_use");
   if (!toolUse || data.stop_reason !== "tool_use") {
     const reply = (data.content || [])
@@ -260,7 +282,7 @@ async function callAnthropic({ systemMessage, messages, tools, temperature }) {
 }
 
 /** OpenAI-compatible path — shared by deepseek, openai, and ollama. */
-async function callOpenAiCompatible({ systemMessage, messages, tools, temperature }) {
+async function callOpenAiCompatible({ systemMessage, messages, tools, temperature, meta }) {
   const provider = getProvider();
   const body = {
     model: getModelName(),
@@ -297,6 +319,7 @@ async function callOpenAiCompatible({ systemMessage, messages, tools, temperatur
     body.num_ctx = getNumCtx();
   }
 
+  const startedAt = Date.now();
   const res = await fetch(resolveEndpoint(), {
     method: "POST",
     headers: { "Content-Type": "application/json", Authorization: `Bearer ${keyGuard()}` },
@@ -310,6 +333,7 @@ async function callOpenAiCompatible({ systemMessage, messages, tools, temperatur
 
   const data = await res.json();
   const usage = data.usage || null;
+  trackUsage(usage, provider, body.model, Date.now() - startedAt, meta);
   const message = data.choices?.[0]?.message;
   const toolCall = message?.tool_calls?.[0];
   // DeepSeek thinking mode emits reasoning_content on every assistant reply;

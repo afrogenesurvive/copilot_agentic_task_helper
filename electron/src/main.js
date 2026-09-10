@@ -916,7 +916,7 @@ async function chatSend(id, message) {
         .map((e) => `${e.role === "user" ? "User" : e.role === "system" ? "System" : "Assistant"}: ${e.content}`)
         .join("\n\n");
       const context = transcript ? `${transcript}\n\nUser: ${text}` : text;
-      const { reply, usage } = await callChat({ systemMessage, userContext: context, tools: [] });
+      const { reply, usage } = await callChat({ systemMessage, userContext: context, tools: [], meta: { source: "electron-chat" } });
       const replyText = reply != null ? String(reply) : "(no reply)";
       chatBroadcast({ sessionId: id, entry: chatAppend(id, { role: "assistant", content: replyText, model, origin, usage: usage || undefined }).entry });
       return { ok: true, reply: replyText, model, origin };
@@ -993,6 +993,108 @@ const PROVIDER_KEYS = new Set([
   "OLLAMA_MODEL",
   "OLLAMA_NUM_CTX",
 ]);
+
+// Env keys whose change must restart the spawned runner/webhook children (they
+// read process.env at spawn). Includes the LLM provider keys plus the DS-mon
+// usage-tracking keys consumed by shared/usage-tracker.mjs.
+const USAGE_KEYS = new Set([
+  "USAGE_TRACKING_ENABLED",
+  "DSMON_PUSH_URL",
+  "DSMON_PUSH_TOKEN",
+  "DSMON_PUSH_INTERVAL",
+  "DSMON_INSTANCE_ID",
+  "DSMON_ENCRYPTION_KEY",
+  "DSMON_ENCRYPTION_KEY_ID",
+]);
+const RESTART_KEYS = new Set([...PROVIDER_KEYS, ...USAGE_KEYS]);
+
+// ── Usage tracking (DS-mon) — local buffer aggregation for the Usage tab ─────
+const USAGE_BUFFER = path.join(REPO, "logs", "dsmon_buffer.jsonl");
+
+function readUsageRecords() {
+  try {
+    return fs
+      .readFileSync(USAGE_BUFFER, "utf8")
+      .split("\n")
+      .filter((l) => l.trim())
+      .map((l) => {
+        try {
+          return JSON.parse(l);
+        } catch {
+          return null;
+        }
+      })
+      .filter(Boolean);
+  } catch {
+    return [];
+  }
+}
+
+function zeroTotals() {
+  return { calls: 0, promptTokens: 0, completionTokens: 0, totalTokens: 0 };
+}
+
+function usageBucket(map, key) {
+  if (!map[key]) map[key] = zeroTotals();
+  return map[key];
+}
+
+function addUsage(bucket, r) {
+  bucket.calls += 1;
+  bucket.promptTokens += r.promptTokens || 0;
+  bucket.completionTokens += r.completionTokens || 0;
+  bucket.totalTokens += r.totalTokens || 0;
+}
+
+/** Aggregate the local DS-mon usage buffer + push status for the Usage tab. */
+async function usageAggregate() {
+  const records = readUsageRecords();
+  const totals = zeroTotals();
+  const byProvider = {};
+  const bySource = {};
+  const byModel = {};
+  for (const r of records) {
+    addUsage(totals, r);
+    addUsage(usageBucket(byProvider, r.providerId || "unknown"), r);
+    addUsage(usageBucket(bySource, r.source || "unknown"), r);
+    addUsage(usageBucket(byModel, r.model || "unknown"), r);
+  }
+  let dsmon = { at: null, ok: null, count: 0, error: null, bufferBytes: 0, bufferCount: records.length, instanceId: "" };
+  try {
+    const mod = await import(pathToFileURL(path.join(REPO, "shared", "usage-tracker.mjs")).href);
+    dsmon = { ...dsmon, ...mod.getDsmonStatus() };
+  } catch {
+    // Non-fatal — the tab still renders local totals.
+  }
+  const enabled = (process.env.USAGE_TRACKING_ENABLED || "false") === "true";
+  const rawUrl = (process.env.DSMON_PUSH_URL || "").trim().replace(/\/+$/, "");
+  return { ok: true, enabled, pushUrl: rawUrl, totals, byProvider, bySource, byModel, dsmon };
+}
+
+/**
+ * DeepSeek credit balance (mirrors the transcription agent's Usage tab card).
+ * The API key never leaves the main process.
+ */
+async function usageCredits() {
+  const provider = (process.env.LLM_PROVIDER || "deepseek").toLowerCase();
+  if (provider === "ollama") return { available: false, provider, balance: null, error: "Local LLM — no cost to track." };
+  if (provider !== "deepseek") return { available: false, provider, balance: null, error: `${provider} has no public usage/balance endpoint.` };
+  const key = process.env.DEEPSEEK_API_KEY || "";
+  if (!key) return { available: false, provider, balance: null, error: "No DeepSeek API key configured." };
+  try {
+    const res = await fetch("https://api.deepseek.com/user/balance", {
+      headers: { Authorization: `Bearer ${key}` },
+      signal: AbortSignal.timeout(5000),
+    });
+    if (!res.ok) return { available: false, provider, balance: null, error: `HTTP ${res.status}` };
+    const data = await res.json();
+    const first = Array.isArray(data.balance_infos) ? data.balance_infos[0] : null;
+    const raw = first && first.total_balance != null ? first.total_balance : data.balance != null ? data.balance : null;
+    return { available: data.is_available !== false, provider, balance: raw == null ? null : String(raw), error: null };
+  } catch (err) {
+    return { available: false, provider, balance: null, error: err.message };
+  }
+}
 
 // Restart a running service so it re-reads the (updated) process.env. Returns
 // true when a service was actually restarted. Waits briefly so the old process
@@ -1188,15 +1290,23 @@ function registerIpc() {
   });
   ipcMain.handle("config:save", async (_e, values) => {
     const payload = values || {};
-    const res = config.saveConfig(payload);
+    // Merge (not overwrite): a partial edit must not clobber other keys already
+    // in config.json. Empty strings are dropped (they mean "revert to
+    // .env/default"), mirroring the transcription agent's save semantics.
+    const clean = {};
+    for (const [k, v] of Object.entries(payload)) {
+      if (v === undefined || v === null || v === "") continue;
+      clean[k] = String(v);
+    }
+    if (Object.keys(clean).length === 0) return { ok: true, path: config.CONFIG_PATH, count: 0, changed: 0, restarted: [] };
+    const res = config.mergeConfig(clean);
     if (!res.ok) return res;
-    config.applyValues(payload, process.env);
-    // Provider changes affect the LLM path. The in-process Chat reads env live
-    // (shared/model-provider.mjs resolves provider/model per call), but the
-    // spawned runner + webhook read it at startup — restart them so they pick
-    // up the change immediately.
+    config.applyValues(clean, process.env);
+    // Provider + usage-tracking changes affect the LLM path. The in-process Chat
+    // reads env live (shared/model-provider.mjs resolves per call), but the
+    // spawned runner + webhook read it at startup — restart them so changes apply.
     const restarted = [];
-    if (Object.keys(payload).some((k) => PROVIDER_KEYS.has(k))) {
+    if (Object.keys(clean).some((k) => RESTART_KEYS.has(k))) {
       for (const name of ["runner", "webhook"]) {
         if (await restartService(name)) restarted.push(name);
       }
@@ -1210,6 +1320,19 @@ function registerIpc() {
     json: config.exportConfig(),
   }));
   ipcMain.handle("config:import", (_e, raw) => config.importConfig(raw));
+
+  // Usage (DS-mon LLM token usage + DeepSeek credit balance)
+  ipcMain.handle("usage:aggregate", () => usageAggregate());
+  ipcMain.handle("usage:credits", () => usageCredits());
+  ipcMain.handle("usage:flush", async () => {
+    try {
+      const mod = await import(pathToFileURL(path.join(REPO, "shared", "usage-tracker.mjs")).href);
+      await mod.flushBuffer();
+      return { ok: true };
+    } catch (err) {
+      return { ok: false, error: err.message };
+    }
+  });
 
   ipcMain.handle("tools:manifest", () => toolsManifest());
   ipcMain.handle("tools:trello", (_e, action, params) => trelloAction(action, params));

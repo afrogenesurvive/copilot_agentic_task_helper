@@ -28,6 +28,7 @@
       if (tab === "logs") refreshLogs();
       if (tab === "sessions") refreshSessions();
       if (tab === "licenses") refreshLicenses();
+      if (tab === "usage") refreshUsage();
       if (tab === "accounts") refreshAccounts();
       if (tab === "config") refreshConfig();
       if (tab === "tools") refreshTools();
@@ -793,6 +794,16 @@
     { key: "LOG_LEVEL", label: "Log Level", section: "Logging", secret: false, options: ["debug", "info", "warn", "error"] },
     { key: "LOG_DIR", label: "Log Directory", section: "Logging", secret: false },
     { key: "LOG_CONSOLE", label: "Echo to Console", section: "Logging", secret: false, options: ["0", "1", "true", "false"] },
+    // Usage tracking (DS-mon) — per-LLM-call token usage buffer + push. Ollama is
+    // never tracked (local + free). Mirrors the transcription agent's section.
+    { key: "USAGE_TRACKING_ENABLED", label: "Enable Usage Tracking", section: "Usage tracking", secret: false, options: ["true", "false"] },
+    { key: "DSMON_PUSH_URL", label: "DS-mon Push URL", section: "Usage tracking", secret: false },
+    { key: "DSMON_PUSH_TOKEN", label: "DS-mon Push Token", section: "Usage tracking", secret: true },
+    { key: "DSMON_PUSH_INTERVAL", label: "Push Interval (ms)", section: "Usage tracking", secret: false },
+    { key: "DSMON_INSTANCE_ID", label: "Instance ID", section: "Usage tracking", secret: false },
+    { key: "DSMON_ENCRYPTION_KEY", label: "Encryption Key (AES-256, optional)", section: "Usage tracking", secret: true },
+    { key: "DSMON_ENCRYPTION_KEY_ID", label: "Encryption Key ID", section: "Usage tracking", secret: false },
+    { key: "CREDIT_POLL_INTERVAL", label: "Credit Poll Interval (ms)", section: "Usage tracking", secret: false },
     // Appearance
     { key: "APPEARANCE_THEME", label: "Appearance Theme", section: "Appearance", secret: false, options: ["light", "dark", "system"] },
   ];
@@ -1063,6 +1074,102 @@
     e.target.value = "";
   });
 
+  // ── Usage (DS-mon LLM token usage + push status) ──
+  const usageState = { timer: null };
+  const fmtNum = (n) => (n == null ? "0" : Number(n).toLocaleString());
+  const fmtTokens = (n) => {
+    const v = Number(n) || 0;
+    if (v >= 1e6) return (v / 1e6).toFixed(2) + "M";
+    if (v >= 1e3) return (v / 1e3).toFixed(1) + "K";
+    return String(v);
+  };
+
+  function usageCard(label, value) {
+    return `<div class="usage-card"><div class="usage-card-value">${esc(value)}</div><div class="usage-card-label">${esc(label)}</div></div>`;
+  }
+
+  function renderUsageCredits(c) {
+    const box = $("usage-credit");
+    if (!box) return;
+    box.innerHTML =
+      c && c.balance != null
+        ? `<span class="tag valid">✅ Available</span> <b>${esc(c.balance)}</b> <span class="config-src">DeepSeek credit balance</span>`
+        : c
+          ? `<span class="tag expired">⚠️ ${esc(c.error || "credit balance unavailable")}</span>`
+          : "";
+  }
+
+  function usageRows(map) {
+    return (
+      Object.entries(map || {})
+        .sort((a, b) => b[1].totalTokens - a[1].totalTokens)
+        .map(
+          ([k, v]) =>
+            `<tr><td>${esc(k)}</td><td>${fmtNum(v.calls)}</td><td>${fmtTokens(v.promptTokens)}</td><td>${fmtTokens(v.completionTokens)}</td><td>${fmtTokens(v.totalTokens)}</td></tr>`,
+        )
+        .join("") || '<tr><td colspan="5" class="empty">no data</td></tr>'
+    );
+  }
+
+  function usageTable(title, map) {
+    return `<div class="usage-table-wrap"><h4>${esc(title)}</h4><table><thead><tr><th>Key</th><th>Calls</th><th>Input</th><th>Output</th><th>Total</th></tr></thead><tbody>${usageRows(map)}</tbody></table></div>`;
+  }
+
+  function renderUsage(agg, credits) {
+    if (!agg || agg.ok === false) {
+      $("usage-status").innerHTML = '<span class="tag expired">⚠️ usage unavailable</span>';
+      return;
+    }
+    const d = agg.dsmon || {};
+    const push =
+      d.ok === true
+        ? `<span class="tag valid">✅ last push ${fmtNum(d.count)} record(s)</span>`
+        : d.ok === false
+          ? `<span class="tag expired">⚠️ push failed: ${esc(d.error || "error")}</span>`
+          : '<span class="tag">no push yet</span>';
+    $("usage-status").innerHTML =
+      `<span class="tag ${agg.enabled ? "valid" : "expired"}">${agg.enabled ? "enabled" : "disabled"}</span>` +
+      `<span class="config-src">${agg.enabled ? `pushing to <code>${esc(agg.pushUrl || "—")}</code>` : "Usage Tracking is off — enable it in ⚙️ Config"}</span>` +
+      `<span class="config-src">buffered <b>${fmtNum(d.bufferCount)}</b> record(s) · instance <code>${esc(d.instanceId || "—")}</code></span>` +
+      push +
+      '<span id="usage-credit"></span>';
+    renderUsageCredits(credits);
+
+    const t = agg.totals || {};
+    $("usage-cards").innerHTML =
+      usageCard("Calls", fmtNum(t.calls)) +
+      usageCard("Total Tokens", fmtTokens(t.totalTokens)) +
+      usageCard("Input Tokens", fmtTokens(t.promptTokens)) +
+      usageCard("Output Tokens", fmtTokens(t.completionTokens));
+    $("usage-tables").innerHTML =
+      usageTable("By provider", agg.byProvider) + usageTable("By source (flow)", agg.bySource) + usageTable("By model", agg.byModel);
+  }
+
+  async function refreshUsage() {
+    // Interval comes from config (CREDIT_POLL_INTERVAL); fall back to 60s.
+    const cfg = await api.configWithSources();
+    const raw = cfg && cfg.values && cfg.values.CREDIT_POLL_INTERVAL ? cfg.values.CREDIT_POLL_INTERVAL.value : "60000";
+    const interval = parseInt(raw, 10) || 60000;
+    const sel = $("usage-interval");
+    if (sel) sel.value = String(interval);
+
+    const [agg, credits] = await Promise.all([api.usageAggregate(), api.usageCredits()]);
+    renderUsage(agg, credits);
+
+    if (usageState.timer) clearInterval(usageState.timer);
+    usageState.timer = setInterval(async () => renderUsageCredits(await api.usageCredits()), interval);
+  }
+
+  $("usage-refresh").addEventListener("click", refreshUsage);
+  $("usage-interval").addEventListener("change", async (e) => {
+    const res = await api.configSave({ CREDIT_POLL_INTERVAL: String(e.target.value) });
+    if (res && res.ok) refreshUsage();
+  });
+  $("usage-flush").addEventListener("click", async () => {
+    await api.usageFlush();
+    await refreshUsage();
+  });
+
   // ── Appearance (light/dark/system) ──
   let sysMedia = null;
   let sysHandler = null;
@@ -1111,6 +1218,7 @@
     { file: "licenses.md", title: "🔑 Licenses" },
     { file: "accounts.md", title: "🔐 Accounts & Keys" },
     { file: "config.md", title: "⚙️ Config" },
+    { file: "usage.md", title: "📈 Usage" },
     { file: "tools.md", title: "🧰 Tools" },
     { file: "whatsapp.md", title: "💬 WhatsApp" },
     { file: "scripts.md", title: "📜 Scripts" },

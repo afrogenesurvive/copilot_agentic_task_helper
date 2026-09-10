@@ -16,6 +16,7 @@
           <button data-tab="queue">🔴 Queue</button>
           <button data-tab="logs">📄 Logs</button>
           <button data-tab="sessions">👥 Sessions</button>
+          <button data-tab="usage">📈 Usage</button>
           <button data-tab="licenses">🔑 Licenses</button>
           <button data-tab="accounts">🔐 Accounts &amp; Keys</button>
           <button data-tab="config">⚙️ Config</button>
@@ -177,6 +178,33 @@
             <b>public chat webapp</b> (login + which accounts the agent uses for that seat); collaborators
             never see this app — each only uses their own webapp chat.
           </p>
+        </div>
+      </section>
+
+      <!-- Usage (LLM token usage + DS-mon push status) -->
+      <section id="tab-usage" class="tab">
+        <div class="panel">
+          <div class="panel-head">
+            <h3>📈 Usage</h3>
+            <div>
+              <select id="usage-interval" title="Credit balance poll interval">
+                <option value="30000">Every 30s</option>
+                <option value="60000">Every 1 min</option>
+                <option value="300000">Every 5 min</option>
+                <option value="600000">Every 10 min</option>
+              </select>
+              <button id="usage-flush" title="Push buffered usage to DS-mon now">Flush now</button>
+              <button id="usage-refresh">Refresh</button>
+            </div>
+          </div>
+          <p class="hint">
+            Per-LLM-call token usage recorded by the backend (<code>shared/usage-tracker.mjs</code>).
+            Usage is buffered to <code>logs/dsmon_buffer.jsonl</code> and pushed to DS-mon when
+            <b>Usage Tracking</b> is enabled in ⚙️ Config. Ollama (local) calls are never tracked.
+          </p>
+          <div id="usage-status" class="usage-status"></div>
+          <div id="usage-cards" class="usage-cards"></div>
+          <div id="usage-tables"></div>
         </div>
       </section>
 

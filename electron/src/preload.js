@@ -35,6 +35,10 @@ contextBridge.exposeInMainWorld("api", {
   configSave: (values) => ipcRenderer.invoke("config:save", values),
   configExport: () => ipcRenderer.invoke("config:export"),
   configImport: (raw) => ipcRenderer.invoke("config:import", raw),
+  // Usage (DS-mon LLM token usage + DeepSeek credit balance)
+  usageAggregate: () => ipcRenderer.invoke("usage:aggregate"),
+  usageCredits: () => ipcRenderer.invoke("usage:credits"),
+  usageFlush: () => ipcRenderer.invoke("usage:flush"),
   googleStatus: () => ipcRenderer.invoke("google:status"),
   // Accounts & Keys (seat → Google/Trello bindings)
   accountsList: () => ipcRenderer.invoke("accounts:list"),

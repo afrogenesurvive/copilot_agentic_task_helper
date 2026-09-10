@@ -155,6 +155,7 @@ export async function callModel(context, toolDefs) {
       systemMessage,
       userContext: eventContext,
       tools: toolDefs,
+      meta: { source: "agent-runner", step: "decision" },
     });
 
     if (!toolCall) {

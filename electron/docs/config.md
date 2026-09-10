@@ -5,6 +5,8 @@ The Config tab edits the app's plain-JSON configuration. There are two storage l
 - **`config.json`** at the repo root — when present it **overrides** `.env`.
 - **`.env`** — used as a fallback when `config.json` is absent. Pressing **Save** writes a
   `config.json` from the values you changed.
+- Run `npm run config:init` (`scripts/config-from-env.mjs`) to (re)create `config.json` by
+  mirroring every `.env` key. It is merge-safe and leaves `.env` untouched as the fallback.
 
 The header shows which source is active: `✅ config.json present` or
 `⚠️ no config.json … falling back to .env`.
@@ -27,6 +29,8 @@ Settings are grouped into sections, each field showing its **source tag** (`conf
   secret, auth passphrase.
 - **Tunnel** — Cloudflare tunnel token / ID / domain.
 - **AWS** — access key/secret/session token, region, profile (used by helper scripts).
+- **Usage tracking** — DS-mon master toggle, push URL / token / interval / instance ID, optional
+  AES-256 encryption key (+ key ID), and the Usage-tab credit poll interval. See `usage.md`.
 - **Agent runner** — enabled toggle, task interval, verbose prompt logging.
 - **Logging** — log level, directory, console echo.
 - **Appearance** — `light` / `dark` / `system` (same setting as the 🎨 Appearance tab).
@@ -37,16 +41,18 @@ Secret fields render as password inputs with a **👁 / 🙈** toggle to reveal.
 
 - **Refresh** — re-read config from disk.
 - **Raw JSON / Form view** — switch between the sectioned form and a full JSON editor.
-- **💾 Save** — writes only the keys you changed to `config.json`. If you changed any LLM/provider
-  keys, the runner and webhook services restart automatically so the new provider is live; the
-  💬 Chat tab picks changes up immediately.
+- **💾 Save** — **merges** the keys you changed into `config.json` (other keys are preserved;
+  clearing a field to empty reverts it to `.env`/default). If you changed any LLM/provider **or
+  usage-tracking** keys, the runner and webhook services restart automatically so the change is
+  live; the 💬 Chat tab picks LLM changes up immediately.
 - **📤 Export** — downloads the current config as `config.json`.
 - **📥 Import** — loads a JSON file you pick and writes it to `config.json`.
 
 ## Notes
 
-- Only keys you actually change are written, so other settings (including other providers'
-  keys) are preserved.
+- Saving **merges** — only keys you actually change are updated, so other settings (including
+  other providers' keys) are preserved. Clearing a field to empty removes it from `config.json`,
+  falling back to `.env` or the built-in default.
 - Validation is light: e.g. saving an LLM provider with no API key succeeds but warns that calls
   will fail until the key is added.
 - Config here is the **local** operator config. Netlify-hosted settings for the webapp are
