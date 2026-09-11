@@ -25,8 +25,8 @@ npm run electron:dev       # launch dashboard + autostart the whole backend
 | 🔴 Queue | Priority + misc queues, per-item clear |
 | 📄 Logs | Live unified log stream (filter by source/sub-source/level, fold JSON details) + Log file browser with pretty JSONL view |
 | 👥 Sessions | Frontdesk login/logout sessions |
-| � Usage | LLM token usage + DS-mon push status + provider credit balance |
-| �🔑 Licenses | Seat licenses (valid / expired / revoked) |
+| �📈 Usage | LLM token usage + DS-mon push status + provider credit balance |
+| 🔑 Key Manager | Every registry in the key store (picker): seat licences (issue / revoke / unrevoke / archive expired / validate), master **rings** (new / retire / make default / agent key), the audit log, and blocklist sync for registries that embed it |
 | 🔐 Accounts & Keys | Bind Google/Trello accounts per seat; ▶ Spawn MCP for a seat |
 | 💬 Chat | Chat with the configured LLM (the agent) directly from the dashboard — each conversation is saved as its own log file |
 | ⚙️ Config | Sectioned field editor with per-key source badges, secret show/hide, Save (edited keys only), Export / Import, Raw JSON toggle |
@@ -114,6 +114,24 @@ requests, with tool activity shown inline as chips and result bubbles:
 - Runs executables under the operator scripts folder (bash/node/python3) — manual only.
 - A `<script>.params.json` sidecar generates a typed form (text / number / checkbox / dropdown / file
   picker); scripts without one keep the raw args box. See [`electron/docs/scripts.md`](electron/docs/scripts.md).
+
+## Loading & errors
+
+Long-running actions (service start/stop/restart, licence operations, config save/import, per-seat account
+setup, tool calls) show a **blocking overlay** with the action's context, a “still working” hint if they
+take unusually long, and an optional Cancel. Panel and tab loads use an inline spinner instead, so the
+surrounding UI stays readable.
+
+Every load that can fail renders the error **in place with a Retry button**, and a background safety net
+turns any leftover loading placeholder into the same error box — a failed call can never leave the UI
+spinning forever. Streamed output (live logs, script output, chat steps) is never covered by the overlay.
+
+## Licensing
+
+Seat licences gate the **public chat webapp**, not this operator app. Management lives in a separate local
+key store driven by its `pkm` CLI — this repo only verifies licences — so the Key Manager tab is a front
+end: it spawns the CLI and renders the result, and never stores or logs a licence. Store locations are
+configured in ⚙️ Config rather than hardcoded. See [`electron/docs/keys.md`](electron/docs/keys.md).
 
 ## Notes
 

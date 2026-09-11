@@ -56,6 +56,12 @@ const DEFAULTS = {
   TRUST_PROXY: "1",
   // WhatsApp (Meta Cloud API) — annotation defaults only (never written)
   WHATSAPP_API_VERSION: "v25.0",
+  // personal_key_manager / pkm (Key Manager tab + licence verification) — a
+  // relocated store stays reachable without a code change. Annotation only.
+  PKM_REPO: "~/Documents/GitHub/personal_key_manager",
+  PKM_ROOT: "~/Documents/GitHub/personal_key_manager",
+  PKM_REGISTRY: "frontdesk-agent",
+  PKM_TIMEOUT_MS: "20000",
   // DS-mon LLM usage tracking — annotation defaults only (never written)
   USAGE_TRACKING_ENABLED: "false",
   DSMON_PUSH_URL: "",

@@ -2,7 +2,7 @@
  * Frontdesk v2 — license-authenticated, E2E-encrypted chat backend.
  *
  * Replaces the old HMAC + passphrase frontdesk flow with license keys
- * (safe/frontdesk-keys) and ECDH → AES-256-GCM message encryption.
+ * (read from the personal_key_manager store) and ECDH → AES-256-GCM encryption.
  *
  * Endpoints wired in index.js:
  *   POST /api/license/verify   — verify license → issue short-lived session token
@@ -17,8 +17,8 @@
  *     then keeps ONLY { sub, pub, enc } in the session. Seeds never persist here.
  *   - Messages: client encrypts with ECDH(seat_x25519_priv, agent_pub); server
  *     decrypts with ECDH(agent_priv, seat_enc_pub). Replies go the other way with
- *     the same derived AES-256-GCM key. Agent keypair lives in
- *     safe/frontdesk-keys/agent/ (gitignored).
+ *     the same derived AES-256-GCM key. Agent keypair lives in the
+ *     personal_key_manager store at registries/frontdesk-agent/agent/.
  *   - All decrypted text is passed through sanitizeObject() before the agent or
  *     any log sees it.
  *   - Agent replies are stored as ciphertext at rest (logs/frontdesk/output/).

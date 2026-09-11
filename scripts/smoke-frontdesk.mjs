@@ -20,20 +20,38 @@
 import fs from "fs";
 import path from "path";
 import { fileURLToPath } from "url";
-import { deriveAesKeyClient, encryptAes, decryptAes } from "./frontdesk-license.mjs";
+import { deriveAesKeyClient, encryptAes, decryptAes, DEV_KEYS_DIR, RING_FILE } from "./frontdesk-license.mjs";
+import { pkmPaths } from "./pkm-paths.mjs";
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const ROOT = path.resolve(__dirname, "..");
 const BASE = process.env.WEBHOOK_SMOKE_URL || "http://localhost:3199";
 const SUB = process.argv[2] || "test@example.com";
 
+/** Registry + registry id this smoke test runs against (config-driven). */
+const PKM = pkmPaths();
+/**
+ * The ring the dev seats were issued under: the registry's default kid, or its
+ * only ring when no default is set. Never hardcoded — a store with a rotated or
+ * renamed ring keeps working.
+ */
+function defaultKid() {
+  try {
+    const ring = JSON.parse(fs.readFileSync(RING_FILE, "utf8"));
+    const keys = ring.keys || [];
+    return PKM.defaultKid || keys[0]?.kid || null;
+  } catch {
+    return PKM.defaultKid || null;
+  }
+}
+
 // Read the license key + API token from disk/env (same as production).
+// Seat keys live in the personal_key_manager store (PKM_ROOT / PKM_REGISTRY).
 function readSeatKey(sub) {
-  const issued = path.join(ROOT, "safe", "frontdesk-keys", "mk-2026-08", "issued", `${sub}.key`);
-  if (fs.existsSync(issued)) return fs.readFileSync(issued, "utf8").trim();
-  // Fall back to a revoked/expired dir (still valid to attempt verify).
-  for (const dirName of ["revoked", "expired"]) {
-    const p = path.join(ROOT, "safe", "frontdesk-keys", "mk-2026-08", dirName, `${sub}.key`);
+  const kid = defaultKid();
+  if (!kid) return null;
+  for (const dirName of ["issued", "revoked", "expired"]) {
+    const p = path.join(DEV_KEYS_DIR, kid, dirName, `${sub}.key`);
     if (fs.existsSync(p)) return fs.readFileSync(p, "utf8").trim();
   }
   return null;
@@ -88,7 +106,7 @@ async function main() {
   check("agent pubkey configured", !!agentPub, agentPub);
   check("webhook api token configured", !!apiToken);
   if (!license || !agentPub) {
-    console.log("\nAborting: missing license/agent key. Run \"npm run keys:agent\" + \"npm run keys:issue\" first.");
+    console.log(`\nAborting: missing license/agent key. Create them with \`pkm ring agent-key ${PKM.registry}\` + \`pkm issue ${PKM.registry} <seat> --exp ...\` in ${PKM.repo}.`);
     process.exit(1);
   }
 

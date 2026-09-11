@@ -14,7 +14,6 @@ import { createRequire } from "node:module";
 import { webcrypto } from "node:crypto";
 import fs from "node:fs";
 import path from "node:path";
-import { fileURLToPath } from "node:url";
 
 // Give crypto.js the browser-ish globals it expects.
 globalThis.crypto = webcrypto;
@@ -24,13 +23,11 @@ globalThis.atob = (s) => Buffer.from(s, "base64").toString("binary");
 const require = createRequire(import.meta.url);
 const FD = require("../webapp/public/crypto.js");
 
-import { deriveAesKeyServer, encryptAes, decryptAes, loadAgentKeys } from "./frontdesk-license.mjs";
+import { deriveAesKeyServer, encryptAes, decryptAes, loadAgentKeys, DEV_KEYS_DIR } from "./frontdesk-license.mjs";
 
-const __dirname = path.dirname(fileURLToPath(import.meta.url));
-const ROOT = path.resolve(__dirname, "..");
 const SUB = process.argv[2] || "test@example.com";
 
-const license = fs.readFileSync(path.join(ROOT, "safe", "frontdesk-keys", "mk-2026-08", "issued", `${SUB}.key`), "utf8").trim();
+const license = fs.readFileSync(path.join(DEV_KEYS_DIR, "mk-2026-08", "issued", `${SUB}.key`), "utf8").trim();
 const agent = loadAgentKeys();
 
 async function main() {

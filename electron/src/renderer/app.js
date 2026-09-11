@@ -23,20 +23,222 @@
       btn.classList.add("active");
       const tab = btn.dataset.tab;
       $(`tab-${tab}`).classList.add("active");
-      if (tab === "dashboard") refreshDashboard();
-      if (tab === "queue") refreshQueue();
-      if (tab === "logs") refreshLogs();
-      if (tab === "sessions") refreshSessions();
-      if (tab === "licenses") refreshLicenses();
-      if (tab === "usage") refreshUsage();
-      if (tab === "accounts") refreshAccounts();
-      if (tab === "config") refreshConfig();
-      if (tab === "tools") refreshTools();
-      if (tab === "scripts") refreshScripts();
-      if (tab === "appearance") refreshAppearance();
-      if (tab === "about") refreshAbout();
-      if (tab === "chat") refreshChatSessions();
+      // Each loader is guarded: a rejected IPC renders an error + Retry in the
+      // panel instead of leaving its "loading…" placeholder up forever.
+      const loaders = {
+        dashboard: refreshDashboard,
+        queue: refreshQueue,
+        logs: refreshLogs,
+        sessions: refreshSessions,
+        licenses: refreshLicenses,
+        usage: refreshUsage,
+        accounts: refreshAccounts,
+        config: refreshConfig,
+        tools: refreshTools,
+        scripts: refreshScripts,
+        appearance: refreshAppearance,
+        about: refreshAbout,
+        chat: refreshChatSessions,
+      };
+      if (loaders[tab]) guarded(`tab:${tab}`, loaders[tab]);
     });
+  });
+
+  // ── Text prompt (replaces window.prompt) ──
+  // Electron's renderer does NOT implement window.prompt() — it throws
+  // "prompt() is not supported" — so all single-value prompts use this modal.
+  // Resolves with the entered string, or null if cancelled.
+  let promptResolve = null;
+
+  function askText({ title = "Input", label = "Value", desc = "", value = "", placeholder = "" } = {}) {
+    $("prompt-title").textContent = title;
+    $("prompt-label").textContent = label;
+    $("prompt-desc").textContent = desc;
+    $("prompt-desc").style.display = desc ? "" : "none";
+    const input = $("prompt-input");
+    input.value = value;
+    input.placeholder = placeholder;
+    $("prompt-modal").classList.remove("hidden");
+    input.focus();
+    input.select();
+    return new Promise((resolve) => {
+      promptResolve = resolve;
+    });
+  }
+
+  function closePrompt(result) {
+    $("prompt-modal").classList.add("hidden");
+    $("prompt-input").value = "";
+    const resolve = promptResolve;
+    promptResolve = null;
+    if (resolve) resolve(result);
+  }
+
+  $("prompt-ok").addEventListener("click", () => closePrompt($("prompt-input").value));
+  $("prompt-cancel").addEventListener("click", () => closePrompt(null));
+  $("prompt-modal").addEventListener("click", (e) => {
+    if (e.target === $("prompt-modal")) closePrompt(null);
+  });
+  $("prompt-input").addEventListener("keydown", (e) => {
+    if (e.key === "Enter") {
+      e.preventDefault();
+      closePrompt($("prompt-input").value);
+    } else if (e.key === "Escape") {
+      e.preventDefault();
+      closePrompt(null);
+    }
+  });
+
+  // ── Loading + error feedback ────────────────────────────────────────────────
+  // Mirrors the ai_transcription_agent pattern:
+  //   • #loading-overlay — ONE blocking overlay for one-shot actions (service
+  //     start/stop/restart, pkm CLI calls, config save/import, MCP spawn).
+  //   • .loading-block   — inline skeleton for panel/tab fetches.
+  //   • .panel-error     — Retry-able error box, so a rejected IPC can never
+  //     leave a bare "loading…" placeholder on screen forever.
+  const LOADING_TEXT = /^(loading…?|checking…?)$/i;
+  let loadingDepth = 0;
+  let loadingSlowTimer = null;
+  let loadingCancelFn = null;
+
+  function showLoading(message, opts = {}) {
+    const ov = $("loading-overlay");
+    if (!ov) return;
+    loadingDepth++;
+    $("loading-msg").textContent = message || "Working…";
+    const hint = $("loading-hint");
+    hint.textContent = opts.hint || "";
+    hint.classList.toggle("hidden", !opts.hint);
+    const progress = $("loading-progress");
+    if (typeof opts.progress === "number") {
+      progress.classList.remove("hidden");
+      $("loading-bar").style.width = `${Math.max(0, Math.min(100, opts.progress))}%`;
+    } else {
+      progress.classList.add("hidden");
+    }
+    const cancelBtn = $("loading-cancel");
+    loadingCancelFn = typeof opts.cancel === "function" ? opts.cancel : null;
+    cancelBtn.classList.toggle("hidden", !loadingCancelFn);
+    cancelBtn.textContent = opts.cancelLabel || "Cancel";
+    ov.classList.remove("hidden");
+    // Long CLI calls say something rather than spinning silently for 20s.
+    clearTimeout(loadingSlowTimer);
+    loadingSlowTimer = setTimeout(
+      () => {
+        const h = $("loading-hint");
+        if (h && !opts.hint) {
+          h.textContent = opts.slowHint || "Taking longer than expected — still working…";
+          h.classList.remove("hidden");
+        }
+      },
+      opts.slowAfterMs || 8000,
+    );
+  }
+
+  function hideLoading() {
+    loadingDepth = Math.max(0, loadingDepth - 1);
+    if (loadingDepth > 0) return;
+    clearTimeout(loadingSlowTimer);
+    loadingSlowTimer = null;
+    loadingCancelFn = null;
+    $("loading-overlay")?.classList.add("hidden");
+    $("loading-hint")?.classList.add("hidden");
+    $("loading-cancel")?.classList.add("hidden");
+  }
+
+  /** Run `fn` behind the blocking overlay; a failure surfaces as a toast, never a freeze. */
+  async function withLoading(message, fn, opts = {}) {
+    showLoading(message, opts);
+    try {
+      return await fn();
+    } catch (err) {
+      reportError(err, opts.context);
+      return undefined;
+    } finally {
+      hideLoading();
+    }
+  }
+
+  const loadingHTML = (label) =>
+    `<div class="loading-block"><span class="spin"></span><span>${esc(label || "Loading…")}</span></div>`;
+
+  function panelLoading(id, label) {
+    const el = $(id);
+    if (el) el.innerHTML = loadingHTML(label);
+  }
+
+  /** Replace a panel with a Retry-able error box (never leave "loading…" up). */
+  function panelError(id, err, retry) {
+    const el = $(id);
+    if (!el) return;
+    const msg = typeof err === "string" ? err : (err && err.message) || "Something went wrong";
+    el.innerHTML =
+      `<div class="panel-error"><span class="pe-msg">⚠️ ${esc(msg)}</span>` +
+      (typeof retry === "function" ? `<button data-retry>Retry</button>` : "") +
+      `</div>`;
+    el.querySelector("[data-retry]")?.addEventListener("click", () => {
+      panelLoading(id, "Retrying…");
+      Promise.resolve()
+        .then(retry)
+        .catch((e) => panelError(id, e, retry));
+    });
+  }
+
+  let toastTimer = null;
+  function toast(msg, kind) {
+    const el = $("toast");
+    if (!el) return;
+    el.textContent = msg;
+    el.className = kind === "err" ? "err" : kind === "ok" ? "ok" : "";
+    el.classList.remove("hidden");
+    clearTimeout(toastTimer);
+    toastTimer = setTimeout(() => el.classList.add("hidden"), kind === "err" ? 9000 : 4000);
+  }
+
+  function reportError(err, context) {
+    const msg = (err && err.message) || String(err || "unknown error");
+    console.error(context ? `[${context}] ${msg}` : msg, err);
+    toast(`⚠️ ${msg}`, "err");
+  }
+
+  /**
+   * Safety net: anything still showing a bare placeholder after a failure gets
+   * an error + Retry instead of spinning forever (the 01.png Key Manager bug).
+   */
+  function rescueStuckPanels(err, retry) {
+    hideLoading();
+    document.querySelectorAll('[id$="-box"], [id$="-host"], [id$="-list"]').forEach((el) => {
+      if (!LOADING_TEXT.test((el.textContent || "").trim())) return;
+      panelError(el.id, err, retry);
+    });
+    const badge = $("pkm-badge");
+    if (badge && LOADING_TEXT.test((badge.textContent || "").trim())) {
+      badge.className = "badge down";
+      badge.textContent = "error";
+    }
+  }
+
+  /** Wrap a tab loader so a rejected IPC is reported instead of silently stalling. */
+  function guarded(name, fn) {
+    return Promise.resolve()
+      .then(() => fn())
+      .catch((err) => {
+        reportError(err, name);
+        rescueStuckPanels(err, fn);
+      });
+  }
+
+  // Last-resort net: an unhandled rejection can never leave the UI spinning.
+  window.addEventListener("unhandledrejection", (e) => {
+    const err = e.reason || new Error("unknown error");
+    reportError(err, "unhandled");
+    rescueStuckPanels(err);
+  });
+
+  $("loading-cancel")?.addEventListener("click", () => {
+    const fn = loadingCancelFn;
+    hideLoading();
+    if (fn) fn();
   });
 
   // ── Dashboard (collapsible service sidebar + large detail view) ──
@@ -164,23 +366,32 @@
       <pre class="svc-detail-log" id="svc-detail-log">${esc((await api.svcLog(s.name, 500)).join("\n") || "")}</pre>
     `;
     detail.querySelector("[data-start]")?.addEventListener("click", async () => {
-      await api.svcStart(s.name);
+      await withLoading(`Starting ${s.label}…`, () => api.svcStart(s.name), {
+        context: "svc start",
+        slowHint: "Waiting for the service to come up…",
+      });
       refreshDashboard();
     });
     detail.querySelector("[data-stop]")?.addEventListener("click", async () => {
-      await api.svcStop(s.name);
+      await withLoading(`Stopping ${s.label}…`, () => api.svcStop(s.name), { context: "svc stop" });
       refreshDashboard();
     });
     detail.querySelector("[data-restart]")?.addEventListener("click", async () => {
-      const r = await api.svcRestart(s.name);
+      const r = await withLoading(`Restarting ${s.label}…`, () => api.svcRestart(s.name), {
+        context: "svc restart",
+        slowHint: "Waiting for the old process to release its port…",
+      });
       // restartService waits ~700ms for the old process to free its port.
       setTimeout(refreshDashboard, r === false ? 0 : 900);
     });
     detail.querySelector("#svc-refresh")?.addEventListener("click", () => renderSvcDetail(s.name));
     detail.querySelector("#wa-list-numbers")?.addEventListener("click", async () => {
-      const r = await api.whatsapp("list_numbers");
+      const r = await withLoading("Reading phone numbers from the WhatsApp Cloud API…", () => api.whatsapp("list_numbers"), {
+        context: "whatsapp list_numbers",
+      });
       const out = detail.querySelector("#wa-dash-nums");
       if (!out) return;
+      if (!r) return;
       out.innerHTML = r.ok && Array.isArray(r.result)
         ? r.result.map((x) => `<code>${esc(x.id)} — ${esc(x.display || "")}</code>`).join(" · ")
         : `<span class="err">${esc((r && r.error) || "unknown error")}</span>`;
@@ -196,8 +407,12 @@
         st.textContent = s.external
           ? "Re-running Trello → Gmail → Calendar → Drive registration scripts (server already running outside the dashboard — not restarted)…"
           : "Running Trello → Gmail → Calendar → Drive setup, then restarting the webhook server (≈20–60s)…";
-      const res = await api.svcReregisterWebhooks();
-      if (st) {
+      const res = await withLoading(
+        "Re-registering webhooks (Trello → Gmail → Calendar → Drive) and restarting the webhook server…",
+        () => api.svcReregisterWebhooks(),
+        { context: "webhook re-register", slowHint: "This takes 20–60s while the server restarts." },
+      );
+      if (st && res) {
         const parts = (res.steps || []).map((x) => {
           if (x.ok) return `✅ ${x.label}`;
           const tail = (x.output || x.error || "").split("\n").filter(Boolean).slice(-2).join(" · ");
@@ -541,24 +756,538 @@
     $("sessions-box").innerHTML = `<table><thead><tr><th>Time</th><th>User</th><th>Action</th><th>IP</th></tr></thead><tbody>${rows}</tbody></table>`;
   }
 
-  // ── Licenses ──
-  async function refreshLicenses() {
-    const res = await api.licenses();
-    if (!res.ok) {
-      $("licenses-box").innerHTML = `<div class="empty">${esc(res.error)}</div>`;
-      return;
+  // ── Key Manager ──
+  // All licensing logic + data live in the sibling personal_key_manager repo; this
+  // tab only shells out to `pkm` (via the main process) and renders the result.
+  // The store holds an INDEPENDENT ring + seat ledger per consumer app, so every
+  // call is scoped to the registry chosen in the toolbar (frontdesk-agent,
+  // transcription-agent, …) — the tab is not hardwired to a single one.
+  const pkmState = { registry: null, registries: [], entry: null, lastError: null };
+  const expLabel = (r) => (r.exp === 0 ? "unlimited" : r.expUtc ? String(r.expUtc).slice(0, 10) : "—");
+  const daysLabel = (r) =>
+    r.daysLeft == null ? "—" : r.daysLeft < 0 ? `${r.daysLeft} (past)` : String(r.daysLeft);
+  const shortKey = (k) => (k ? (k.length > 18 ? `${k.slice(0, 18)}…` : k) : "—");
+
+  /** Registry id passed to every pkm call (undefined → PKM_REGISTRY in config). */
+  const pkmReg = () => pkmState.registry || undefined;
+  const pkmLabel = () => pkmState.registry || "the configured registry";
+
+  /** Populate the registry picker from the store, keeping the current selection. */
+  function renderPkmRegistryPicker(d) {
+    const sel = $("pkm-registry");
+    const rows = d.registries || [];
+    pkmState.registries = rows;
+    const ids = rows.map((r) => r.id);
+    const prev = pkmState.registry;
+    const chosen = [prev, d.registry].find((x) => x && ids.includes(x)) || ids[0] || null;
+    pkmState.registry = chosen;
+    pkmState.entry = rows.find((r) => r.id === chosen) || null;
+    if (sel) {
+      sel.innerHTML = ids.length
+        ? rows
+            .map(
+              (r) =>
+                `<option value="${escAttr(r.id)}"${r.id === chosen ? " selected" : ""}>${esc(r.id)} — ${r.seats ?? 0} seat(s), ${r.rings ?? 0} ring(s)</option>`,
+            )
+            .join("")
+        : `<option value="">(no registries in store)</option>`;
+      sel.disabled = ids.length === 0;
     }
-    const seats = res.seats || [];
-    if (!seats.length) {
-      $("licenses-box").innerHTML = '<div class="empty">No seats issued yet.</div>';
-      return;
+    const meta = $("pkm-registry-meta");
+    const e = pkmState.entry;
+    if (meta) {
+      const targets = Object.keys(e?.verifierTargets || {});
+      meta.innerHTML = e
+        ? `app <b>${esc(e.app)}</b> · engine ${esc(e.engine)} · ${e.rings} ring(s) · ${e.seats} seat(s) · ${e.revoked} revoked` +
+          (targets.length ? ` · <b>blocklist embedded</b> (${esc(targets.join(", "))})` : " · blocklist read live")
+        : "";
     }
-    const rows = seats
-      .map((s) => `<tr><td>${esc(s.sub)}</td><td><span class="tag ${s.status}">${s.status}</span></td><td>${esc(s.exp)}</td><td>${s.enc ? "yes" : "no"}</td></tr>`)
-      .join("");
-    $("licenses-box").innerHTML = `<table><thead><tr><th>Seat</th><th>Status</th><th>Expires</th><th>Enc</th></tr></thead><tbody>${rows}</tbody></table>`;
   }
-  $("licenses-refresh").addEventListener("click", refreshLicenses);
+
+  /** Explain what the ring buttons do for THIS registry (engine/verifier dependent). */
+  function renderPkmRingsHint() {
+    const el = $("pkm-rings-hint");
+    if (!el) return;
+    const e = pkmState.entry || {};
+    const hasAgent = e.engine === "ed25519+x25519";
+    const targets = Object.keys(e.verifierTargets || {});
+    el.innerHTML =
+      (hasAgent
+        ? "This registry is <b>ed25519+x25519</b> — its seats carry an X25519 key for E2E chat, so 🔑 Agent key regenerates that peer keypair (then update <code>FRONTDESK_AGENT_PUBKEY</code>). "
+        : "This registry is <b>ed25519</b> — it has no agent (peer) keypair, so 🔑 Agent key does not apply. ") +
+      (targets.length
+        ? `It <b>embeds its blocklist</b> in ${esc(targets.join(", "))} — after revoking a seat, run 🔄 Sync blocklist and rebuild that app.`
+        : "It reads its blocklist <b>live</b> on every verify, so a revoke needs no sync step.");
+  }
+
+  async function refreshPkmStatus(retry) {
+    const badge = $("pkm-badge");
+    const host = $("pkm-host");
+    pkmState.lastError = null;
+    // A rejected invoke must be handled exactly like a returned {ok:false} —
+    // otherwise the header keeps stale numbers from the previous load.
+    let res;
+    try {
+      res = await api.pkmStatus(pkmReg());
+    } catch (err) {
+      res = { ok: false, error: (err && err.message) || "pkm status failed" };
+    }
+    if (!res.ok) {
+      pkmState.lastError = res.error;
+      badge.className = "badge down";
+      badge.textContent = "error";
+      host.innerHTML = "";
+      panelError("pkm-host", res.error, retry);
+      return false;
+    }
+    const d = res.data || {};
+    if (!d.present) {
+      pkmState.lastError = `pkm not found at ${d.pkmBin} — set PKM_REPO in ⚙️ Config.`;
+      badge.className = "badge down";
+      badge.textContent = "pkm missing";
+      host.innerHTML =
+        `<div class="empty">pkm not found at <code>${esc(d.pkmBin)}</code>.<br/>` +
+        `Locate the <b>personal_key_manager</b> repo, or set <code>PKM_REPO</code> in ⚙️ Config.</div>`;
+      return false;
+    }
+    renderPkmRegistryPicker(d);
+    const e = pkmState.entry;
+    badge.className = e ? "badge ok" : "badge down";
+    badge.textContent = e ? `${e.seats} seats · ${e.defaultKid || "no ring"}` : "no registry";
+    host.innerHTML =
+      `<div class="svc-note">📦 <code>${esc(d.storeRoot)}</code> — registry <b>${esc(pkmLabel())}</b>` +
+      (e ? ` · engine ${esc(e.engine)} · ${e.rings} ring(s) · ${e.revoked} revoked` : "") +
+      (d.loosePermissions ? ` · <b>⚠ ${d.loosePermissions} loose key path(s)</b>` : "") +
+      ` · timeout ${Math.round((d.timeoutMs || 20000) / 1000)}s` +
+      `</div>`;
+    return true;
+  }
+
+  async function refreshPkmRings(retry) {
+    panelLoading("pkm-rings-box", "Loading rings…");
+    const res = await api.pkmRings(pkmReg());
+    if (!res.ok) {
+      panelError("pkm-rings-box", res.error, retry);
+      return false;
+    }
+    const d = res.data || {};
+    const rings = d.rings || [];
+    renderPkmRingsHint();
+    const box = $("pkm-rings-box");
+    if (!rings.length) {
+      box.innerHTML = '<div class="empty">No rings in this registry yet — create one with ＋ New ring.</div>';
+      return true;
+    }
+    const body = rings
+      .map((r) => {
+        const retired = r.notAfter && Date.now() >= r.notAfter * 1000;
+        const na = r.notAfter ? new Date(r.notAfter * 1000).toISOString().slice(0, 10) : "—";
+        const isDefault = r.kid === d.defaultKid;
+        return (
+          `<tr><td>${esc(r.kid)}</td>` +
+          `<td>${isDefault ? '<span class="tag valid">default</span>' : `<button data-ringdefault="${escAttr(r.kid)}">Make default</button>`}</td>` +
+          `<td><code title="${escAttr(r.publicKey || "")}">${esc(shortKey(r.publicKey))}</code></td>` +
+          `<td>${esc(na)}${retired ? ' <span class="tag revoked">retired</span>' : ""}</td>` +
+          `<td>${retired ? "" : `<button data-ringretire="${escAttr(r.kid)}">Retire</button>`}</td></tr>`
+        );
+      })
+      .join("");
+    box.innerHTML =
+      `<table><thead><tr><th>kid</th><th>Default</th><th>Public key</th><th>Retires</th><th></th></tr></thead><tbody>${body}</tbody></table>`;
+    box.querySelectorAll("[data-ringretire]").forEach((b) =>
+      b.addEventListener("click", () => retireRing(b.dataset.ringretire)),
+    );
+    box.querySelectorAll("[data-ringdefault]").forEach((b) =>
+      b.addEventListener("click", () => makeRingDefault(b.dataset.ringdefault)),
+    );
+    return true;
+  }
+
+  async function refreshPkmSeats(retry) {
+    panelLoading("pkm-seats-box", "Loading seats…");
+    const res = await api.pkmList(pkmReg());
+    const box = $("pkm-seats-box");
+    if (!res.ok) {
+      panelError("pkm-seats-box", res.error, retry);
+      return false;
+    }
+    const rows = (res.data.rows || []).slice().sort((a, b) => String(a.sub).localeCompare(String(b.sub)));
+    if (!rows.length) {
+      box.innerHTML = '<div class="empty">No seats issued yet in this registry.</div>';
+      return true;
+    }
+    const counts = res.data.counts || {};
+    const body = rows
+      .map((r) => {
+        const action =
+          r.status === "revoked"
+            ? `<button data-unrevoke="${escAttr(r.sub)}">Unrevoke</button>`
+            : `<button data-revoke="${escAttr(r.sub)}">Revoke</button>`;
+        return `<tr><td>${esc(r.sub)}</td><td><span class="tag ${escAttr(r.status)}">${esc(r.status)}</span></td><td>${esc(r.kid || "—")}</td><td>${esc(expLabel(r))}</td><td>${esc(daysLabel(r))}</td><td>${r.enc ? "yes" : "no"}</td><td>${esc(String(r.issuedAt || "").slice(0, 10))}</td><td>${action}</td></tr>`;
+      })
+      .join("");
+    box.innerHTML =
+      `<table><thead><tr><th>Seat</th><th>Status</th><th>kid</th><th>Expires</th><th>Days</th><th>Enc</th><th>Issued</th><th></th></tr></thead><tbody>${body}</tbody></table>` +
+      `<p class="hint">${rows.length} seat(s): ${counts.valid || 0} valid, ${counts.expiring || 0} expiring, ${counts.expired || 0} expired, ${counts.revoked || 0} revoked` +
+      (res.data.archived ? ` · ${res.data.archived} expired record(s) archived by this refresh` : "") +
+      `</p>`;
+    box.querySelectorAll("[data-revoke]").forEach((b) => b.addEventListener("click", () => revokeSeat(b.dataset.revoke)));
+    box.querySelectorAll("[data-unrevoke]").forEach((b) => b.addEventListener("click", () => unrevokeSeat(b.dataset.unrevoke)));
+    return true;
+  }
+
+  /**
+   * Load the whole tab. Every failure path paints a Retry-able error box, so the
+   * panels can never be left showing their initial "loading…" placeholder.
+   */
+  async function refreshLicenses(retry) {
+    const again = typeof retry === "function" ? retry : () => refreshLicenses();
+    panelLoading("pkm-seats-box", "Loading seats…");
+    panelLoading("pkm-rings-box", "Loading rings…");
+    try {
+      const ok = await refreshPkmStatus(again);
+      if (!ok) {
+        const msg = pkmState.lastError || "Key store unavailable";
+        panelError("pkm-seats-box", msg, again);
+        panelError("pkm-rings-box", msg, again);
+        return;
+      }
+      await refreshPkmRings(again);
+      await refreshPkmSeats(again);
+    } catch (err) {
+      reportError(err, "Key Manager");
+      const badge = $("pkm-badge");
+      if (badge) {
+        badge.className = "badge down";
+        badge.textContent = "error";
+      }
+      panelError("pkm-host", err, again);
+      panelError("pkm-seats-box", err, again);
+      panelError("pkm-rings-box", err, again);
+      rescueStuckPanels(err, again);
+    }
+  }
+
+  // ── Copy-once licence modal ──
+  // pkm prints the licence exactly once and it embeds the seat's private seeds, so
+  // it lives only in this textarea and is cleared the moment the modal closes.
+  function showLicenseModal(licenseKey, sub) {
+    $("pkm-modal-key").value = licenseKey;
+    const msg = $("pkm-modal-msg");
+    msg.className = "config-msg ok";
+    msg.textContent = `Issued for ${sub}.`;
+    $("pkm-modal").classList.remove("hidden");
+    const ta = $("pkm-modal-key");
+    ta.focus();
+    ta.select();
+  }
+
+  function hideLicenseModal() {
+    $("pkm-modal-key").value = "";
+    $("pkm-modal-msg").textContent = "";
+    $("pkm-modal").classList.add("hidden");
+  }
+
+  async function copyLicense() {
+    const ta = $("pkm-modal-key");
+    const msg = $("pkm-modal-msg");
+    ta.focus();
+    ta.select();
+    let done = false;
+    try {
+      if (navigator.clipboard && navigator.clipboard.writeText) {
+        await navigator.clipboard.writeText(ta.value);
+        done = true;
+      }
+    } catch {
+      /* fall through to execCommand */
+    }
+    if (!done) {
+      try {
+        done = document.execCommand("copy");
+      } catch {
+        done = false;
+      }
+    }
+    msg.className = done ? "config-msg ok" : "config-msg err";
+    msg.textContent = done ? "Copied to clipboard." : "Press ⌘C to copy the selected text.";
+  }
+
+  // ── Issue / revoke / unrevoke ──
+  // Every pkm mutation runs behind the blocking overlay: the CLI spawns a
+  // process, rewrites export/*.json, and can legitimately take a few seconds.
+  async function issueSeat() {
+    const msg = $("pkm-issue-msg");
+    const sub = $("pkm-issue-sub").value.trim();
+    const exp = $("pkm-issue-exp").value.trim();
+    if (!sub) {
+      msg.className = "config-msg err";
+      msg.textContent = "Seat id is required.";
+      return;
+    }
+    if (!exp) {
+      msg.className = "config-msg err";
+      msg.textContent = 'Expiry is required — a date like 2027-12-31, or "unlimited".';
+      return;
+    }
+    msg.className = "config-msg";
+    msg.textContent = "Issuing…";
+    const res = await withLoading(`Issuing a licence for ${sub} in ${pkmLabel()}…`, () => api.pkmIssue(pkmReg(), sub, exp), {
+      context: "pkm issue",
+      slowHint: "pkm is signing the seat certificate…",
+    });
+    if (!res || !res.ok) {
+      msg.className = "config-msg err";
+      msg.textContent = (res && res.error) || "Issue failed";
+      return;
+    }
+    const key = (res.data && res.data.licenseKey) || "";
+    $("pkm-issue-sub").value = "";
+    $("pkm-issue-exp").value = "";
+    $("pkm-issue-form").classList.add("hidden");
+    msg.textContent = "";
+    if (key) showLicenseModal(key, res.data.sub);
+    refreshLicenses();
+  }
+
+  async function revokeSeat(sub) {
+    const reason = await askText({
+      title: `Revoke "${sub}"?`,
+      label: "Reason (optional)",
+      desc: `Blocks the seat in ${pkmLabel()} immediately — live, no restart. Any config stored under its key becomes unreadable. Cancel aborts.`,
+      placeholder: "e.g. offboarded / refunded",
+    });
+    if (reason === null) return;
+    const res = await withLoading(`Revoking ${sub}…`, () => api.pkmRevoke(pkmReg(), sub, reason), { context: "pkm revoke" });
+    if (!res) return;
+    if (!res.ok) {
+      toast(`⚠️ Revoke failed: ${res.error}`, "err");
+      return;
+    }
+    toast((res.data && res.data.message) || `Revoked ${sub}.`, "ok");
+    // Registries that embed their blocklist need a sync + rebuild for the revoke
+    // to apply offline — say so rather than letting it look finished.
+    if (Object.keys(pkmState.entry?.verifierTargets || {}).length) {
+      toast(`Revoked ${sub} — this registry embeds its blocklist: run 🔄 Sync blocklist, then rebuild the app.`, "err");
+    }
+    refreshLicenses();
+  }
+
+  async function unrevokeSeat(sub) {
+    if (!window.confirm(`Reinstate "${sub}" in ${pkmLabel()}?`)) return;
+    const res = await withLoading(`Reinstating ${sub}…`, () => api.pkmUnrevoke(pkmReg(), sub), { context: "pkm unrevoke" });
+    if (!res) return;
+    if (!res.ok) {
+      toast(`⚠️ Unrevoke failed: ${res.error}`, "err");
+      return;
+    }
+    toast((res.data && res.data.message) || `Reinstated ${sub}.`, "ok");
+    refreshLicenses();
+  }
+
+  async function archiveExpiredSeats() {
+    if (
+      !window.confirm(
+        `Move already-expired seat records in ${pkmLabel()} into its expired/ ledger?\n\nThis archives records whose expiry has already passed — it never revokes anything.`,
+      )
+    )
+      return;
+    const res = await withLoading("Archiving expired seat records…", () => api.pkmArchive(pkmReg()), {
+      context: "pkm archive",
+    });
+    if (!res) return;
+    if (!res.ok) {
+      toast(`⚠️ Archive failed: ${res.error}`, "err");
+      return;
+    }
+    toast(`Archived ${(res.data && res.data.archived) || 0} record(s).`, "ok");
+    refreshLicenses();
+  }
+
+  // Check an arbitrary licence string against the live ring + blocklist. Useful for
+  // confirming a key before handing it out, or diagnosing a rejected login.
+  async function validateLicense() {
+    const entered = await askText({
+      title: "Validate a licence",
+      label: "Licence key",
+      desc: `Checked against the live ring and revocation blocklist of ${pkmLabel()}. The key is not stored or logged.`,
+      placeholder: "TA1…",
+    });
+    if (entered === null || !entered.trim()) return;
+    const res = await withLoading("Validating the licence…", () => api.pkmValidate(pkmReg(), entered.trim()), {
+      context: "pkm validate",
+    });
+    if (!res) return;
+    if (!res.ok) {
+      toast(`⚠️ Validation failed: ${res.error}`, "err");
+      return;
+    }
+    const d = res.data || {};
+    if (d.ok) {
+      const c = d.claims || {};
+      const exp = c.exp ? new Date(c.exp * 1000).toISOString().slice(0, 10) : "unlimited";
+      window.alert(`✅ Valid licence\n\nseat   ${c.sub}\nkid    ${c.kid}\nexp    ${exp}\nenc    ${c.enc ? "ready" : "missing"}`);
+    } else {
+      window.alert(
+        `❌ Rejected: ${d.reason || "unknown reason"}\n\nRevocation is checked before the signature, so "revoked_seat" always means blocked.`,
+      );
+    }
+  }
+
+  async function loadAudit() {
+    const box = $("pkm-audit-box");
+    const again = () => loadAudit();
+    panelLoading("pkm-audit-box", `Loading ${pkmLabel()} audit log…`);
+    const res = await api.pkmAudit(pkmReg());
+    if (!res.ok) {
+      panelError("pkm-audit-box", res.error, again);
+      return;
+    }
+    const entries = (res.data.entries || []).slice().reverse();
+    if (!entries.length) {
+      box.innerHTML = '<div class="empty">No audit entries yet.</div>';
+      return;
+    }
+    box.innerHTML =
+      `<table><thead><tr><th>When</th><th>Action</th><th>Seat</th><th>kid</th><th>Detail</th></tr></thead><tbody>${entries
+        .map((e) => `<tr><td>${esc(fmt(e.ts))}</td><td>${esc(e.action || "")}</td><td>${esc(e.sub || "")}</td><td>${esc(e.kid || "")}</td><td>${esc(e.detail || "")}</td></tr>`)
+        .join("")}</tbody></table>`;
+  }
+
+  // ── Rings (master keys) ──
+  async function createRing() {
+    const kid = await askText({
+      title: `New master ring in ${pkmLabel()}`,
+      label: "kid (ring id)",
+      desc: "Generates a new Ed25519 master keypair. Its private half is written 0600 in the key store and never leaves this machine. New seats are signed by the registry's default ring.",
+      placeholder: "mk-2026-09",
+    });
+    if (kid === null || !kid.trim()) return;
+    const res = await withLoading(`Creating ring ${kid.trim()}…`, () => api.pkmRingCreate(pkmReg(), kid.trim()), {
+      context: "pkm ring create",
+      slowHint: "Generating the master keypair…",
+    });
+    if (!res) return;
+    if (!res.ok) {
+      toast(`⚠️ Ring create failed: ${res.error}`, "err");
+      return;
+    }
+    toast((res.data && res.data.message) || `Ring ${kid.trim()} created.`, "ok");
+    refreshLicenses();
+  }
+
+  async function retireRing(kid) {
+    const at = await askText({
+      title: `Retire ring "${kid}"?`,
+      label: "Retire at (a date, or “now”)",
+      desc: "Verifiers start rejecting licences signed by this ring from that moment. Seats signed by another ring are unaffected. Cancel aborts.",
+      value: "now",
+      placeholder: "now — or 2027-01-01",
+    });
+    if (at === null) return;
+    const res = await withLoading(`Retiring ring ${kid}…`, () => api.pkmRingRetire(pkmReg(), kid, at.trim() || "now"), {
+      context: "pkm ring retire",
+    });
+    if (!res) return;
+    if (!res.ok) {
+      toast(`⚠️ Retire failed: ${res.error}`, "err");
+      return;
+    }
+    toast((res.data && res.data.message) || `Ring ${kid} retired.`, "err");
+    refreshLicenses();
+  }
+
+  async function makeRingDefault(kid) {
+    if (!window.confirm(`Sign all NEW seats in ${pkmLabel()} with ring "${kid}"?\n\nExisting seats keep the ring that signed them.`)) return;
+    const res = await withLoading(`Switching the default ring to ${kid}…`, () => api.pkmSetDefaultKid(pkmReg(), kid), {
+      context: "pkm set-default",
+    });
+    if (!res) return;
+    if (!res.ok) {
+      toast(`⚠️ Could not set the default ring: ${res.error}`, "err");
+      return;
+    }
+    toast((res.data && res.data.message) || `Default ring is now ${kid}.`, "ok");
+    refreshLicenses();
+  }
+
+  async function rotateAgentKey() {
+    if (
+      !window.confirm(
+        `Regenerate the X25519 agent keypair for ${pkmLabel()}?\n\n` +
+          "This is the peer key the webapp encrypts to. Existing webapp sessions stop decrypting until you copy the new public key into FRONTDESK_AGENT_PUBKEY (⚙️ Config) and restart the webhook server.",
+      )
+    )
+      return;
+    const res = await withLoading("Generating a new agent keypair…", () => api.pkmAgentKey(pkmReg()), {
+      context: "pkm ring agent-key",
+    });
+    if (!res) return;
+    if (!res.ok) {
+      toast(`⚠️ Agent key failed: ${res.error}`, "err");
+      return;
+    }
+    const d = res.data || {};
+    window.alert(
+      `🔑 New agent public key:\n\n${d.publicKey || "(see output)"}\n\n` +
+        `Private key: ${d.privateKeyPath || "agent/agent-private.key"}\n\n` +
+        `Now set FRONTDESK_AGENT_PUBKEY in ⚙️ Config to the value above and restart the webhook server.`,
+    );
+    refreshLicenses();
+  }
+
+  async function syncBlocklist() {
+    const e = pkmState.entry || {};
+    const targets = Object.keys(e.verifierTargets || {});
+    if (!targets.length) {
+      window.alert(
+        `${pkmLabel()} reads its blocklist live on every verify — there is nothing to sync.\n\n(Sync is only needed by registries that embed the blocklist in their own source, e.g. transcription-agent.)`,
+      );
+      return;
+    }
+    if (!window.confirm(`Rewrite the embedded blocklist in ${targets.join(", ")}?\n\nThe consumer app must be rebuilt afterwards.`)) return;
+    const res = await withLoading("Syncing the embedded blocklist…", () => api.pkmSyncRevocation(pkmReg()), {
+      context: "pkm sync-revocation",
+    });
+    if (!res) return;
+    if (!res.ok) {
+      toast(`⚠️ Sync failed: ${res.error}`, "err");
+      return;
+    }
+    const lines = ((res.data && res.data.results) || [])
+      .map((r) => `[${r.registry}] ${r.seats.length} revoked seat(s):\n${(r.changes || []).map((c) => `  ${c.changed ? "updated  " : "unchanged"} ${c.label} ${c.path}`).join("\n")}`)
+      .join("\n\n");
+    window.alert(`${lines || "Nothing to sync."}\n\nRebuild the consumer app for the change to take effect.`);
+  }
+
+  $("pkm-refresh").addEventListener("click", () => guarded("licenses", refreshLicenses));
+  $("pkm-archive").addEventListener("click", archiveExpiredSeats);
+  $("pkm-validate-open").addEventListener("click", validateLicense);
+  $("pkm-audit-load").addEventListener("click", () => guarded("audit", loadAudit));
+  // Registry switch — every panel below is scoped to the selected registry, so
+  // reset the per-registry views rather than leaving the previous app's data up.
+  $("pkm-registry").addEventListener("change", (e) => {
+    pkmState.registry = e.target.value || null;
+    pkmState.entry = pkmState.registries.find((r) => r.id === pkmState.registry) || null;
+    $("pkm-audit-box").innerHTML = "";
+    renderPkmRingsHint();
+    guarded("licenses", refreshLicenses);
+  });
+  // Ring management
+  $("pkm-ring-create").addEventListener("click", createRing);
+  $("pkm-agent-key").addEventListener("click", rotateAgentKey);
+  $("pkm-sync-revocation").addEventListener("click", syncBlocklist);
+  $("pkm-issue-open").addEventListener("click", () => {
+    $("pkm-issue-form").classList.remove("hidden");
+    $("pkm-issue-msg").textContent = "";
+    $("pkm-issue-sub").value = "";
+    $("pkm-issue-exp").value = "";
+    $("pkm-issue-sub").focus();
+  });
+  $("pkm-issue-cancel").addEventListener("click", () => $("pkm-issue-form").classList.add("hidden"));
+  $("pkm-issue-go").addEventListener("click", issueSeat);
+  $("pkm-modal-copy").addEventListener("click", copyLicense);
+  $("pkm-modal-close").addEventListener("click", hideLicenseModal);
 
   // ── Accounts & Keys ──
   async function refreshAccounts() {
@@ -591,37 +1320,56 @@
       .join("");
     box.querySelectorAll("[data-gconnect]").forEach((b) =>
       b.addEventListener("click", async () => {
-        const r = await api.accountsConnectGoogle(b.dataset.gconnect);
-        alert(r.ok ? `Connected ${r.user || ""} to ${b.dataset.gconnect}` : `Failed: ${r.error}`);
+        const sub = b.dataset.gconnect;
+        const r = await withLoading(`Connecting a Google account for ${sub}…`, () => api.accountsConnectGoogle(sub), {
+          context: "accounts connectGoogle",
+          slowHint: "A browser window opens for the OAuth consent screen…",
+        });
+        if (r) toast(r.ok ? `Connected ${r.user || ""} to ${sub}` : `⚠️ ${r.error}`, r.ok ? "ok" : "err");
         refreshAccounts();
       }),
     );
     box.querySelectorAll("[data-tset]").forEach((b) =>
       b.addEventListener("click", async () => {
-        const key = prompt(`Trello key for ${b.dataset.tset}:`) || "";
-        const token = prompt("Trello token:") || "";
-        if (key && token) {
-          await api.accountsSetTrello(b.dataset.tset, key, token);
+        const sub = b.dataset.tset;
+        const key = await askText({ title: `Trello credentials for ${sub}`, label: "API key" });
+        if (key === null) return;
+        const token = await askText({ title: `Trello credentials for ${sub}`, label: "API token" });
+        if (token === null) return;
+        if (key.trim() && token.trim()) {
+          await withLoading(`Saving Trello credentials for ${sub}…`, () => api.accountsSetTrello(sub, key.trim(), token.trim()), {
+            context: "accounts setTrello",
+          });
           refreshAccounts();
         }
       }),
     );
     box.querySelectorAll("[data-tclear]").forEach((b) =>
       b.addEventListener("click", async () => {
-        await api.accountsClear(b.dataset.tclear);
+        const sub = b.dataset.tclear;
+        await withLoading(`Clearing the account binding for ${sub}…`, () => api.accountsClear(sub), {
+          context: "accounts clear",
+        });
         refreshAccounts();
       }),
     );
     box.querySelectorAll("[data-spawn]").forEach((b) =>
       b.addEventListener("click", async () => {
-        const r = await api.accountsSpawnForSeat(b.dataset.spawn);
-        alert(r.ok ? `Spawned ${r.spawned.length} MCP instance(s)` : `Failed: ${r.error}`);
+        const sub = b.dataset.spawn;
+        const r = await withLoading(`Spawning MCP instance(s) for ${sub}…`, () => api.accountsSpawnForSeat(sub), {
+          context: "accounts spawn",
+          slowHint: "Launching per-seat MCP servers…",
+        });
+        if (r) toast(r.ok ? `Spawned ${r.spawned.length} MCP instance(s)` : `⚠️ ${r.error}`, r.ok ? "ok" : "err");
         refreshDashboard();
       }),
     );
     box.querySelectorAll("[data-stopspawn]").forEach((b) =>
       b.addEventListener("click", async () => {
-        await api.accountsStopForSeat(b.dataset.stopspawn);
+        const sub = b.dataset.stopspawn;
+        await withLoading(`Stopping the MCP instance(s) for ${sub}…`, () => api.accountsStopForSeat(sub), {
+          context: "accounts stop-spawn",
+        });
         refreshDashboard();
       }),
     );
@@ -693,8 +1441,11 @@
   }
 
   async function runTrello(action, params) {
-    const res = await api.trello(action, params);
+    const res = await withLoading("Calling the Trello API…", () => api.trello(action, params), {
+      context: `trello ${action}`,
+    });
     const box = $("trello-result");
+    if (!res) return;
     if (!res.ok) {
       box.innerHTML = `<div class="empty">Error: ${esc(res.error)}</div>`;
       return;
@@ -707,16 +1458,21 @@
   }
 
   document.querySelector('[data-act="boards"]').addEventListener("click", () => runTrello("list_boards"));
-  document
-    .querySelector('[data-act="lists"]')
-    .addEventListener("click", () => runTrello("list_lists", { boardId: prompt("Board ID:") || "" }));
-  document
-    .querySelector('[data-act="cards"]')
-    .addEventListener("click", () => runTrello("list_cards", { listId: prompt("List ID:") || "" }));
+  document.querySelector('[data-act="lists"]').addEventListener("click", async () => {
+    const boardId = await askText({ title: "Trello lists", label: "Board ID" });
+    if (boardId && boardId.trim()) runTrello("list_lists", { boardId: boardId.trim() });
+  });
+  document.querySelector('[data-act="cards"]').addEventListener("click", async () => {
+    const listId = await askText({ title: "Trello cards", label: "List ID" });
+    if (listId && listId.trim()) runTrello("list_cards", { listId: listId.trim() });
+  });
 
   document.querySelector('[data-act="gmail-list"]').addEventListener("click", async () => {
-    const res = await api.gmail("list_messages", { maxResults: 10 });
+    const res = await withLoading("Reading recent Gmail messages…", () => api.gmail("list_messages", { maxResults: 10 }), {
+      context: "gmail list_messages",
+    });
     const box = $("gmail-result");
+    if (!res) return;
     box.innerHTML = res.ok
       ? (res.result || []).map((m) => `• ${esc(m.id)}`).join("<br/>") || "(empty)"
       : `<div class="empty">Error: ${esc(res.error)}</div>`;
@@ -725,8 +1481,11 @@
   // WhatsApp quick actions — status + list_numbers let you discover & copy the
   // test/live phone-number IDs into the WhatsApp Config section (number picker).
   async function runWhatsapp(action, params) {
-    const res = await api.whatsapp(action, params);
+    const res = await withLoading("Calling the WhatsApp Cloud API…", () => api.whatsapp(action, params), {
+      context: `whatsapp ${action}`,
+    });
     const box = $("whatsapp-result");
+    if (!res) return;
     if (!res.ok) {
       box.innerHTML = `<div class="empty">Error: ${esc(res.error)}</div>`;
       return;
@@ -799,6 +1558,13 @@
     { key: "WHATSAPP_APP_SECRET", label: "App Secret (webhook verify)", section: "WhatsApp", secret: true },
     { key: "WHATSAPP_WEBHOOK_VERIFY_TOKEN", label: "Webhook Verify Token", section: "WhatsApp", secret: true },
     // Frontdesk
+    // Key store — all licensing data/logic lives in the sibling personal_key_manager repo.
+    { key: "PKM_ROOT", label: "Key store root (pkm registries)", section: "Frontdesk", secret: false, placeholder: "~/Documents/GitHub/personal_key_manager" },
+    { key: "PKM_REPO", label: "personal_key_manager repo", section: "Frontdesk", secret: false, placeholder: "~/Documents/GitHub/personal_key_manager" },
+    { key: "PKM_REGISTRY", label: "Registry the frontdesk stack uses", section: "Frontdesk", secret: false, placeholder: "frontdesk-agent" },
+    { key: "PKM_BIN", label: "pkm CLI path (optional override)", section: "Frontdesk", secret: false, placeholder: "<repo>/bin/pkm.mjs" },
+    { key: "PKM_NODE", label: "Node binary used to run pkm (optional)", section: "Frontdesk", secret: false, placeholder: "(the app's own runtime)" },
+    { key: "PKM_TIMEOUT_MS", label: "pkm command timeout (ms)", section: "Frontdesk", secret: false, placeholder: "20000" },
     { key: "FRONTDESK_USE_TRELLO", label: "Use Trello for Frontdesk", section: "Frontdesk", secret: false, options: ["true", "false"] },
     { key: "FRONTDESK_LOG_TO_TRELLO", label: "Log Frontdesk to Trello", section: "Frontdesk", secret: false, options: ["true", "false"] },
     { key: "FRONTDESK_AGENT_PUBKEY", label: "Agent Public Key", section: "Frontdesk", secret: false },
@@ -1064,7 +1830,11 @@
       }
     }
     if (Object.keys(payload).length === 0) return configMsg("No changes to save.", true);
-    const res = await api.configSave(payload);
+    const res = await withLoading("Saving config.json…", () => api.configSave(payload), {
+      context: "config save",
+      slowHint: "Restarting the services this change affects…",
+    });
+    if (!res) return;
     if (res.ok) {
       const meta = LLM_PROVIDERS[String(res.provider || "deepseek").toLowerCase()] || LLM_PROVIDERS.deepseek;
       let msg = `Saved ${res.count} key(s) → config.json.`;
@@ -1083,7 +1853,8 @@
     }
   });
   $("config-export").addEventListener("click", async () => {
-    const res = await api.configExport();
+    const res = await withLoading("Exporting config…", () => api.configExport(), { context: "config export" });
+    if (!res) return;
     const blob = new Blob([res.json], { type: "application/json" });
     const url = URL.createObjectURL(blob);
     const a = document.createElement("a");
@@ -1100,7 +1871,14 @@
     const file = e.target.files && e.target.files[0];
     if (!file) return;
     const text = await file.text();
-    const res = await api.configImport(text);
+    const res = await withLoading("Importing config…", () => api.configImport(text), {
+      context: "config import",
+      slowHint: "Applying and restarting affected services…",
+    });
+    if (!res) {
+      e.target.value = "";
+      return;
+    }
     if (res.ok) {
       configMsg(`Imported ${res.count} key(s) → config.json. Restart services to apply.`);
       refreshConfig();
@@ -1202,7 +1980,7 @@
     if (res && res.ok) refreshUsage();
   });
   $("usage-flush").addEventListener("click", async () => {
-    await api.usageFlush();
+    await withLoading("Pushing buffered usage to DS-mon…", () => api.usageFlush(), { context: "usage flush" });
     await refreshUsage();
   });
 
@@ -1283,7 +2061,7 @@
     { file: "queue.md", title: "🔴 Queue" },
     { file: "logs.md", title: "📄 Logs" },
     { file: "sessions.md", title: "👥 Sessions" },
-    { file: "licenses.md", title: "🔑 Licenses" },
+    { file: "keys.md", title: "🔑 Key Manager" },
     { file: "accounts.md", title: "🔐 Accounts & Keys" },
     { file: "config.md", title: "⚙️ Config" },
     { file: "usage.md", title: "📈 Usage" },
@@ -1907,14 +2685,16 @@
   bindLogFiles();
   bindQueueClearAll();
   setInterval(() => {
-    // Light background refresh of health + dashboard while visible
-    if (document.querySelector("#tab-dashboard").classList.contains("active")) refreshDashboard();
-    if (document.querySelector("#tab-queue").classList.contains("active")) refreshQueue();
-    if (document.querySelector("#tab-logs").classList.contains("active")) refreshLogs();
-    if (document.querySelector("#tab-accounts").classList.contains("active")) refreshAccounts();
-    if (document.querySelector("#tab-config").classList.contains("active")) refreshConfig();
-    if (document.querySelector("#tab-about").classList.contains("active")) refreshAbout();
-    if (document.querySelector("#tab-chat").classList.contains("active")) refreshChatSessions();
-    if (document.querySelector("#tab-scripts").classList.contains("active")) refreshScripts();
+    // Light background refresh of health + dashboard while visible (guarded, so
+    // a transient failure can't wedge the visible panel).
+    const active = (id) => document.querySelector(`#tab-${id}`)?.classList.contains("active");
+    if (active("dashboard")) guarded("dashboard", refreshDashboard);
+    if (active("queue")) guarded("queue", refreshQueue);
+    if (active("logs")) guarded("logs", refreshLogs);
+    if (active("accounts")) guarded("accounts", refreshAccounts);
+    if (active("config")) guarded("config", refreshConfig);
+    if (active("about")) guarded("about", refreshAbout);
+    if (active("chat")) guarded("chat", refreshChatSessions);
+    if (active("scripts")) guarded("scripts", refreshScripts);
   }, 15000);
 })();

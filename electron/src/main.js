@@ -625,27 +625,15 @@ function frontdeskSessions() {
   return entries.slice(-200);
 }
 
-// ── Licenses (structured, via the shared engine) ─────────────────────────────
-async function licensesList() {
-  try {
-    const mod = await import(pathToFileURL(path.join(REPO, "scripts", "frontdesk-license.mjs")).href);
-    const now = Date.now();
-    const rows = mod.collectSeatRecords().map((r) => {
-      let status = r.revoked ? "revoked" : r.exp === 0 ? "valid" : now >= r.exp * 1000 ? "expired" : "valid";
-      return {
-        sub: r.sub,
-        kid: r.kid,
-        status,
-        exp: r.exp === 0 ? "unlimited" : new Date(r.exp * 1000).toISOString(),
-        issuedAt: r.issuedAt,
-        enc: !!r.enc,
-      };
-    });
-    rows.sort((a, b) => String(a.sub).localeCompare(String(b.sub)));
-    return { ok: true, seats: rows };
-  } catch (err) {
-    return { ok: false, error: err.message };
+// ── Key Manager ──
+// Every licensing operation lives in the sibling personal_key_manager repo. This
+// is a thin adapter: it shells out to `pkm … --json`. See main/key-manager.mjs.
+let keyManagerMod = null;
+async function keyManager() {
+  if (!keyManagerMod) {
+    keyManagerMod = await import(pathToFileURL(path.join(__dirname, "main", "key-manager.mjs")).href);
   }
+  return keyManagerMod;
 }
 
 // ── Tool access (shared manifest + quick actions) ────────────────────────────
@@ -1299,7 +1287,27 @@ function registerIpc() {
   });
   ipcMain.handle("frontdesk:sessions", () => ({ ok: true, entries: frontdeskSessions() }));
 
-  ipcMain.handle("licenses:list", () => licensesList());
+  // Key Manager — pkm-backed (all licensing logic/data lives in personal_key_manager).
+  // Every handler takes the registry id first, so the dashboard drives every
+  // registry in the store (frontdesk-agent, transcription-agent, …). Omitting it
+  // falls back to PKM_REGISTRY (⚙️ Config).
+  ipcMain.handle("pkm:status", async (_e, registry) => (await keyManager()).status(registry));
+  ipcMain.handle("pkm:registries", async () => (await keyManager()).registries());
+  ipcMain.handle("pkm:list", async (_e, registry, days) => (await keyManager()).listSeats(registry, days));
+  ipcMain.handle("pkm:issue", async (_e, registry, sub, exp) => (await keyManager()).issueSeat(registry, sub, exp));
+  ipcMain.handle("pkm:revoke", async (_e, registry, sub, reason) => (await keyManager()).revokeSeat(registry, sub, reason));
+  ipcMain.handle("pkm:unrevoke", async (_e, registry, sub) => (await keyManager()).unrevokeSeat(registry, sub));
+  ipcMain.handle("pkm:archive", async (_e, registry) => (await keyManager()).archiveExpired(registry));
+  ipcMain.handle("pkm:audit", async (_e, registry) => (await keyManager()).audit(registry));
+  ipcMain.handle("pkm:validate", async (_e, registry, key) => (await keyManager()).validate(registry, key));
+  // Rings (master keypairs) + cross-app blocklist sync
+  ipcMain.handle("pkm:rings", async (_e, registry) => (await keyManager()).rings(registry));
+  ipcMain.handle("pkm:ringCreate", async (_e, registry, kid) => (await keyManager()).ringCreate(registry, kid));
+  ipcMain.handle("pkm:ringRetire", async (_e, registry, kid, at) => (await keyManager()).ringRetire(registry, kid, at));
+  ipcMain.handle("pkm:agentKey", async (_e, registry) => (await keyManager()).agentKey(registry));
+  ipcMain.handle("pkm:setDefaultKid", async (_e, registry, kid) => (await keyManager()).setDefaultKid(registry, kid));
+  ipcMain.handle("pkm:syncRevocation", async (_e, registry) => (await keyManager()).syncRevocation(registry));
+
   ipcMain.handle("config:get", () => {
     const eff = config.readEffective();
     return {
@@ -1376,9 +1384,11 @@ function registerIpc() {
     try {
       const acc = await accountsApi();
       const rows = acc.listAccounts();
-      const lic = await licensesList();
+      // Seats come from the pkm-backed Key Manager (single source of truth), so a
+      // freshly issued seat shows up here before it has any account binding.
+      const lic = await (await keyManager()).listSeats();
       const subs = new Set(rows.map((r) => r.sub));
-      for (const s of lic.ok ? lic.seats : []) {
+      for (const s of lic.ok ? lic.data.rows || [] : []) {
         if (!subs.has(s.sub)) rows.push({ sub: s.sub, googleConnected: false, googleUser: null, trelloConfigured: false });
       }
       rows.sort((a, b) => a.sub.localeCompare(b.sub));

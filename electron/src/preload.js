@@ -28,8 +28,25 @@ contextBridge.exposeInMainWorld("api", {
     return () => ipcRenderer.removeListener("logs:entry", listener);
   },
   sessions: () => ipcRenderer.invoke("frontdesk:sessions"),
-  // Licenses + config
-  licenses: () => ipcRenderer.invoke("licenses:list"),
+  // Key Manager — pkm-backed; all licensing logic/data lives in personal_key_manager.
+  // `registry` selects which registry a command applies to (PKM_REGISTRY when omitted).
+  pkmStatus: (registry) => ipcRenderer.invoke("pkm:status", registry),
+  pkmRegistries: () => ipcRenderer.invoke("pkm:registries"),
+  pkmList: (registry, days) => ipcRenderer.invoke("pkm:list", registry, days),
+  pkmIssue: (registry, sub, exp) => ipcRenderer.invoke("pkm:issue", registry, sub, exp),
+  pkmRevoke: (registry, sub, reason) => ipcRenderer.invoke("pkm:revoke", registry, sub, reason),
+  pkmUnrevoke: (registry, sub) => ipcRenderer.invoke("pkm:unrevoke", registry, sub),
+  pkmArchive: (registry) => ipcRenderer.invoke("pkm:archive", registry),
+  pkmAudit: (registry) => ipcRenderer.invoke("pkm:audit", registry),
+  pkmValidate: (registry, key) => ipcRenderer.invoke("pkm:validate", registry, key),
+  // Ring management + embedded-blocklist sync (consumer apps that embed it)
+  pkmRings: (registry) => ipcRenderer.invoke("pkm:rings", registry),
+  pkmRingCreate: (registry, kid) => ipcRenderer.invoke("pkm:ringCreate", registry, kid),
+  pkmRingRetire: (registry, kid, at) => ipcRenderer.invoke("pkm:ringRetire", registry, kid, at),
+  pkmAgentKey: (registry) => ipcRenderer.invoke("pkm:agentKey", registry),
+  pkmSetDefaultKid: (registry, kid) => ipcRenderer.invoke("pkm:setDefaultKid", registry, kid),
+  pkmSyncRevocation: (registry) => ipcRenderer.invoke("pkm:syncRevocation", registry),
+  // Config
   config: () => ipcRenderer.invoke("config:get"),
   configWithSources: () => ipcRenderer.invoke("config:getWithSources"),
   configSave: (values) => ipcRenderer.invoke("config:save", values),

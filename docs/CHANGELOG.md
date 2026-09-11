@@ -1,5 +1,77 @@
 # Changelog
 
+## [0.2.8-4] — 2026-09-11
+
+### Key Manager — every registry and every ring (Electron)
+
+- The tab is no longer hardwired to one registry. A **registry picker** at the top of the 🔑 Key Manager
+tab scopes every call, so every registry in the key store is managed from the same UI. The line beside it
+summarises the selected registry's app id, signing engine, ring/seat/revocation counts, and whether it
+reads its revocation blocklist **live** or **embeds** it in its own source files.
+- **Ring management added** (previously CLI-only): the rings table lists every master key with its
+  default/retired state, and **＋ New ring**, **Retire**, **Make default** and **🔑 Agent key**
+  (X25519 peer keypair, `ed25519+x25519` registries only) are now buttons.
+- **🔄 Sync blocklist** rewrites the blocklist embedded in a registry's consumer-app source files
+  (e.g. `transcription-agent` → `electron/src/main/license.ts`, `python-backend/license.py`) and
+  tells you to rebuild. A revoke for an embedding registry now also warns in the UI that the sync +
+  rebuild is still outstanding.
+- The picker line states how each registry reaches its blocklist — *read live* vs *embedded*.
+
+### Key Manager — loading fixed (it could hang forever)
+
+The tab could sit on `checking…` / `loading…` indefinitely with no error. Four compounding causes,
+all fixed:
+
+- **Wrong spawn target.** `key-manager.mjs` ran `spawn(process.execPath, …)` — inside Electron that
+  is the **Electron binary**, not node, so `pkm.mjs` was opened as a desktop app that never exited.
+  It now runs the CLI as Node (`ELECTRON_RUN_AS_NODE=1`), with `PKM_NODE` as an override.
+- **No timeout.** A hung CLI deadlocked the serialised command queue forever. Every `pkm` run is now
+  hard-bounded by `PKM_TIMEOUT_MS` (default 20s) and killed (SIGTERM → SIGKILL), reporting
+  `pkm <cmd> timed out after Ns and was killed`.
+- **No error path in the renderer.** `refreshLicenses()` awaited IPC with no `try/catch`, so a
+  rejection left the initial placeholder text on screen. Loaders are now guarded and paint a
+  Retry-able error box; a global `unhandledrejection` handler rescues any panel still showing
+  `loading…`/`checking…` and drops the overlay.
+
+### Paths are config, not code
+
+- Key-store locations are now **config-driven** (`PKM_REPO`, `PKM_ROOT`, `PKM_REGISTRY`, `PKM_BIN`,
+  and the command timeout) instead of being hardcoded, and the Key Manager picks up a change without a
+  restart. A single shared resolver reads the store's own registry index, so a registry whose directory
+  differs from its id resolves correctly.
+
+### Loading overlays everywhere (Electron UI)
+
+Ported the `ai_transcription_agent` pattern:
+
+- **Blocking overlay** (`#loading-overlay`) with a spinner, a contextual message, an optional
+  progress bar, a slow-operation hint after 8s, and an optional Cancel — wired into service
+  start/stop/**restart**, webhook re-register, every `pkm` mutation, licence validation, config
+  save/export/import, seat account connect/set/spawn/stop, usage flush, and the Trello/Gmail/
+  WhatsApp quick actions.
+- **Inline skeletons** (`.loading-block`) and **Retry-able error boxes** (`.panel-error`) for panel
+  and tab fetches, plus a focused transient notice (`#toast`) for results that used to be `alert()`.
+
+### Docs
+
+- `docs/ipcs.md` — the 15 registry-aware `pkm:*` channels and their payloads.
+- `electron/README.md`, `electron/docs/keys.md` — registry picker, rings, sync blocklist, corrected
+  Refresh semantics, and where every path comes from.
+
+## [0.2.8-3] — 2026-09-11
+
+### Licensing — management moved out of this repo
+
+- Key **management** (rings, seat ledger, revocation blocklist, audit) now lives in a separate local
+  key-store repo driven by its `pkm` CLI — one source of truth, shared with the other app that issues
+  licences. This repo keeps only a **read-only verifier**.
+- **🔑 Licenses became 🔑 Key Manager** — issue / revoke / unrevoke / validate / archive-expired / audit,
+  driven entirely through the CLI. Issued licences are **display-once** (a modal with Copy that clears on
+  close); the app never stores or logs them.
+- The in-repo key store and its management scripts were **removed**, along with the matching npm scripts;
+  where the store lives is now configured in ⚙️ Config instead of being hardcoded.
+- `electron/docs/licenses.md` → [`electron/docs/keys.md`](electron/docs/keys.md).
+
 ## [0.2.8-2] — 2026-09-10
 
 ### Operator chat — DeepSeek 400 fixed

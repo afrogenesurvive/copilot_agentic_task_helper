@@ -26,7 +26,21 @@ preload bridge ([`electron/src/preload.js`](../electron/src/preload.js#L7)) as `
 | `onLogEntry(cb)` | `logs:entry` (push) | Live entries pushed from main via `webContents.send`; see [`main/logger.js`](../electron/src/main/logger.js#L1) |
 | `toolLog(lines?)` | [`logs:tool`](../electron/src/main.js#L1096) | `/tool-logs?lines=` result (legacy tool-call tail) |
 | `sessions()` | [`frontdesk:sessions`](../electron/src/main.js#L1109) | Last 200 frontdesk session entries |
-| `licenses()` | [`licenses:list`](../electron/src/main.js#L1111) | `{ok, seats:[{sub,status,exp,issuedAt,enc}]}` |
+| `pkmStatus(registry?)` | [`pkm:status`](../electron/src/main.js#L1294) | `{ok, data:{present, pkmRepo, pkmBin, storeRoot, indexFile, registry, registries:[{id,name,app,engine,defaultKid,rings,seats,revoked,verifierTargets}], entry, loosePermissions, authorityPublicKey, timeoutMs}}`. `registry` defaults to `PKM_REGISTRY` (config.json/.env) |
+| `pkmRegistries()` | [`pkm:registries`](../electron/src/main.js#L1295) | `{ok, data:{registries, indexFile, root}}` — every registry in the store |
+| `pkmList(registry?, days?)` | [`pkm:list`](../electron/src/main.js#L1296) | `{ok, data:{registry, days, counts, archived, rows:[{sub,kid,exp,expUtc,issuedAt,enc,status,daysLeft}]}}`. Note `check-exp` archives already-expired records as a side effect |
+| `pkmIssue(registry?, sub, exp)` | [`pkm:issue`](../electron/src/main.js#L1297) | `{ok, data:{registry,sub,kid,exp,issuedAt,licenseKey}}` — **displayed once, never logged** |
+| `pkmRevoke(registry?, sub, reason?)` | [`pkm:revoke`](../electron/src/main.js#L1298) | `{ok, data:{registry, sub, blocklistSize, archived}}` |
+| `pkmUnrevoke(registry?, sub)` | [`pkm:unrevoke`](../electron/src/main.js#L1299) | `{ok, data:{registry, sub, changed, blocklistSize}}` |
+| `pkmArchive(registry?)` | [`pkm:archive`](../electron/src/main.js#L1300) | `{ok, data:{registry, archived}}` |
+| `pkmAudit(registry?)` | [`pkm:audit`](../electron/src/main.js#L1301) | `{ok, data:{registry, entries:[{ts,action,sub,kid,exp,detail}]}}` |
+| `pkmValidate(registry?, key)` | [`pkm:validate`](../electron/src/main.js#L1302) | `{ok, data:{ok, claims?, reason?}}` |
+| `pkmRings(registry?)` | [`pkm:rings`](../electron/src/main.js#L1304) | `{ok, data:{registry, defaultKid, rings:[{kid,publicKey,notAfter,createdAt}]}}` |
+| `pkmRingCreate(registry?, kid)` | [`pkm:ringCreate`](../electron/src/main.js#L1305) | `{ok, data:{registry, kid, dir, privateKeyPath, publicKey}}` — mints a new master keypair (private half stays 0600 on disk) |
+| `pkmRingRetire(registry?, kid, at?)` | [`pkm:ringRetire`](../electron/src/main.js#L1306) | `{ok, data:{registry, kid, notAfter}}` — `at` is an ISO date or `now` |
+| `pkmAgentKey(registry?)` | [`pkm:agentKey`](../electron/src/main.js#L1307) | `{ok, data:{registry, dir, publicKey, privateKeyPath}}` — regenerates the X25519 peer keypair (ed25519+x25519 only) |
+| `pkmSetDefaultKid(registry?, kid)` | [`pkm:setDefaultKid`](../electron/src/main.js#L1308) | `{ok, data:{registry, defaultKid}}` — ring that signs new seats |
+| `pkmSyncRevocation(registry?)` | [`pkm:syncRevocation`](../electron/src/main.js#L1309) | `{ok, data:{results:[{registry, seats, changes:[{label,path,changed}]}]}}` — rewrites an embedded blocklist; **rebuild the consumer app** afterwards |
 | `config()` | [`config:get`](../electron/src/main.js#L1271) | Config summary: `{present, source, configPath, values, webhookBaseUrl, …}` (config.json primary, `.env` fallback) |
 | `configSave(values)` | [`config:save`](../electron/src/main.js#L1291) | Merges the changed keys into `config.json` (other keys preserved) and applies them to `process.env`; provider/usage-tracking key changes restart the runner + webhook |
 | `configExport()` | [`config:export`](../electron/src/main.js#L1316) | `{ok, present, source, json}` — effective config as pretty JSON |

@@ -17,7 +17,7 @@
           <button data-tab="logs">📄 Logs</button>
           <button data-tab="sessions">👥 Sessions</button>
           <button data-tab="usage">📈 Usage</button>
-          <button data-tab="licenses">🔑 Licenses</button>
+          <button data-tab="licenses">🔑 Key Manager</button>
           <button data-tab="accounts">🔐 Accounts &amp; Keys</button>
           <button data-tab="config">⚙️ Config</button>
           <button data-tab="tools">🧰 Tools</button>
@@ -114,7 +114,7 @@
               </select>
               <span id="log-day-status" class="log-check"></span>
             </div>
-            <div id="log-box" class="log-box">loading…</div>
+            <div id="log-box" class="log-box"><div class="loading-block"><span class="spin"></span><span>Loading…</span></div></div>
           </div>
 
           <!-- Files -->
@@ -123,7 +123,7 @@
               <span id="log-file-title" class="log-file-title">Select a log file to view</span>
               <button id="log-file-refresh">Refresh</button>
             </div>
-            <div id="log-file-list">loading…</div>
+            <div id="log-file-list"><div class="loading-block"><span class="spin"></span><span>Loading…</span></div></div>
             <div id="log-file-view" class="hidden">
               <div class="log-file-actions">
                 <button id="log-file-tail">Tail 500</button>
@@ -141,7 +141,7 @@
       <section id="tab-sessions" class="tab">
         <div class="panel">
           <h3>👥 Frontdesk sessions</h3>
-          <div id="sessions-box">loading…</div>
+          <div id="sessions-box"><div class="loading-block"><span class="spin"></span><span>Loading…</span></div></div>
           <p style="color:var(--muted);font-size:0.72rem;margin-top:0.6rem;line-height:1.4">
             Webapp visitor sessions, seen from the operator's side. The visitors (seats) never
             see this view — they only use their own webapp chat.
@@ -149,18 +149,108 @@
         </div>
       </section>
 
-      <!-- Licenses -->
+      <!-- Key Manager (licensing — all data + logic live in personal_key_manager) -->
       <section id="tab-licenses" class="tab">
         <div class="panel">
           <div class="panel-head">
-            <h3>🔑 Seat licenses</h3>
-            <button id="licenses-refresh">Refresh</button>
+            <h3>🔑 Key Manager <span id="pkm-badge" class="badge">checking…</span></h3>
+            <div>
+              <button id="pkm-refresh">Refresh</button>
+              <button id="pkm-validate-open" title="Check a licence string against the live ring + revocation blocklist">Validate…</button>
+              <button id="pkm-archive" title="Move expired seat records into the expired/ ledger">Archive expired</button>
+              <button id="pkm-issue-open" class="primary">＋ Issue license</button>
+            </div>
           </div>
-          <div id="licenses-box">loading…</div>
-          <p style="color:var(--muted);font-size:0.72rem;margin-top:0.6rem;line-height:1.4">
-            <b>Operator-only</b> — lists every seat license at once. Seats gate <b>webapp login</b>
-            for collaborators, not this app; collaborators never see this table.
+
+          <div id="pkm-host"></div>
+
+          <!-- Registry picker — the store holds an independent ring + seat ledger
+               per consumer app, so every action below is scoped to this choice. -->
+          <div class="pkm-toolbar">
+            <label class="cfg-label" for="pkm-registry">Registry</label>
+            <select id="pkm-registry" title="Which registry (consumer app) this tab manages"></select>
+            <span id="pkm-registry-meta" class="pkm-meta"></span>
+          </div>
+
+          <p class="hint">
+            Seat licences gate <b>webapp login</b> for collaborators — not this app. Every operation
+            below runs through the <code>pkm</code> CLI in <b>personal_key_manager</b>, which owns all
+            ring, seat, revocation and audit data; this dashboard is only a front end.
+            Revocation is read live by the webhook server, so it takes effect on that seat's
+            <b>next login</b> — no restart, no rebuild.
           </p>
+
+          <!-- Rings (master keypairs) — sign new seats, retire old ones -->
+          <div class="panel-head" style="margin-top:1rem">
+            <h3>💠 Rings (master keys)</h3>
+            <div>
+              <button id="pkm-ring-create" title="Generate a new master Ed25519 keypair">＋ New ring</button>
+              <button id="pkm-agent-key" title="Regenerate the X25519 peer keypair (ed25519+x25519 registries only)">🔑 Agent key</button>
+              <button id="pkm-sync-revocation" title="Rewrite the blocklist embedded in this registry's consumer-app source files">🔄 Sync blocklist</button>
+            </div>
+          </div>
+          <div id="pkm-rings-box"><div class="loading-block"><span class="spin"></span><span>Loading…</span></div></div>
+          <p class="hint" id="pkm-rings-hint"></p>
+
+          <!-- Issue form (hidden until ＋ Issue license) -->
+          <div id="pkm-issue-form" class="hidden">
+            <div class="panel" style="margin:0.6rem 0">
+              <div class="panel-head"><h3>Issue a seat licence</h3></div>
+              <div class="config-field">
+                <label class="cfg-label" for="pkm-issue-sub">Seat id</label>
+                <div class="cfg-input-row">
+                  <input id="pkm-issue-sub" type="text" placeholder="alice@example.com" spellcheck="false" />
+                </div>
+              </div>
+              <div class="config-field">
+                <label class="cfg-label" for="pkm-issue-exp">Expiry</label>
+                <div class="cfg-input-row">
+                  <input id="pkm-issue-exp" type="text" placeholder="2027-12-31 — or “unlimited”" spellcheck="false" />
+                </div>
+              </div>
+              <div class="config-actions">
+                <button id="pkm-issue-go" class="primary">Issue</button>
+                <button id="pkm-issue-cancel">Cancel</button>
+              </div>
+              <div id="pkm-issue-msg" class="config-msg"></div>
+            </div>
+          </div>
+
+          <div id="pkm-seats-box"><div class="loading-block"><span class="spin"></span><span>Loading…</span></div></div>
+
+          <div class="panel-head" style="margin-top:1rem">
+            <h3>Audit log</h3>
+            <button id="pkm-audit-load">Show</button>
+          </div>
+          <div id="pkm-audit-box"></div>
+
+          <p class="hint">
+            <b>Operator-only:</b> this table lists <em>every</em> seat at once. A collaborator never
+            sees it — each only logs into their own webapp chat with their own licence key.
+          </p>
+        </div>
+
+        <!-- Copy-once licence modal. pkm prints the licence a single time and it
+             embeds the seat's private seeds, so it is never stored or logged here. -->
+        <div
+          id="pkm-modal"
+          class="hidden"
+          style="position:fixed;inset:0;background:rgba(0,0,0,0.6);display:flex;align-items:center;justify-content:center;z-index:1250"
+        >
+          <div class="panel" style="max-width:680px;width:92%">
+            <div class="panel-head"><h3>🔑 Licence issued</h3></div>
+            <p class="hint">
+              <b>Copy this now — it will not be shown again.</b> The licence embeds the seat's private
+              keys, so hand it to the seat owner over a secure channel. It is not stored or logged
+              anywhere in this app.
+            </p>
+            <textarea id="pkm-modal-key" readonly spellcheck="false" style="width:100%;height:6rem;font-family:var(--mono,monospace);font-size:0.68rem;white-space:pre-wrap;word-break:break-all"></textarea>
+            <div class="config-actions">
+              <button id="pkm-modal-copy" class="primary">📋 Copy</button>
+              <button id="pkm-modal-close">Done</button>
+            </div>
+            <div id="pkm-modal-msg" class="config-msg"></div>
+          </div>
         </div>
       </section>
 
@@ -171,7 +261,7 @@
             <h3>🔐 Seat → account bindings</h3>
             <button id="accounts-refresh">Refresh</button>
           </div>
-          <div id="accounts-box">loading…</div>
+          <div id="accounts-box"><div class="loading-block"><span class="spin"></span><span>Loading…</span></div></div>
           <p style="color:var(--muted);font-size:0.72rem;margin-top:0.6rem;line-height:1.4">
             Connect a Google account or set a Trello key/token per seat. The agent uses these when acting
             on behalf of that seat. <b>▶ Spawn MCP</b> launches dedicated MCP instances bound to the seat's
@@ -268,7 +358,7 @@
         </div>
         <div class="panel">
           <h3>📋 Shared tool manifest</h3>
-          <div id="manifest-box">loading…</div>
+          <div id="manifest-box"><div class="loading-block"><span class="spin"></span><span>Loading…</span></div></div>
         </div>
       </section>
 
@@ -287,7 +377,7 @@
             fields); others take a raw args box — a JSON array like
             <code>["--dry-run","-i","i-0abc123"]</code> or plain space-separated values.
           </p>
-          <div id="scripts-list">loading…</div>
+          <div id="scripts-list"><div class="loading-block"><span class="spin"></span><span>Loading…</span></div></div>
         </div>
       </section>
 
@@ -396,6 +486,48 @@
         </div>
       </section>
         </main>
+      </div>
+    </div>
+
+    <!-- Global loading overlay — one blocking indicator for every long-running
+         action (service restarts, pkm CLI calls, config save/import, MCP spawn).
+         Panel refreshes use the lighter inline .loading-block skeleton instead.
+         z-index sits under the prompt/licence modals so those stay readable. -->
+    <div id="loading-overlay" class="hidden" role="status" aria-live="polite" aria-busy="true">
+      <div class="lo-card">
+        <div class="lo-spinner"></div>
+        <p id="loading-msg" class="lo-msg">Working…</p>
+        <div id="loading-progress" class="lo-track hidden"><div id="loading-bar" class="lo-fill"></div></div>
+        <p id="loading-hint" class="lo-hint hidden"></p>
+        <button id="loading-cancel" class="hidden">Cancel</button>
+      </div>
+    </div>
+
+    <!-- Transient inline notice (errors/success) that does not steal focus -->
+    <div id="toast" class="hidden"></div>
+
+    <!-- Generic single-value input modal.
+         Electron's renderer does NOT implement window.prompt() — it throws
+         "prompt() is not supported" — so every text prompt goes through this.
+         Lives outside the tab sections so it can open from any tab. -->
+    <div
+      id="prompt-modal"
+      class="hidden"
+      style="position:fixed;inset:0;background:rgba(0,0,0,0.6);display:flex;align-items:center;justify-content:center;z-index:1200"
+    >
+      <div class="panel" style="max-width:560px;width:92%">
+        <div class="panel-head"><h3 id="prompt-title">Input</h3></div>
+        <p class="hint" id="prompt-desc"></p>
+        <div class="config-field">
+          <label class="cfg-label" id="prompt-label" for="prompt-input">Value</label>
+          <div class="cfg-input-row">
+            <input id="prompt-input" type="text" spellcheck="false" />
+          </div>
+        </div>
+        <div class="config-actions">
+          <button id="prompt-ok" class="primary">OK</button>
+          <button id="prompt-cancel">Cancel</button>
+        </div>
       </div>
     </div>
 

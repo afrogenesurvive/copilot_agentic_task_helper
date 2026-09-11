@@ -17,7 +17,7 @@ for every tab in the app:
 - 🔴 Queue
 - 📄 Logs
 - 👥 Sessions
-- 🔑 Licenses
+- 🔑 Key Manager
 - 🔐 Accounts & Keys
 - ⚙️ Config
 - 🧰 Tools
