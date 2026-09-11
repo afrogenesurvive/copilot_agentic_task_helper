@@ -31,7 +31,7 @@ npm run electron:dev       # launch dashboard + autostart the whole backend
 | 💬 Chat | Chat with the configured LLM (the agent) directly from the dashboard — each conversation is saved as its own log file |
 | ⚙️ Config | Sectioned field editor with per-key source badges, secret show/hide, Save (edited keys only), Export / Import, Raw JSON toggle |
 | 🧰 Tools | Shared tool manifest + Trello/Gmail quick actions |
-| 🎨 Appearance | Light / Dark / System theme (`APPEARANCE_THEME` — native chrome + dashboard) |
+| 🎨 Appearance | Light / Dark / System theme, accent color (presets + custom) and font-size preset (`APPEARANCE_THEME`, `APPEARANCE_ACCENT_COLOR`, `APPEARANCE_FONT_SIZE` — native chrome + dashboard) |
 | ℹ️ About | App name + version (About) + a Guide sub-tab |
 | ⏻ Quit (bottom) | Quits the app — main `before-quit` stops all backend services |
 
@@ -105,6 +105,9 @@ requests, with tool activity shown inline as chips and result bubbles:
   the model, and external tool results are sanitized before being fed back.
 - Tool access is **operator-channel only** — frontdesk chats stay read-only Q&A by design. Disable tools
   entirely with `OPERATOR_CHAT_TOOLS=false`. See [`electron/docs/chat.md`](electron/docs/chat.md).
+- Each message gets `OPERATOR_CHAT_MAX_ROUNDS` tool steps (default **24**). On exhaustion the agent makes a
+  final tool-free **wrap-up** call so you still get an answer; otherwise it stops with a sentinel message
+  and the Chat tab offers **▶ Continue** (history is persisted, so continuing resumes with full context).
 
 ## Scripts tab
 

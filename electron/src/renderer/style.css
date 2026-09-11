@@ -17,6 +17,13 @@
   --ok: #2ecc71;
   --warn: #f39c12;
   --err: #e74c3c;
+  /* Font-size preset scale (Appearance tab) — every rem size derives from this. */
+  --fs-scale: 1;
+}
+
+/* Root font-size drives every rem-based size in this stylesheet. */
+html {
+  font-size: calc(16px * var(--fs-scale));
 }
 
 body {
@@ -146,6 +153,9 @@ main {
   flex: 1;
   overflow-y: auto;
   padding: 1rem;
+  display: flex; /* let a tab opt into filling the scroll area */
+  flex-direction: column;
+  min-height: 0;
 }
 
 .tab {
@@ -154,6 +164,26 @@ main {
 
 .tab.active {
   display: block;
+  /* Non-fill tabs keep their natural height (only #tab-chat / #tab-logs flex). */
+  flex-shrink: 0;
+}
+
+/* Tabs whose panel fills the whole section (Chat, Logs). */
+#tab-chat.active,
+#tab-logs.active {
+  display: flex;
+  flex-direction: column;
+  flex: 1;
+  min-height: 0;
+}
+
+#tab-chat > .panel,
+#tab-logs > .panel {
+  flex: 1;
+  min-height: 0;
+  margin-bottom: 0;
+  display: flex;
+  flex-direction: column;
 }
 
 .panel {
@@ -202,12 +232,88 @@ button.primary {
   color: #fff;
 }
 
-/* ── Dashboard: service sub-tabs + large detail view ── */
+/* ── Dashboard: service sidebar + large detail view ── */
+#tab-dashboard.active {
+  display: flex;
+  flex-direction: column;
+  flex: 1;
+  min-height: 0;
+}
+
+.svc-layout {
+  display: flex;
+  align-items: stretch;
+  gap: 1rem;
+  flex: 1;
+  min-height: 0;
+}
+
 .svc-tabs {
   display: flex;
-  flex-wrap: wrap;
-  gap: 0.4rem;
-  margin-bottom: 0.9rem;
+  flex-direction: column;
+  flex: 0 0 200px;
+  max-width: 200px;
+  overflow-y: auto;
+  gap: 0.3rem;
+  padding: 0.4rem;
+  background: var(--panel);
+  border: 1px solid var(--border);
+  border-radius: 8px;
+}
+
+/* Collapsed → a narrow rail showing only status dots. */
+.svc-tabs.collapsed {
+  flex-basis: 46px;
+  max-width: 46px;
+}
+.svc-tabs-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 0.3rem;
+  padding: 0 0.15rem 0.35rem;
+  margin-bottom: 0.15rem;
+  border-bottom: 1px solid var(--border);
+}
+.svc-tabs-title {
+  font-size: 0.66rem;
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+  color: var(--muted);
+}
+.svc-collapse {
+  padding: 0.1rem 0.35rem;
+  font-size: 0.7rem;
+  line-height: 1;
+}
+.svc-tabs.collapsed .svc-tabs-title,
+.svc-tabs.collapsed .svc-tab-label {
+  display: none;
+}
+
+.svc-tab {
+  width: 100%;
+  text-align: left;
+  display: flex;
+  align-items: center;
+  gap: 0.45rem;
+}
+
+.svc-dot {
+  flex: 0 0 auto;
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  background: var(--muted);
+}
+.svc-dot.running {
+  background: var(--ok);
+}
+.svc-dot.stopped {
+  background: var(--muted);
+}
+.svc-dot.error {
+  background: var(--err);
 }
 
 .svc-tab.running:not(.active) {
@@ -228,9 +334,36 @@ button.primary {
   color: #fff;
 }
 
+.svc-main {
+  flex: 1;
+  min-width: 0;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+}
+
 .svc-detail {
   display: flex;
   flex-direction: column;
+  flex: 1;
+  min-height: 0;
+  margin-bottom: 0;
+}
+
+.svc-note {
+  flex: 0 0 auto;
+  margin-bottom: 0.6rem;
+  padding: 0.7rem 0.9rem;
+  background: var(--panel);
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  font-size: 0.72rem;
+  color: var(--muted);
+  line-height: 1.4;
+}
+
+.svc-note b {
+  color: var(--text);
 }
 
 .svc-head {
@@ -273,8 +406,10 @@ button.primary {
 }
 
 .svc-detail-log {
-  height: calc(100vh - 250px);
-  min-height: 320px;
+  height: auto;
+  flex: 1;
+  min-height: 140px;
+  max-height: none;
   overflow-y: auto;
   font-family: ui-monospace, Menlo, monospace;
   font-size: 0.72rem;
@@ -419,6 +554,68 @@ th {
   color: var(--accent);
   box-shadow: 0 0 0 1px var(--accent) inset;
 }
+.appearance-subtitle {
+  font-size: 0.74rem;
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+  color: var(--muted);
+  margin: 1rem 0 0.2rem;
+}
+.accent-grid {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.5rem;
+  margin: 0.5rem 0;
+}
+.accent-swatch {
+  width: 30px;
+  height: 30px;
+  padding: 0;
+  border: 2px solid var(--border);
+  border-radius: 50%;
+  cursor: pointer;
+}
+.accent-swatch.active {
+  border-color: var(--text);
+  box-shadow: 0 0 0 2px var(--accent);
+}
+.accent-custom {
+  display: flex;
+  align-items: center;
+  gap: 0.6rem;
+  font-size: 0.74rem;
+  color: var(--muted);
+}
+.accent-custom input[type="color"] {
+  width: 34px;
+  height: 26px;
+  padding: 0;
+  border: 1px solid var(--border);
+  background: var(--surface);
+}
+.font-grid {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.5rem;
+  margin-top: 0.5rem;
+}
+.font-preset {
+  flex: 1 1 110px;
+  display: flex;
+  flex-direction: column;
+  gap: 0.15rem;
+  padding: 0.5rem 0.6rem;
+  text-align: left;
+}
+.font-preset small {
+  color: var(--muted);
+  font-size: 0.62rem;
+}
+.font-preset.active {
+  border-color: var(--accent);
+  color: var(--accent);
+  box-shadow: 0 0 0 1px var(--accent) inset;
+}
 
 /* ── Logs (Live + Files) ── */
 .logs-subtabs {
@@ -462,8 +659,17 @@ th {
   align-items: center;
   gap: 0.25rem;
 }
+/* Live + Files sub-views fill the Logs panel; the log box/pre take the rest. */
+#logs-live,
+#logs-files {
+  flex: 1;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+}
 .log-box {
-  max-height: 55vh;
+  flex: 1;
+  min-height: 0;
   overflow-y: auto;
   font-family: ui-monospace, Menlo, monospace;
   font-size: 0.68rem;
@@ -564,14 +770,25 @@ th {
 }
 .log-file-view {
   margin-top: 0.6rem;
+  flex: 1;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
 }
 .log-file-actions {
   display: flex;
   gap: 0.4rem;
   margin-bottom: 0.4rem;
 }
-#log-file-box {
-  max-height: 50vh;
+#log-file-list {
+  flex: 0 1 auto;
+  max-height: 45%;
+  overflow-y: auto;
+}
+#log-file-view > pre {
+  flex: 1;
+  min-height: 0;
+  max-height: none;
 }
 
 /* ── Manifest + quick tools ── */
@@ -949,14 +1166,16 @@ th {
 .chat-layout {
   display: grid;
   grid-template-columns: 200px 1fr;
+  grid-template-rows: minmax(0, 1fr);
   gap: 0.7rem;
   margin-top: 0.5rem;
-  min-height: 52vh;
+  flex: 1;
+  min-height: 0;
 }
 .chat-sessions {
   border-right: 1px solid var(--border);
   padding-right: 0.5rem;
-  max-height: 48vh;
+  min-height: 0;
   overflow-y: auto;
 }
 .chat-session {
@@ -988,10 +1207,11 @@ th {
   display: flex;
   flex-direction: column;
   min-width: 0;
+  min-height: 0;
 }
 .chat-box {
   flex: 1;
-  max-height: 42vh;
+  min-height: 0;
   overflow-y: auto;
   background: var(--bg);
   border-radius: 6px;
@@ -1125,6 +1345,18 @@ th {
   display: flex;
   gap: 0.4rem;
   margin-top: 0.5rem;
+}
+.chat-continue {
+  align-self: center;
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+  padding: 0.4rem 0.6rem;
+  background: rgba(243, 156, 18, 0.08);
+  border: 1px solid rgba(243, 156, 18, 0.45);
+  border-radius: 8px;
+  font-size: 0.72rem;
+  color: var(--muted);
 }
 #chat-input {
   flex: 1;

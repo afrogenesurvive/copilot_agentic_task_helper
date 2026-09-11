@@ -313,6 +313,14 @@ async function callOpenAiCompatible({ systemMessage, messages, tools, temperatur
   if (provider === "deepseek") {
     body.thinking = { type: "enabled" };
     body.reasoning_effort = "high";
+    // Thinking mode + `tools`: DeepSeek requires the `reasoning_content` of every
+    // previous assistant turn to be passed back — including turns where the model
+    // produced no chain-of-thought (0 reasoning tokens). A missing field is a hard
+    // 400 ("The `reasoning_content` in the thinking mode must be passed back to the
+    // API"), so default it to an empty string rather than omitting it.
+    for (const m of body.messages) {
+      if (m.role === "assistant" && m.reasoning_content == null) m.reasoning_content = "";
+    }
   }
   // Ollama-specific: forwarded by Ollama's /v1 endpoint
   if (provider === "ollama") {
@@ -337,8 +345,10 @@ async function callOpenAiCompatible({ systemMessage, messages, tools, temperatur
   const message = data.choices?.[0]?.message;
   const toolCall = message?.tool_calls?.[0];
   // DeepSeek thinking mode emits reasoning_content on every assistant reply;
-  // callers must store it and pass it back to continue a conversation.
-  const reasoningContent = message?.reasoning_content || null;
+  // callers must store it and pass it back to continue a conversation. Use `??`
+  // (not `||`) so a legitimately empty string is preserved instead of dropped —
+  // dropping it makes the next request in the conversation fail with a 400.
+  const reasoningContent = message?.reasoning_content ?? null;
 
   if (!toolCall) {
     const reply = message?.content || null;

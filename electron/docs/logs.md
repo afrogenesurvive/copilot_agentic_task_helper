@@ -28,6 +28,8 @@ The Logs tab has two sub-tabs: **Live** (a streaming, filterable view of log ent
 
 ## Notes
 
+- Both sub-tabs **fill the tab height** — the live log box and the file preview grow with the
+  window instead of stopping at a fixed height.
 - The live buffer keeps a rolling window (newest entries win).
 - Saved logs live under `logs/` (e.g. `logs/tool_call/…`, `logs/webhook/…`) — the Files view is a
   safe way to read them without touching a terminal.

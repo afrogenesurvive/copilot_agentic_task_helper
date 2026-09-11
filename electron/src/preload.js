@@ -90,5 +90,6 @@ contextBridge.exposeInMainWorld("api", {
   // Appearance
   getTheme: () => ipcRenderer.invoke("app:getTheme"),
   setTheme: (theme) => ipcRenderer.invoke("app:setTheme", theme),
+  setAppearance: (patch) => ipcRenderer.invoke("app:setAppearance", patch),
   quit: () => ipcRenderer.invoke("app:quit"),
 });

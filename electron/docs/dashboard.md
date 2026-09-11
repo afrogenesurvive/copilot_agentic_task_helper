@@ -7,7 +7,10 @@ local services this app manages, with live output for each one.
 
 - **Health badge (top-right)** — `webhook 3199 ok` when the webhook server answers its `/health`
   endpoint, or `webhook down` when it doesn't.
-- **Service tabs** — one button per service. They appear in the following states:
+- **Service sidebar** — one button per service down the left of the Dashboard, each with a status
+  dot. Use the **⟨ / ⟩** button in its header to **collapse it to a narrow rail** (shown as dots
+  only) — handy on small windows. The collapsed state is remembered per machine. Services appear
+  in the following states:
 
   - `● running` — the process is up (title shows the pid).
   - `● running (external)` — the process is up but was started **outside** the dashboard (for
@@ -28,6 +31,9 @@ local services this app manages, with live output for each one.
     the **active phone number** (test vs live) and connected status, plus a **List numbers**
     helper to copy phone-number IDs into Config.
   - A read-only tail of the service's most recent output (last ~500 lines), auto-scrolled.
+
+  Directly **above the detail panel** sits the operator-only note (what this console shows and who
+  it's for). The sidebar, detail panel and log tail all stretch to fill the tab height.
 
 ## Services you can manage
 
@@ -54,8 +60,8 @@ local services this app manages, with live output for each one.
 ## Notes
 
 - **Operator-only:** this dashboard is the operator's single view of every local service, seat,
-  license, and account binding. Seats/collaborators of the public chat webapp never see it —
-  they only use their own webapp chat.
+  license, and account binding (shown as a note above the detail panel). Seats/collaborators of
+  the public chat webapp never see it — they only use their own webapp chat.
 - Starting/stopping here only affects **local** processes. The Dashboard does not change what is
   deployed on Netlify — that hosting is configured separately (see `netlify-setup.md`).
 - A service that exits shows `[process exited code=N]` at the end of its output and reverts to

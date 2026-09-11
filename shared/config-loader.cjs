@@ -42,6 +42,11 @@ const DEFAULTS = {
   WEBHOOK_PORT: "3199",
   CORS_ORIGINS: "http://localhost:3199",
   APPEARANCE_THEME: "system",
+  // Appearance — accent override ("" = theme default) + font-size preset
+  APPEARANCE_ACCENT_COLOR: "",
+  APPEARANCE_FONT_SIZE: "medium",
+  // Operator chat — tool-step budget per message (Electron Chat tab)
+  OPERATOR_CHAT_MAX_ROUNDS: "24",
   FRONTDESK_SESSION_TTL: "7200",
   PRIORITY_REMINDER_INTERVAL: "300000",
   AGENT_RUNNER_ENABLED: "true",

@@ -39,8 +39,27 @@
     });
   });
 
-  // ── Dashboard (per-service sub-tabs + large detail view) ──
-  const dash = { selected: null };
+  // ── Dashboard (collapsible service sidebar + large detail view) ──
+  const SVC_COLLAPSE_KEY = "frontdesk.svcSidebarCollapsed";
+  const dash = {
+    selected: null,
+    // Sidebar collapse state is a per-machine UI preference → localStorage.
+    collapsed: (() => {
+      try {
+        return localStorage.getItem(SVC_COLLAPSE_KEY) === "1";
+      } catch {
+        return false;
+      }
+    })(),
+  };
+
+  function svcState(s) {
+    return s.running ? "running" : s.configured ? "stopped" : "error";
+  }
+
+  function svcStateTitle(s) {
+    return s.running ? (s.external ? "running (external — started outside the dashboard)" : "running") : s.configured ? "stopped" : "not configured";
+  }
 
   async function refreshDashboard() {
     const health = await api.health();
@@ -58,20 +77,32 @@
     if (!dash.selected || !names.includes(dash.selected)) dash.selected = names[0] || null;
 
     const strip = $("svc-tabs");
-    strip.innerHTML = svcs
-      .map((s) => {
-        const cls = [
-          "svc-tab",
-          s.running ? "running" : s.configured ? "stopped" : "error",
-          s.name === dash.selected ? "active" : "",
-        ].join(" ");
-        return `<button class="${cls}" data-svc="${esc(s.name)}" title="${s.running ? (s.external ? "running (external — started outside the dashboard)" : "running") : s.configured ? "stopped" : "not configured"}">${esc(s.label)}</button>`;
-      })
-      .join("");
-    strip.querySelectorAll("button").forEach((b) =>
+    strip.classList.toggle("collapsed", dash.collapsed);
+    strip.innerHTML =
+      `<div class="svc-tabs-head">` +
+      `<span class="svc-tabs-title">Services</span>` +
+      `<button id="svc-collapse" class="svc-collapse" title="${dash.collapsed ? "Expand the service list" : "Collapse the service list"}">${dash.collapsed ? "⟩" : "⟨"}</button>` +
+      `</div>` +
+      svcs
+        .map((s) => {
+          const state = svcState(s);
+          const cls = ["svc-tab", state, s.name === dash.selected ? "active" : ""].join(" ");
+          return `<button class="${cls}" data-svc="${esc(s.name)}" title="${esc(s.label)} — ${svcStateTitle(s)}"><span class="svc-dot ${state}"></span><span class="svc-tab-label">${esc(s.label)}</span></button>`;
+        })
+        .join("");
+    strip.querySelector("#svc-collapse").addEventListener("click", () => {
+      dash.collapsed = !dash.collapsed;
+      try {
+        localStorage.setItem(SVC_COLLAPSE_KEY, dash.collapsed ? "1" : "0");
+      } catch {
+        /* ignore (storage unavailable) */
+      }
+      refreshDashboard();
+    });
+    strip.querySelectorAll(".svc-tab").forEach((b) =>
       b.addEventListener("click", async () => {
         dash.selected = b.dataset.svc;
-        strip.querySelectorAll("button").forEach((x) => x.classList.toggle("active", x === b));
+        strip.querySelectorAll(".svc-tab").forEach((x) => x.classList.toggle("active", x === b));
         await renderSvcDetail(b.dataset.svc);
       }),
     );
@@ -412,14 +443,14 @@
     $("logs-sub-live").addEventListener("click", () => {
       $("logs-sub-live").classList.add("active");
       $("logs-sub-files").classList.remove("active");
-      $("logs-live").style.display = "block";
-      $("logs-files").style.display = "none";
+      $("logs-live").classList.remove("hidden");
+      $("logs-files").classList.add("hidden");
     });
     $("logs-sub-files").addEventListener("click", () => {
       $("logs-sub-files").classList.add("active");
       $("logs-sub-live").classList.remove("active");
-      $("logs-live").style.display = "none";
-      $("logs-files").style.display = "block";
+      $("logs-live").classList.add("hidden");
+      $("logs-files").classList.remove("hidden");
       refreshLogFiles();
     });
   }
@@ -476,7 +507,7 @@
   async function openLogFile(filePath, name, maxLines) {
     const res = await api.logsFile(filePath, maxLines);
     $("log-file-title").textContent = name || filePath;
-    $("log-file-view").style.display = "block";
+    $("log-file-view").classList.remove("hidden");
     const lines = (res && res.ok && res.lines) || [];
     window._curLog = { path: filePath, name: name || filePath, lines };
     renderLogFileLines(lines);
@@ -804,8 +835,13 @@
     { key: "DSMON_ENCRYPTION_KEY", label: "Encryption Key (AES-256, optional)", section: "Usage tracking", secret: true },
     { key: "DSMON_ENCRYPTION_KEY_ID", label: "Encryption Key ID", section: "Usage tracking", secret: false },
     { key: "CREDIT_POLL_INTERVAL", label: "Credit Poll Interval (ms)", section: "Usage tracking", secret: false },
+    // Chat (operator agentic loop)
+    { key: "OPERATOR_CHAT_TOOLS", label: "Agentic Tools Enabled", section: "Chat", secret: false, options: ["true", "false"] },
+    { key: "OPERATOR_CHAT_MAX_ROUNDS", label: "Max Tool Steps per Message", section: "Chat", secret: false },
     // Appearance
     { key: "APPEARANCE_THEME", label: "Appearance Theme", section: "Appearance", secret: false, options: ["light", "dark", "system"] },
+    { key: "APPEARANCE_ACCENT_COLOR", label: "Accent Color (hex — blank = theme default)", section: "Appearance", secret: false },
+    { key: "APPEARANCE_FONT_SIZE", label: "Font Size", section: "Appearance", secret: false, options: ["small", "medium", "large", "x-large", "xx-large"] },
   ];
 
   const configState = { values: {}, sources: {}, dirty: new Set(), raw: false, open: new Set() };
@@ -1170,32 +1206,64 @@
     await refreshUsage();
   });
 
-  // ── Appearance (light/dark/system) ──
+  // ── Appearance (theme + accent color + font size) ──
+  const FONT_SCALES = { small: 0.85, medium: 1, large: 1.15, "x-large": 1.35, "xx-large": 1.6 };
+  const DEFAULT_ACCENT = "#e94560";
   let sysMedia = null;
   let sysHandler = null;
-  function applyTheme(info) {
-    const effective = info.effective || "dark";
-    document.documentElement.dataset.theme = effective;
-    document.querySelectorAll(".theme-option").forEach((b) => b.classList.toggle("active", b.dataset.theme === info.theme));
+  let appearanceInfo = { theme: "system", effective: "dark", accentColor: "", fontSize: "medium" };
+
+  function applyAppearance(info) {
+    appearanceInfo = { ...appearanceInfo, ...info };
+    const effective = appearanceInfo.effective || "dark";
+    const root = document.documentElement;
+    root.dataset.theme = effective;
+
+    // Accent: the inline custom property wins over the theme's --accent.
+    // Blank → remove the override so the theme default applies.
+    if (appearanceInfo.accentColor) root.style.setProperty("--accent", appearanceInfo.accentColor);
+    else root.style.removeProperty("--accent");
+
+    // Font size: scale the root font-size — the whole stylesheet is rem-based.
+    root.style.setProperty("--fs-scale", String(FONT_SCALES[appearanceInfo.fontSize] ?? 1));
+
+    document.querySelectorAll(".theme-option").forEach((b) => b.classList.toggle("active", b.dataset.theme === appearanceInfo.theme));
+    document.querySelectorAll(".accent-swatch").forEach((b) => b.classList.toggle("active", (b.dataset.accent || "") === (appearanceInfo.accentColor || "")));
+    document.querySelectorAll(".font-preset").forEach((b) => b.classList.toggle("active", b.dataset.font === appearanceInfo.fontSize));
+    const hex = $("accent-hex");
+    if (hex) hex.textContent = appearanceInfo.accentColor || "theme default";
+    const picker = $("accent-picker");
+    if (picker && appearanceInfo.accentColor) picker.value = appearanceInfo.accentColor;
   }
+
   async function refreshAppearance() {
     const t = await api.getTheme();
     if (!t || !t.theme) return;
-    applyTheme(t);
+    applyAppearance(t);
     if (sysMedia && sysHandler) sysMedia.removeEventListener("change", sysHandler);
     sysMedia = null;
     sysHandler = null;
     if (t.theme === "system") {
       sysMedia = window.matchMedia("(prefers-color-scheme: dark)");
-      sysHandler = () => applyTheme({ theme: "system", effective: sysMedia.matches ? "dark" : "light" });
+      sysHandler = () => applyAppearance({ theme: "system", effective: sysMedia.matches ? "dark" : "light" });
       sysMedia.addEventListener("change", sysHandler);
     }
   }
+
+  async function saveAppearance(patch) {
+    const t = await api.setAppearance(patch);
+    if (t) applyAppearance(t);
+  }
+
   document.querySelectorAll(".theme-option").forEach((b) =>
-    b.addEventListener("click", async () => {
-      const t = await api.setTheme(b.dataset.theme);
-      if (t) applyTheme(t);
-    }),
+    b.addEventListener("click", () => saveAppearance({ theme: b.dataset.theme })),
+  );
+  document.querySelectorAll(".accent-swatch").forEach((b) =>
+    b.addEventListener("click", () => saveAppearance({ accentColor: b.dataset.accent || "" })),
+  );
+  $("accent-picker")?.addEventListener("change", (e) => saveAppearance({ accentColor: e.target.value }));
+  document.querySelectorAll(".font-preset").forEach((b) =>
+    b.addEventListener("click", () => saveAppearance({ fontSize: b.dataset.font })),
   );
 
   // ── About (About / Guide tabs; Guide is the electron/docs markdown browser) ──
@@ -1388,6 +1456,16 @@
         `</div>`,
       );
     }
+    // Tool-step budget exhausted → offer to carry on (history is persisted).
+    const lastEntry = chatState.entries[chatState.entries.length - 1];
+    if (!chatState.sending && lastEntry && lastEntry.role === "assistant" && isMaxStepsMsg(lastEntry.content)) {
+      rows.push(
+        `<div class="chat-continue">` +
+          `<span>Tool-step limit reached for that message.</span>` +
+          `<button id="chat-continue" class="primary">▶ Continue</button>` +
+        `</div>`,
+      );
+    }
     box.innerHTML = rows.join("") || '<div class="empty">No messages.</div>';
     const ap = box.querySelector("[data-approve]");
     if (ap) ap.addEventListener("click", approveChat);
@@ -1395,7 +1473,20 @@
     if (dn) dn.addEventListener("click", denyChat);
     const st = box.querySelector("[data-stopchat]");
     if (st) st.addEventListener("click", stopChat);
+    const cont = box.querySelector("#chat-continue");
+    if (cont) cont.addEventListener("click", continueChat);
     box.scrollTop = box.scrollHeight;
+  }
+
+  // The agent stopped because it used its whole tool-step budget for one message.
+  // The transcript is persisted, so a plain "continue" resumes with full context.
+  function isMaxStepsMsg(text) {
+    return typeof text === "string" && text.startsWith("[stopped: reached the maximum number of tool steps");
+  }
+  function continueChat() {
+    if (chatState.sending) return;
+    $("chat-input").value = "continue";
+    sendChat();
   }
   function fmtArgsJson(args) {
     try {

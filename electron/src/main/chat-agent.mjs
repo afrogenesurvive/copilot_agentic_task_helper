@@ -13,7 +13,7 @@
  * Dependencies are injected by the caller (persistEntry, requestApproval) so
  * this module stays pure and testable.
  */
-import { callChatHistory, getModelName } from "../../../shared/model-provider.mjs";
+import { callChatHistory, getModelName, getProvider } from "../../../shared/model-provider.mjs";
 import { allTools } from "../../../shared/tool-manifest.js";
 import { executeToolCall } from "../../../mcp/agent-runner/tool-executor.js";
 import { sanitize } from "../../../scripts/sanitize.stub.mjs";
@@ -71,7 +71,15 @@ export function isReadTool(name) {
   return READ_TOOLS.has(name);
 }
 
-const MAX_ROUNDS = 8;
+/**
+ * Tool-step budget for ONE user message: model⇄tool rounds before the loop
+ * wraps up. Configurable via OPERATOR_CHAT_MAX_ROUNDS (default 24, clamped
+ * 1–100) — the old hard-coded 8 was too tight for multi-read agentic flows.
+ */
+const MAX_ROUNDS = (() => {
+  const n = parseInt(process.env.OPERATOR_CHAT_MAX_ROUNDS || "24", 10);
+  return Number.isFinite(n) && n > 0 ? Math.min(n, 100) : 24;
+})();
 const MAX_TOOL_TEXT = 2000;
 
 function summarize(res) {
@@ -98,11 +106,14 @@ function toProviderMessages(history) {
     } else if (e.role === "tool") {
       items.push({ role: "tool", content: String(e.content ?? ""), tool_call_id: e.toolCallId });
     } else if (e.role === "assistant") {
-      // DeepSeek thinking mode: assistant turns emit a reasoning_content field,
-      // and DeepSeek requires it to be passed back to continue a conversation.
-      // Attach it only when the persisted entry has one (pre-fix turns never will).
+      // DeepSeek thinking mode: every replayed assistant turn must carry a
+      // reasoning_content field — the API 400s on a missing one (even for turns
+      // where the model produced no chain-of-thought). Replay the stored value,
+      // and for DeepSeek fall back to "" so legacy/first-run turns stay valid.
       const msg = { role: "assistant", content: String(e.content ?? "") };
-      if (e.reasoning_content != null) msg.reasoning_content = e.reasoning_content;
+      const reasoning = typeof e.reasoning_content === "string" ? e.reasoning_content : null;
+      if (reasoning != null) msg.reasoning_content = reasoning;
+      else if (getProvider() === "deepseek") msg.reasoning_content = "";
       const tcs = Array.isArray(e.toolCalls) ? e.toolCalls : [];
       if (tcs.length) {
         msg.tool_calls = tcs.map((t) => ({
@@ -134,7 +145,9 @@ function toProviderMessages(history) {
  * @param {function} [opts.execute]     — test seam; defaults to executeToolCall
  * @param {Array}    [opts.tools]       — tool defs to advertise; defaults to OPERATOR_TOOLS
  * @param {Set}      [opts.readTools]   — names that auto-run; defaults to OPERATOR_READ_TOOLS
- * @returns {Promise<{ok:boolean, reply:string, model:string, usage:object|null}>}
+ * @returns {Promise<{ok:boolean, reply:string, model:string, usage:object|null, maxSteps?:boolean}>}
+ *          `maxSteps: true` means the tool-step budget was exhausted and the
+ *          reply is the wrap-up/sentinel message (the loop did not answer freely).
  */
 export async function runOperatorAgent({
   systemMessage,
@@ -176,12 +189,14 @@ export async function runOperatorAgent({
       meta: { source: "operator-agent", step: rounds + 1 },
     });
     if (res && res.usage) lastUsage = res.usage;
-    if (res && res.reasoning_content) lastReasoning = res.reasoning_content;
+    // `??` (not `||`): an empty-string reasoning_content is still a value DeepSeek
+    // requires back on the next request.
+    if (res && res.reasoning_content != null) lastReasoning = res.reasoning_content;
 
     // Plain-text answer → done.
     if (!res || !res.toolCall) {
       const reply = String((res && res.reply) || "(no reply)");
-      const final = await record({ role: "assistant", content: reply, model, usage: lastUsage || undefined, reasoning_content: res?.reasoning_content || undefined });
+      const final = await record({ role: "assistant", content: reply, model, usage: lastUsage || undefined, reasoning_content: res?.reasoning_content ?? undefined });
       return { ok: true, reply, model, usage: lastUsage || undefined, entry: final };
     }
 
@@ -204,7 +219,7 @@ export async function runOperatorAgent({
       throwIfAborted();
       if (!approved) {
         const reason = (decision && decision.reason) || "denied by operator";
-        await record({ role: "assistant", content: "", toolCalls: [{ id: callId, name, args }], reasoning_content: res?.reasoning_content || undefined });
+        await record({ role: "assistant", content: "", toolCalls: [{ id: callId, name, args }], reasoning_content: res?.reasoning_content ?? undefined });
         await record({ role: "tool", toolCallId: callId, name, content: `[operator denied ${name}: ${reason}]` });
         rounds++;
         continue;
@@ -212,7 +227,7 @@ export async function runOperatorAgent({
       if (decision.editedArgs) execArgs = decision.editedArgs;
     }
 
-    await record({ role: "assistant", content: "", toolCalls: [{ id: callId, name, args: execArgs }], reasoning_content: res?.reasoning_content || undefined });
+    await record({ role: "assistant", content: "", toolCalls: [{ id: callId, name, args: execArgs }], reasoning_content: res?.reasoning_content ?? undefined });
 
     let result;
     try {
@@ -234,9 +249,37 @@ export async function runOperatorAgent({
     rounds++;
   }
 
-  const msg = "[stopped: reached the maximum number of tool steps for one message]";
-  const final = await record({ role: "assistant", content: msg, model, usage: lastUsage || undefined, reasoning_content: lastReasoning || undefined });
-  return { ok: true, reply: msg, model, usage: lastUsage, entry: final };
+  // Out of steps: ask the model for a wrap-up answer instead of stopping cold.
+  // The tools stay advertised because some providers reject an empty tool list
+  // paired with tool_choice:"auto" — if it still proposes a tool we fall back to
+  // the sentinel message (and the UI offers a Continue button either way).
+  let wrapText = null;
+  try {
+    throwIfAborted();
+    const wrap = await provider({
+      systemMessage:
+        systemMessage +
+        "\n\nYou have reached this message's tool-step limit. Do not call any more tools — answer now " +
+        "with what you already know, and state clearly what is still unfinished.",
+      messages: toProviderMessages(history),
+      tools,
+      temperature,
+      meta: { source: "operator-agent", step: "wrap-up" },
+    });
+    if (wrap && !wrap.toolCall && wrap.reply) {
+      wrapText = String(wrap.reply);
+      if (wrap.usage) lastUsage = wrap.usage;
+      if (wrap.reasoning_content != null) lastReasoning = wrap.reasoning_content;
+    }
+  } catch (err) {
+    if (err && err.code === "ABORTED") throw err;
+    /* provider failure — fall through to the sentinel message */
+  }
+
+  const maxSteps = !wrapText;
+  const msg = wrapText || "[stopped: reached the maximum number of tool steps for one message]";
+  const final = await record({ role: "assistant", content: msg, model, usage: lastUsage || undefined, reasoning_content: lastReasoning ?? undefined });
+  return { ok: true, reply: msg, model, usage: lastUsage, entry: final, maxSteps };
 }
 
 export { getModelName };

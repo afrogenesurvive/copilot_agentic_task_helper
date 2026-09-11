@@ -1,5 +1,50 @@
 # Changelog
 
+## [0.2.8-2] — 2026-09-10
+
+### Operator chat — DeepSeek 400 fixed
+
+- Continued operator conversations no longer abort with a DeepSeek `400`: *the `reasoning_content`
+  in the thinking mode must be passed back to the API*. Once a tool-using conversation continues,
+  DeepSeek needs the reasoning trail replayed on every assistant turn — including turns where the
+  model produced no chain-of-thought, and history written by earlier builds. Both are now handled,
+  so affected chats recover on their own instead of wedging (no need to clear the session).
+
+## [0.2.8-1] — 2026-09-10
+
+### Electron UI — layout
+
+- **Chat tab** — the panel, session list, transcript and composer now fill the full tab height
+  (the fixed `52vh`/`48vh`/`42vh` caps are gone).
+- **Logs tab** — the panel plus the **Live** log box and the **Files** list/viewer fill the tab;
+  the log box and file preview grow with the window instead of stopping at `55vh`/`50vh`.
+- **Dashboard** — service tabs moved into a **collapsible sidebar** with per-service status dots
+  (collapse state remembered per machine), the operator-only note now sits **above** the detail
+  panel, and the sidebar + detail + log tail fill the tab.
+
+### Electron UI — Appearance (accent + font size)
+
+- New **accent color** control: nine presets (including *Theme default*) plus a custom color picker;
+  drives `--accent` (buttons, active tabs, chat bubbles, highlights).
+- New **font size** control: five presets (Small → XX-L) that scale the whole UI via a `--fs-scale`
+  root font size.
+- New config keys `APPEARANCE_ACCENT_COLOR` (blank = theme default) and `APPEARANCE_FONT_SIZE`,
+  both also editable in ⚙️ Config → Appearance. New IPC `app:setAppearance`.
+
+### Operator chat — tool-step budget
+
+- `OPERATOR_CHAT_MAX_ROUNDS` (default **24**, clamped 1–100) replaces the hard-coded 8-step cap;
+  editable in ⚙️ Config → Chat next to `OPERATOR_CHAT_TOOLS`.
+- Hitting the cap no longer dead-ends: the agent gets one final **tool-free wrap-up** call and
+  answers with what it has (stating what's unfinished). If that fails, the sentinel reply is used
+  and the Chat tab shows a **▶ Continue** button — history is persisted, so continuing resumes with
+  full context. `chat:send` also returns `maxSteps: true` in that case.
+
+### Docs
+
+- Updated `electron/docs/appearance.md`, `chat.md`, `dashboard.md`, `logs.md` and the guide index;
+  refreshed `docs/electron.md` (UI table + operator chat) and `docs/ipcs.md` (`app:setAppearance`).
+
 ## [0.2.7-1] — 2026-09-09
 
 ### Config: config.json + merge-on-save

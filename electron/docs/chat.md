@@ -36,13 +36,18 @@ activity appears inline as chips/result bubbles:
 - **Stop** aborts the running loop at any time; pending approvals auto-deny after ~2 minutes.
 - Results from Trello/Gmail/web/queues/files are sanitized before they're fed back to the model.
 
-The loop is bounded (max ~8 tool steps per message), then the model gives its final answer. Full
-history (including tool calls + results) is persisted, so a session can be continued later with
-full context.
+The loop is bounded — the agent gets `OPERATOR_CHAT_MAX_ROUNDS` tool steps per message (default
+**24**, clamped to 1–100; set it in ⚙️ Config → Chat). When the budget runs out the agent is asked
+for one final **wrap-up call with no tools**, so you still get an answer that says what it found and
+what is unfinished. If even that fails, the reply is
+`[stopped: reached the maximum number of tool steps for one message]` and the transcript shows a
+**▶ Continue** button — history (including tool calls + results) is persisted, so continuing resumes
+with full context.
 
 **Configuration** — set `OPERATOR_CHAT_TOOLS=false` in config to fall back to plain Q&A with no
-tools. Tools are only ever enabled on the **operator** channel; frontdesk chats remain read-only,
-tool-less Q&A by design.
+tools, and `OPERATOR_CHAT_MAX_ROUNDS` to raise or lower the per-message tool-step budget. Tools are
+only ever enabled on the **operator** channel; frontdesk chats remain read-only, tool-less Q&A by
+design.
 
 ## Persistence
 

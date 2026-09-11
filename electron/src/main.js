@@ -75,7 +75,8 @@ config.loadEnvInto(process.env);
 
 let mainWindow = null; // hoisted so applyTheme() can reference it at module load
 
-// ── Appearance / theme (APPEARANCE_THEME = light | dark | system) ──
+// ── Appearance / theme (APPEARANCE_THEME = light | dark | system)
+//    + accent color (APPEARANCE_ACCENT_COLOR) + font size (APPEARANCE_FONT_SIZE) ──
 function resolveTheme() {
   const t = (process.env.APPEARANCE_THEME || "system").toLowerCase();
   return ["light", "dark", "system"].includes(t) ? t : "system";
@@ -83,6 +84,23 @@ function resolveTheme() {
 function getThemeInfo() {
   return { theme: resolveTheme(), effective: nativeTheme.shouldUseDarkColors ? "dark" : "light" };
 }
+
+const FONT_SIZES = ["small", "medium", "large", "x-large", "xx-large"];
+const ACCENT_RE = /^#[0-9a-fA-F]{6}$/;
+/** Accent override — "" means "use the theme's built-in accent". */
+function getAccentColor() {
+  const v = (process.env.APPEARANCE_ACCENT_COLOR || "").trim();
+  return ACCENT_RE.test(v) ? v : "";
+}
+function getFontSize() {
+  const v = (process.env.APPEARANCE_FONT_SIZE || "medium").toLowerCase();
+  return FONT_SIZES.includes(v) ? v : "medium";
+}
+/** Theme + accent + font size — what the renderer's Appearance tab needs. */
+function getAppearanceInfo() {
+  return { ...getThemeInfo(), accentColor: getAccentColor(), fontSize: getFontSize() };
+}
+
 function applyTheme() {
   nativeTheme.themeSource = resolveTheme();
   if (mainWindow) {
@@ -93,11 +111,25 @@ function updateEnvKey(key, value) {
   config.setKey(key, value); // writes to config.json (primary) or .env (fallback)
   process.env[key] = value;
 }
-function setAppTheme(theme) {
-  const t = ["light", "dark", "system"].includes(theme) ? theme : "system";
-  updateEnvKey("APPEARANCE_THEME", t);
+/** Apply + persist any subset of {theme, accentColor, fontSize}. */
+function setAppearance(patch = {}) {
+  if (patch.theme !== undefined) {
+    const t = ["light", "dark", "system"].includes(patch.theme) ? patch.theme : "system";
+    updateEnvKey("APPEARANCE_THEME", t);
+  }
+  if (patch.accentColor !== undefined) {
+    const a = String(patch.accentColor || "").trim();
+    updateEnvKey("APPEARANCE_ACCENT_COLOR", ACCENT_RE.test(a) ? a : "");
+  }
+  if (patch.fontSize !== undefined) {
+    const f = String(patch.fontSize || "").toLowerCase();
+    updateEnvKey("APPEARANCE_FONT_SIZE", FONT_SIZES.includes(f) ? f : "medium");
+  }
   applyTheme();
-  return getThemeInfo();
+  return getAppearanceInfo();
+}
+function setAppTheme(theme) {
+  return setAppearance({ theme });
 }
 applyTheme();
 
@@ -960,7 +992,7 @@ async function chatSend(id, message) {
       execute: executeTool,
     });
     chatAborts.delete(id);
-    return { ok: true, origin, model, reply: res.reply, usage: res.usage };
+    return { ok: true, origin, model, reply: res.reply, usage: res.usage, maxSteps: res.maxSteps };
   } catch (err) {
     chatAborts.delete(id);
     if (err && err.code === "ABORTED") {
@@ -1441,8 +1473,9 @@ function registerIpc() {
     const { shell } = require("electron");
     if (url) shell.openExternal(url);
   });
-  ipcMain.handle("app:getTheme", () => getThemeInfo());
+  ipcMain.handle("app:getTheme", () => getAppearanceInfo());
   ipcMain.handle("app:setTheme", (_e, theme) => setAppTheme(theme));
+  ipcMain.handle("app:setAppearance", (_e, patch) => setAppearance(patch || {}));
   ipcMain.handle("app:quit", () => {
     app.quit();
     return { ok: true };

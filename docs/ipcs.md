@@ -40,8 +40,9 @@ preload bridge ([`electron/src/preload.js`](../electron/src/preload.js#L7)) as `
 | `trello(action, params)` | [`tools:trello`](../electron/src/main.js#L1158) | Trello REST quick actions (list_boards/lists/cards, add_comment) |
 | `gmail(action, params)` | [`tools:gmail`](../electron/src/main.js#L1159) | Gmail list/get via googleapis |
 | `openExternal(url)` | [`open:external`](../electron/src/main.js#L1259) | Open a URL in the system browser |
-| `getTheme()` | [`app:getTheme`](../electron/src/main.js#L1263) | `{theme: light\|dark\|system, effective: dark\|light}` |
-| `setTheme(theme)` | [`app:setTheme`](../electron/src/main.js#L1264) | Persists `APPEARANCE_THEME` to `config.json` (or `.env` fallback), applies it, returns theme info |
+| `getTheme()` | [`app:getTheme`](../electron/src/main.js#L1263) | `{theme: light\|dark\|system, effective: dark\|light, accentColor: string, fontSize: small\|medium\|large\|x-large\|xx-large}` |
+| `setTheme(theme)` | [`app:setTheme`](../electron/src/main.js#L1264) | Persists `APPEARANCE_THEME` to `config.json` (or `.env` fallback), applies it, returns appearance info |
+| `setAppearance(patch)` | [`app:setAppearance`](../electron/src/main.js#L1264) | Applies + persists any subset of `{theme, accentColor, fontSize}` (`APPEARANCE_THEME` / `APPEARANCE_ACCENT_COLOR` / `APPEARANCE_FONT_SIZE`); blank accent clears the override. Returns appearance info |
 | `quit()` | [`app:quit`](../electron/src/main.js#L1265) | Quit the app (main `before-quit` stops all services) |
 | `accountsList()` | [`accounts:list`](../electron/src/main.js#L1162) | `{ok, rows:[{sub, googleConnected, googleUser, trelloConfigured}]}` |
 | `accountsConnectGoogle(sub)` | [`accounts:connectGoogle`](../electron/src/main.js#L1177) | Runs loopback OAuth for the seat → binds Google account |

@@ -40,15 +40,19 @@
         <main>
       <!-- Dashboard -->
       <section id="tab-dashboard" class="tab active">
-        <p style="color:var(--muted);font-size:0.72rem;margin:0 0 0.6rem;line-height:1.4">
-          <b>Operator-only.</b> This app is the operator's single console — it shows every local
-          service, seat (🔑 Licenses), and per-seat account binding (🔐 Accounts &amp; Keys) at
-          once. Seat licenses &amp; bindings gate the <b>public chat webapp</b>, not this app;
-          collaborators (seats) never see this dashboard — each only uses their own webapp chat.
-        </p>
-        <div id="svc-tabs" class="svc-tabs"></div>
-        <div id="svc-detail" class="panel svc-detail">
-          <div class="empty">Loading services…</div>
+        <div class="svc-layout" id="svc-layout">
+          <aside id="svc-tabs" class="svc-tabs"></aside>
+          <div class="svc-main">
+            <div class="svc-note">
+              <b>Operator-only.</b> This app is the operator's single console — it shows every local
+              service, seat (🔑 Licenses), and per-seat account binding (🔐 Accounts &amp; Keys) at
+              once. Seat licenses &amp; bindings gate the <b>public chat webapp</b>, not this app;
+              collaborators (seats) never see this dashboard — each only uses their own webapp chat.
+            </div>
+            <div id="svc-detail" class="panel svc-detail">
+              <div class="empty">Loading services…</div>
+            </div>
+          </div>
         </div>
       </section>
 
@@ -114,13 +118,13 @@
           </div>
 
           <!-- Files -->
-          <div id="logs-files" style="display:none">
+          <div id="logs-files" class="hidden">
             <div class="panel-head">
               <span id="log-file-title" class="log-file-title">Select a log file to view</span>
               <button id="log-file-refresh">Refresh</button>
             </div>
             <div id="log-file-list">loading…</div>
-            <div id="log-file-view" style="display:none">
+            <div id="log-file-view" class="hidden">
               <div class="log-file-actions">
                 <button id="log-file-tail">Tail 500</button>
                 <button id="log-file-full">Full</button>
@@ -291,14 +295,46 @@
       <section id="tab-appearance" class="tab">
         <div class="panel">
           <h3>🎨 Appearance</h3>
+
+          <h4 class="appearance-subtitle">Theme</h4>
           <div class="theme-row">
             <button class="theme-option" data-theme="light">☀️ Light</button>
             <button class="theme-option" data-theme="dark">🌙 Dark</button>
             <button class="theme-option" data-theme="system">🖥️ System</button>
           </div>
-          <p style="color:var(--muted);font-size:0.72rem;margin-top:0.6rem;line-height:1.4">
-            Saved to <code>APPEARANCE_THEME</code> in <code>.env</code>. “System” follows macOS — the native
-            window chrome and this dashboard both update when the OS theme changes.
+
+          <h4 class="appearance-subtitle">Accent color</h4>
+          <div class="accent-grid" id="accent-grid">
+            <button class="accent-swatch" data-accent="" title="Theme default"
+              style="background:linear-gradient(135deg,#e94560 50%,#c0392b 50%)"></button>
+            <button class="accent-swatch" data-accent="#58a6ff" title="Blue" style="background:#58a6ff"></button>
+            <button class="accent-swatch" data-accent="#3fb950" title="Green" style="background:#3fb950"></button>
+            <button class="accent-swatch" data-accent="#bc8cff" title="Purple" style="background:#bc8cff"></button>
+            <button class="accent-swatch" data-accent="#f778ba" title="Pink" style="background:#f778ba"></button>
+            <button class="accent-swatch" data-accent="#d29922" title="Orange" style="background:#d29922"></button>
+            <button class="accent-swatch" data-accent="#f85149" title="Red" style="background:#f85149"></button>
+            <button class="accent-swatch" data-accent="#56d4dd" title="Teal" style="background:#56d4dd"></button>
+            <button class="accent-swatch" data-accent="#e3b341" title="Yellow" style="background:#e3b341"></button>
+          </div>
+          <div class="accent-custom">
+            <label>Custom <input type="color" id="accent-picker" value="#e94560" /></label>
+            <code id="accent-hex">theme default</code>
+          </div>
+
+          <h4 class="appearance-subtitle">Font size</h4>
+          <div class="font-grid" id="font-grid">
+            <button class="font-preset" data-font="small"><span>Small</span><small>Compact view</small></button>
+            <button class="font-preset" data-font="medium"><span>Medium</span><small>Default size</small></button>
+            <button class="font-preset" data-font="large"><span>Large</span><small>Easier reading</small></button>
+            <button class="font-preset" data-font="x-large"><span>X-L</span><small>Extra large</small></button>
+            <button class="font-preset" data-font="xx-large"><span>XX-L</span><small>Double extra large</small></button>
+          </div>
+
+          <p class="hint">
+            Saved to <code>APPEARANCE_THEME</code>, <code>APPEARANCE_ACCENT_COLOR</code> and
+            <code>APPEARANCE_FONT_SIZE</code> in config — applied immediately, no restart.
+            “System” follows macOS — the native window chrome and this dashboard both update when
+            the OS theme changes.
           </p>
         </div>
       </section>
