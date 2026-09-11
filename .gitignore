@@ -62,3 +62,6 @@ assets/private
 
 # ── Local-only files (kept private, not committed) ──
 scripts/sanitize.private.mjs
+
+# ── Dev monitor config (local-only, per-machine) ──
+devmon.json
