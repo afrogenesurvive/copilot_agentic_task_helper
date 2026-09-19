@@ -1,5 +1,44 @@
 # Changelog
 
+## [0.2.9-1] — 2026-09-19
+
+### DS-mon: a bad push token now pauses tracking instead of retrying forever
+
+DS-mon's sync server was hardened: it now requires the bearer token on **every** route and fails closed
+without one. That turned a `401` from a transient blip into a **permanent** condition, while the tracker
+still treated every non-2xx as retryable:
+
+- **`401`/`403` is now classified as permanent** (`shared/usage-tracker.mjs`). Tracking pauses after a
+  single rejection: the 60 s fast retry is not re-armed, no new records are buffered, and every buffered
+  record is retained untouched. A corrected `DSMON_PUSH_TOKEN` clears the pause and replays the backlog
+  on the next timer tick — the periodic timer deliberately stays armed for that reason.
+- This removes the misleading `Buffer exceeds … dropping record (host unreachable?)` death spiral, which
+  is exactly how an auth misconfiguration used to look like a network outage while silently discarding
+  usage data.
+- `getDsmonStatus()` reports `paused` + `reason`, so the 📈 Usage tab renders a distinct
+  `⏸️ paused: unauthorized` tag instead of the transient "push failed" one, and **Flush now** reports the
+  real outcome (200 / token problem / network) rather than a blanket success.
+- Tracking now refuses to start when `USAGE_TRACKING_ENABLED=true` and a push URL is set but
+  `DSMON_PUSH_TOKEN` is empty — the same fail-closed posture DS-mon takes itself.
+
+### 🔒 Webhook server: auth now fails closed
+
+`requireAuth` called `next()` when `WEBHOOK_API_TOKEN` was unset, which left the entire queue-admin
+surface open to anyone who could reach the port — reading the event queues, clearing them (including a
+whole-queue wipe), and reading the task list and tool-dispatch rules. The Cloudflare tunnel publishes
+that port to the internet, so this was reachable, not hypothetical.
+
+Those routes now answer **503** when no token is configured, and the reason is logged once at startup
+instead of being retried per request. The intentionally-public paths (health check, webhook callbacks,
+the frontdesk/licence/session/OAuth endpoints and the static webapp) are unchanged.
+`WEBHOOK_API_TOKEN` is now documented as required wherever the webhook environment is described.
+
+### Docs
+
+- `electron/docs/usage.md` — the push token is required; a `401` is a configuration error, not an
+  outage; added the paused state and its troubleshooting entries.
+- `electron/docs/config.md`, `docs/electron.md` — the push contract and the token requirement.
+
 ## [0.2.8-4] — 2026-09-11
 
 ### Key Manager — every registry and every ring (Electron)

@@ -23,6 +23,11 @@
  * Environment:
  *   WEBHOOK_PORT        (default 3199)
  *   WEBHOOK_BASE_URL    — public URL for webhook registration
+ *   WEBHOOK_API_TOKEN   — REQUIRED bearer token for every route that is not
+ *                         public (/health, /webhooks/*, PUBLIC_PREFIXES). The
+ *                         server FAILS CLOSED: with no token configured,
+ *                         /events, /api/queue-status, /api/tasks and /api/rules
+ *                         return 503 rather than being served unauthenticated.
  *   PRIORITY_REMINDER_INTERVAL — reminder interval in ms (default 300000 = 5 min)
  */
 
@@ -133,9 +138,22 @@ app.use(express.urlencoded({ extended: true }));
 app.use(express.static(path.resolve(__dirname, "..", "..", "webapp", "public")));
 
 // ── API token authentication middleware ──
-// All endpoints except /health, /webhooks/* are protected.
+// All endpoints except /health, /webhooks/* and PUBLIC_PREFIXES are protected.
 // Clients must send:  Authorization: Bearer <WEBHOOK_API_TOKEN>
+//
+// FAIL CLOSED. This guard used to call next() when no token was configured, which
+// left the entire queue-admin surface unauthenticated: GET/DELETE/PATCH /events
+// (read or wipe the queues), /api/queue-status, /api/tasks, /api/rules. The port is
+// published to the internet through the Cloudflare tunnel, so an unset token was an
+// open door. With no token we now refuse every protected route with 503 instead of
+// serving it — the same posture DS-mon's sync server takes.
 const API_TOKEN = process.env.WEBHOOK_API_TOKEN || "";
+if (!API_TOKEN) {
+  console.warn(
+    "🔒 [AUTH] WEBHOOK_API_TOKEN is not configured — protected routes are DISABLED (503). " +
+      "Set it in config.json/.env to re-enable /events, /api/queue-status, /api/tasks and /api/rules.",
+  );
+}
 // Paths exempt from the static API-token auth. Frontdesk endpoints use their own
 // session tokens; OAuth + config + static webapp are public.
 const PUBLIC_PREFIXES = ["/api/license/verify", "/api/frontdesk/", "/api/session-log", "/api/config", "/oauth/"];
@@ -145,8 +163,11 @@ function requireAuth(req, res, next) {
     return next();
   }
   if (!API_TOKEN) {
-    // No token configured — skip auth check (development mode)
-    return next();
+    // No token configured — refuse rather than serve unauthenticated. (The reason
+    // is logged once at startup above, not per request.)
+    return res.status(503).json({
+      error: "Server authentication is not configured (WEBHOOK_API_TOKEN unset) — protected routes disabled.",
+    });
   }
   const header = req.headers["authorization"];
   if (!header || !header.startsWith("Bearer ")) {

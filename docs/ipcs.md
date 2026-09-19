@@ -45,9 +45,9 @@ preload bridge ([`electron/src/preload.js`](../electron/src/preload.js#L7)) as `
 | `configSave(values)` | [`config:save`](../electron/src/main.js#L1291) | Merges the changed keys into `config.json` (other keys preserved) and applies them to `process.env`; provider/usage-tracking key changes restart the runner + webhook |
 | `configExport()` | [`config:export`](../electron/src/main.js#L1316) | `{ok, present, source, json}` — effective config as pretty JSON |
 | `configImport(raw)` | [`config:import`](../electron/src/main.js#L1322) | Parses JSON → saves `config.json` → applies to `process.env` |
-| `usageAggregate()` | [`usage:aggregate`](../electron/src/main.js#L1325) | Aggregated LLM token usage from the local DS-mon buffer + push status `{enabled, pushUrl, totals, byProvider, bySource, byModel, dsmon}` |
-| `usageCredits()` | [`usage:credits`](../electron/src/main.js#L1326) | Provider-aware credit balance (DeepSeek balance endpoint; OpenAI/Anthropic report no public endpoint, Ollama is local) |
-| `usageFlush()` | [`usage:flush`](../electron/src/main.js#L1327) | Pushes buffered usage to DS-mon now |
+| `usageAggregate()` | [`usage:aggregate`](../electron/src/main.js#L1365) | Aggregated LLM token usage from the local DS-mon buffer + push status `{enabled, pushUrl, totals, byProvider, bySource, byModel, dsmon}` — `dsmon` carries `paused` + `reason` |
+| `usageCredits()` | [`usage:credits`](../electron/src/main.js#L1366) | Provider-aware credit balance (DeepSeek balance endpoint; OpenAI/Anthropic report no public endpoint, Ollama is local) |
+| `usageFlush()` | [`usage:flush`](../electron/src/main.js#L1367) | Pushes buffered usage to DS-mon now and returns the real outcome `{ok, at, count, error, paused, reason, bufferCount}` — a `401`/`403` pauses tracking instead of reporting a false success |
 | `configWithSources()` | [`config:getWithSources`](../electron/src/main.js#L1287) | Per-key config with source annotation — `{values: {key: {value, source}}}` where source ∈ `config.json` \| `.env` \| `default` |
 | `googleStatus()` | [`google:status`](../electron/src/main.js#L1160) | `{connected, user, consentUrl}` |
 | `toolsManifest()` | [`tools:manifest`](../electron/src/main.js#L1157) | Shared tool manifest ([`shared/tool-manifest.js`](../shared/tool-manifest.js#L1)) |

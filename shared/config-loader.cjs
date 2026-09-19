@@ -40,6 +40,11 @@ const DEFAULTS = {
   OLLAMA_BASE_URL: "http://127.0.0.1:11434",
   OLLAMA_NUM_CTX: "32768",
   WEBHOOK_PORT: "3199",
+  // Bearer token guarding the queue-admin API (/events, /api/queue-status,
+  // /api/tasks, /api/rules). The webhook server FAILS CLOSED when it is unset —
+  // those routes return 503 instead of serving unauthenticated. Annotation only;
+  // keep the real value in config.json/.env, never here.
+  WEBHOOK_API_TOKEN: "",
   CORS_ORIGINS: "http://localhost:3199",
   APPEARANCE_THEME: "system",
   // Appearance — accent override ("" = theme default) + font-size preset
@@ -62,7 +67,10 @@ const DEFAULTS = {
   PKM_ROOT: "~/Documents/GitHub/personal_key_manager",
   PKM_REGISTRY: "frontdesk-agent",
   PKM_TIMEOUT_MS: "20000",
-  // DS-mon LLM usage tracking — annotation defaults only (never written)
+  // DS-mon LLM usage tracking — annotation defaults only (never written).
+  // DSMON_PUSH_TOKEN is a hard prerequisite of the USAGE_TRACKING_ENABLED block:
+  // DS-mon requires it on /sync/push and fails closed, so enabling tracking with a
+  // push URL but no token pauses tracking rather than pushing unauthenticated.
   USAGE_TRACKING_ENABLED: "false",
   DSMON_PUSH_URL: "",
   DSMON_PUSH_TOKEN: "",

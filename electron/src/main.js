@@ -1368,7 +1368,19 @@ function registerIpc() {
     try {
       const mod = await import(pathToFileURL(path.join(REPO, "shared", "usage-tracker.mjs")).href);
       await mod.flushBuffer();
-      return { ok: true };
+      // flushBuffer() resolves even when the push failed (401/403 pauses tracking,
+      // network errors retain the buffer), so return the resulting status to let the
+      // renderer distinguish 200 from a token problem.
+      const status = mod.getDsmonStatus();
+      return {
+        ok: status.ok === true,
+        at: status.at,
+        count: status.count,
+        error: status.error,
+        paused: status.paused,
+        reason: status.reason,
+        bufferCount: status.bufferCount,
+      };
     } catch (err) {
       return { ok: false, error: err.message };
     }

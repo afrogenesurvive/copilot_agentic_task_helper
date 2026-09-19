@@ -1595,7 +1595,7 @@
     // never tracked (local + free). Mirrors the transcription agent's section.
     { key: "USAGE_TRACKING_ENABLED", label: "Enable Usage Tracking", section: "Usage tracking", secret: false, options: ["true", "false"] },
     { key: "DSMON_PUSH_URL", label: "DS-mon Push URL", section: "Usage tracking", secret: false },
-    { key: "DSMON_PUSH_TOKEN", label: "DS-mon Push Token", section: "Usage tracking", secret: true },
+    { key: "DSMON_PUSH_TOKEN", label: "DS-mon Push Token (required)", section: "Usage tracking", secret: true, placeholder: "required whenever the push URL is set" },
     { key: "DSMON_PUSH_INTERVAL", label: "Push Interval (ms)", section: "Usage tracking", secret: false },
     { key: "DSMON_INSTANCE_ID", label: "Instance ID", section: "Usage tracking", secret: false },
     { key: "DSMON_ENCRYPTION_KEY", label: "Encryption Key (AES-256, optional)", section: "Usage tracking", secret: true },
@@ -1935,8 +1935,12 @@
       return;
     }
     const d = agg.dsmon || {};
-    const push =
-      d.ok === true
+    // Paused = a PERMANENT failure (bad/missing push token). It must not render as
+    // the transient "push failed" tag, which reads as "will retry shortly" when in
+    // fact nothing is retried until DSMON_PUSH_TOKEN changes.
+    const push = d.paused
+      ? `<span class="tag expired">⏸️ paused: ${esc(d.reason || "error")} — fix DSMON_PUSH_TOKEN</span>`
+      : d.ok === true
         ? `<span class="tag valid">✅ last push ${fmtNum(d.count)} record(s)</span>`
         : d.ok === false
           ? `<span class="tag expired">⚠️ push failed: ${esc(d.error || "error")}</span>`
@@ -1980,7 +1984,19 @@
     if (res && res.ok) refreshUsage();
   });
   $("usage-flush").addEventListener("click", async () => {
-    await withLoading("Pushing buffered usage to DS-mon…", () => api.usageFlush(), { context: "usage flush" });
+    const res = await withLoading("Pushing buffered usage to DS-mon…", () => api.usageFlush(), { context: "usage flush" });
+    // usage:flush resolves even when the push failed, so report the real outcome
+    // (200 / 401-403 token problem / network) instead of a blanket success.
+    if (res) {
+      if (res.ok) {
+        toast(`Pushed ${fmtNum(res.count || 0)} record(s) to DS-mon.`, "ok");
+      } else if (res.paused) {
+        const why = res.reason === "token-missing" ? "No DSMON_PUSH_TOKEN configured" : "DS-mon rejected the push token";
+        toast(`⚠️ ${why} — ${fmtNum(res.bufferCount || 0)} record(s) retained. Fix DSMON_PUSH_TOKEN in ⚙️ Config.`, "err");
+      } else {
+        toast(`⚠️ Push failed: ${res.error || "unknown error"}`, "err");
+      }
+    }
     await refreshUsage();
   });
 

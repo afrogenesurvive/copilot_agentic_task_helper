@@ -92,6 +92,11 @@ Per-LLM-call token usage is buffered locally and pushed to DS-mon when enabled. 
 shows the push status, a provider-aware credit-balance card, and token totals broken down by provider /
 source / model, with a **Flush now** action. Enable and configure it from **⚙️ Config → Usage tracking**.
 
+`DSMON_PUSH_TOKEN` is **required whenever `DSMON_PUSH_URL` is set** — DS-mon requires the bearer token
+and fails closed without it. A `401`/`403` is therefore treated as a **permanent configuration error,
+not an outage**: tracking pauses (no retries, no new records, buffer retained), and resumes once the
+token is corrected. See `electron/docs/usage.md`.
+
 ## Operator Chat (agentic)
 
 Operator chats mirror the VS Code agent experience — the model can **chain tools** to actually complete

@@ -20,6 +20,9 @@ Settings are grouped into sections, each field showing its **source tag** (`conf
   provider's fields are shown (API key, model, base URL, etc.), plus the shared temperature.
   Required keys are marked **required** when missing.
 - **Webhook** — port, base URL, API token, CORS origins, autostart, reminder interval.
+  The API token guards the queue-admin API (`/events`, `/api/queue-status`, `/api/tasks`,
+  `/api/rules`) and the server **fails closed**: with no token set those routes return
+  `503` instead of serving unauthenticated, so set one (or leave the queue API disabled).
 - **Trello** — API key/token, board and list IDs, webhook model IDs/actions.
 - **Gmail / Google** — client ID/secret, refresh token, user, Pub/Sub topic/subscription.
 - **WhatsApp** — Meta Cloud API: system-user access token, WABA ID, active phone-number ID
