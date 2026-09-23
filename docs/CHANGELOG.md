@@ -1,5 +1,20 @@
 # Changelog
 
+## [0.2.10-1] — 2026-09-22
+
+### Gmail setup can now manage filters, and credential backups can't be committed
+
+- **Gmail filter support.** The Google consent scope was widened so the account can create and manage
+  Gmail filters — the auto-label rules that file mail and skip the inbox — on top of the existing read
+  and send access.
+- **Re-running the Google setup is now safe.** It forces a fresh consent screen and refuses to save an
+  empty credential, so an interrupted or failed setup can no longer overwrite working credentials. The
+  refreshed credential is saved automatically with the previous one backed up first, instead of being
+  printed out for manual copy-paste.
+- **Credential backups are ignored by git.** The ignore rule previously matched only the exact
+  environment file, so the automatic timestamped backups could have been committed. Those backups
+  contain live credentials.
+
 ## [0.2.9-1] — 2026-09-19
 
 ### DS-mon: a bad push token now pauses tracking instead of retrying forever
