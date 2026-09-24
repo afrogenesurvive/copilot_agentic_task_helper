@@ -6,6 +6,7 @@
   "scripts": {
     "logs:view": "cat logs/2026-05-31.log",
     "config:init": "node scripts/config-from-env.mjs",
+    "check:wiring": "node scripts/check-renderer-wiring.mjs && node scripts/check-pkm-wiring.mjs",
     "mcp:gmail": "node mcp/gmail/index.js",
     "mcp:trello": "node mcp/trello/index.js",
     "mcp:drive": "node mcp/drive/index.js",
@@ -14,6 +15,7 @@
     "mcp:sheets": "node mcp/sheets/index.js",
     "mcp:web-search": "node mcp/web-search/index.js",
     "mcp:whatsapp": "node mcp/whatsapp/index.js",
+    "mcp:netlify": "node mcp/netlify/index.js",
     "mcp:webhook": "node mcp/webhook-server/index.js",
     "setup:drive-watch": "node mcp/webhook-server/scripts/setup-drive-watch.js",
     "setup:calendar-watch": "node mcp/webhook-server/scripts/setup-calendar-watch.js",

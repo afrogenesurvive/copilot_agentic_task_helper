@@ -329,6 +329,7 @@
               <button id="pkm-refresh">Refresh</button>
               <button id="pkm-validate-open" title="Check a licence string against the live ring + revocation blocklist">Validate…</button>
               <button id="pkm-archive" data-pkm-write="archive" title="Move expired seat records into the expired/ ledger">Archive expired</button>
+              <button id="pkm-export" data-pkm-write="exportBundle" title="Rebuild export/devmon.json — every registry ▸ ring ▸ seat, metadata only — and re-sign it with the export authority key. This is the bundle dev_mon reads">Export bundle</button>
               <button id="pkm-issue-open" class="primary" data-pkm-write="issue">Issue license</button>
             </div>
           </div>
@@ -534,6 +535,13 @@
               <button data-act="wa-status">Status</button>
               <button data-act="wa-numbers">Numbers (copy IDs)</button>
               <div class="qresult" id="whatsapp-result"></div>
+            </div>
+            <div class="qtool">
+              <strong>Netlify</strong>
+              <button data-act="netlify-sites">Sites</button>
+              <button data-act="netlify-env">Env vars</button>
+              <button data-act="netlify-deploys">Deploys</button>
+              <div class="qresult" id="netlify-result"></div>
             </div>
           </div>
         </div>

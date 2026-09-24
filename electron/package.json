@@ -12,6 +12,9 @@
     "dist:mac": "electron-builder --mac",
     "dist:mac-dir": "electron-builder --mac dir"
   },
+  "dependencies": {
+    "@modelcontextprotocol/sdk": "^1.30.0"
+  },
   "devDependencies": {
     "electron": "^33.4.11",
     "electron-builder": "^25.0.0"

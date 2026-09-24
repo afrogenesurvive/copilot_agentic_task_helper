@@ -1,0 +1,70 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <!--
+      The menu-bar popover.
+
+      A second — deliberately tiny — entry point onto the SAME preload bridge the
+      dashboard uses: four status values and the head of the priority queue. It
+      exists so the operator can see whether the stack is alive without opening
+      (or un-minimising) a 1080x720 window.
+
+      It inherits the dashboard's CSP verbatim, so the same rule applies here:
+      `style-src 'self'` has no 'unsafe-inline', which means an inline `style="…"`
+      attribute and a <style> block are both silently DROPPED. Every visual rule
+      lives in styles/tray.css, and the theme tokens are written through the CSSOM
+      by tokens.js (CSSOM writes are not governed by CSP). Do not add inline
+      styles — see the long note in index.html for the 22 that were dead for
+      months before anyone noticed.
+    -->
+    <meta
+      http-equiv="Content-Security-Policy"
+      content="default-src 'self'; style-src 'self'; script-src 'self'; img-src 'self' data:;"
+    />
+    <title>Frontdesk Operator</title>
+
+    <!-- Same primitives as the dashboard, in the same cascade order, so the pills
+         here and the pills in the status bar cannot drift apart. tray.css comes
+         last because it has to undo _reset.css's opaque body background — the
+         window is a macOS vibrancy panel and the material is only visible through
+         a transparent page. -->
+    <link rel="stylesheet" href="styles/_reset.css" />
+    <link rel="stylesheet" href="styles/_layout.css" />
+    <link rel="stylesheet" href="styles/tray.css" />
+  </head>
+  <body class="tray">
+    <main class="tray__panel">
+      <header class="tray__head">
+        <span class="tray__title">Frontdesk</span>
+        <span class="tray__version" id="tray-version"></span>
+      </header>
+
+      <div class="tray__pills">
+        <button id="tray-health" class="status-pill" type="button" title="Backend health — click for the dashboard">
+          <span class="status-dot"></span><span id="tray-health-text">checking…</span>
+        </button>
+        <span id="tray-services" class="status-pill status-pill--plain" title="Local services running">services —</span>
+        <span id="tray-queue" class="status-pill status-pill--plain" title="Unactioned priority queue items">queue —</span>
+        <span id="tray-keys" class="status-pill status-pill--plain" title="Key store (personal_key_manager) availability">keys —</span>
+      </div>
+
+      <div class="tray__section">
+        <span>Latest priority items</span>
+        <span class="tray__section-note" id="tray-items-note"></span>
+      </div>
+      <!-- Built in tray.js with createElement/textContent, never innerHTML: these
+           rows carry frontdesk text, which is attacker-influenced. -->
+      <ul class="tray__list" id="tray-items">
+        <li class="empty">Loading…</li>
+      </ul>
+
+      <footer class="tray__foot">
+        <button id="tray-open" class="tray__open" type="button">Open dashboard</button>
+      </footer>
+    </main>
+
+    <script src="tokens.js"></script>
+    <script src="tray.js"></script>
+  </body>
+</html>

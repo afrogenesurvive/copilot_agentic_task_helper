@@ -19,19 +19,18 @@ import path from "path";
 import crypto from "crypto";
 import { fileURLToPath } from "url";
 import { setSeatGoogle } from "../../../scripts/frontdesk-accounts.mjs";
+import { SEAT_SCOPES } from "../../../shared/google-scopes.mjs";
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const ROOT = path.resolve(__dirname, "..", "..", "..");
 const ENV_FILE = path.join(ROOT, ".env");
 
-const SCOPES = [
-  "https://www.googleapis.com/auth/gmail.send",
-  "https://www.googleapis.com/auth/gmail.readonly",
-  "https://www.googleapis.com/auth/drive",
-  "https://www.googleapis.com/auth/calendar",
-  "openid",
-  "email",
-].join(" ");
+// This is a SEAT flow — it binds the consenting collaborator's own account to
+// their seat — so it uses the seat scope set from shared/google-scopes.mjs
+// instead of keeping a third copy of the list in step by hand. The operator's
+// broader token (Tasks, Photos, Gmail filters) is minted by the CLI or the
+// dashboard's Connect Google, never by a visitor's consent.
+const SCOPES = SEAT_SCOPES.join(" ");
 
 const TOKEN_ENDPOINT = "https://oauth2.googleapis.com/token";
 const USERINFO_ENDPOINT = "https://www.googleapis.com/oauth2/v2/userinfo";

@@ -11,13 +11,13 @@
  *
  * No operator license is required. Run:  cd electron && npm start
  */
-const { app, BrowserWindow, dialog, Tray, Menu, Notification, ipcMain, nativeImage, nativeTheme } = require("electron");
+const { app, BrowserWindow, dialog, Tray, Menu, Notification, ipcMain, nativeImage, nativeTheme, screen } = require("electron");
 const path = require("path");
 const fs = require("fs");
 const { spawn } = require("child_process");
 const { pathToFileURL } = require("url");
 const { createRequire } = require("module");
-const { connectGoogleForSeat } = require("./main/oauth");
+const { connectGoogleForSeat, connectGoogleOperator } = require("./main/oauth");
 const liveLog = require("./main/logger");
 const notifications = require("./main/notifications");
 
@@ -38,6 +38,20 @@ const ROOT = app.isPackaged ? path.join(process.resourcesPath, "..", "..") : pat
 // carry the repo pieces into resourcesPath.
 const REPO = app.isPackaged ? path.join(process.resourcesPath) : ROOT;
 const RENDERER_HTML = path.join(__dirname, "renderer", "index.html");
+// The menu-bar popover's own document. Separate from the dashboard on purpose:
+// it loads four pills and a short list, not the 27-file renderer (see the CSP
+// note in electron/src/renderer/tray.html for the rules it inherits).
+const TRAY_HTML = path.join(__dirname, "renderer", "tray.html");
+// Panel geometry. Fixed, so the window can be positioned without measuring the
+// content and there is no resize round trip on every open. The height is set from
+// the measured panel: 5 rows of two clamped lines is 232px of list, and the
+// surrounding chrome (title, the two rows of pills, section head, button) is
+// 206px — so every row shows in full and the list only scrolls when descriptions
+// run to their second line.
+const TRAY_POPOVER_WIDTH = 340;
+const TRAY_POPOVER_HEIGHT = 440;
+const TRAY_POPOVER_GAP = 6; // px between the menu bar and the panel
+const TRAY_CLICK_GUARD_MS = 200; // see togglePopover()
 
 // ── Notification centre ──────────────────────────────────────────────────────
 // The feed and its read state live with the other logs (one JSONL file per day,
@@ -115,6 +129,20 @@ const config = require("../../shared/config-loader.cjs");
 config.loadEnvInto(process.env);
 
 let mainWindow = null; // hoisted so applyTheme() can reference it at module load
+
+// ── Menu-bar item + its popover ──
+// Both are module-level because the popover is positioned from the tray's own
+// rect and is also shown/hidden from IPC (the dashboard's "open" path).
+let tray = null;
+let trayPopover = null;
+// When the panel was last hidden. Clicking the menu-bar item while the panel is
+// open blurs the panel *before* the click arrives, so the click would reopen what
+// it just closed; this stamp lets togglePopover() see both halves as one gesture.
+let popoverHiddenAt = 0;
+// Set by beginQuit() so the window's `close` handler can tell "the operator
+// closed the window" (hide it, keep running in the background) from "the app is
+// quitting" (let the close through).
+let isQuitting = false;
 
 // ── Appearance / theme (APPEARANCE_THEME = light | dark | system)
 //    + accent color (APPEARANCE_ACCENT_COLOR) + font size (APPEARANCE_FONT_SIZE) ──
@@ -196,7 +224,11 @@ const serviceDefs = {
 
 // The same MCP servers VS Code runs (same .env → same credentials). Separate
 // per-seat instances can be spawned from the Accounts tab (accounts:spawnForSeat).
-const MCP_NAMES = ["trello", "gmail", "drive", "calendar", "photos", "sheets", "web-search", "whatsapp"];
+// The operator chat reaches these through the in-process MCP client
+// (main/mcp-client.mjs), which spawns its OWN child per server — the entries here
+// are for the Dashboard's manual Start/Restart/Stop, so they are deliberately
+// NOT autostarted (see the autostart block) to avoid a second process per server.
+const MCP_NAMES = ["trello", "gmail", "drive", "calendar", "photos", "sheets", "web-search", "whatsapp", "netlify"];
 for (const n of MCP_NAMES) {
   serviceDefs[`mcp:${n}`] = { label: `MCP ${n}`, cmd: "node", args: [`mcp/${n}/index.js`], cwd: REPO };
 }
@@ -814,6 +846,38 @@ async function keyManager() {
   return keyManagerMod;
 }
 
+// ── MCP client (operator chat + Netlify quick actions) ───────────────────────
+// Loaded lazily so no MCP child process exists before the app is ready, and
+// configured once: `configure()` tells the client where the repo is (servers are
+// spawned as `node mcp/<name>/index.js` under it) and routes each server's stderr
+// into the live log, which is what the Logs tab renders. Children are spawned on
+// the first CALL to a server's tool and reused until they exit or go idle.
+let mcpClientMod = null;
+async function mcpClient() {
+  if (!mcpClientMod) {
+    const mod = await import(pathToFileURL(path.join(__dirname, "main", "mcp-client.mjs")).href);
+    mod.configure({
+      repo: REPO,
+      version: app.getVersion(),
+      onLog: (message, level) =>
+        liveLog.addLog({
+          source: "electron",
+          subSource: "mcp-client",
+          level: level === "err" ? "error" : level === "warn" ? "warn" : "info",
+          message,
+        }),
+    });
+    mcpClientMod = mod;
+  }
+  return mcpClientMod;
+}
+
+/** Run one tool through its MCP server. Never throws — failures are `{ok:false,error}`. */
+async function mcpCallTool(name, args) {
+  const mod = await mcpClient();
+  return mod.callTool(name, args);
+}
+
 // ── Tool access (shared manifest + quick actions) ────────────────────────────
 async function toolsManifest() {
   try {
@@ -931,12 +995,73 @@ async function whatsappAction(action, params = {}) {
   }
 }
 
+// Netlify quick actions — these go through the MCP client (and therefore through
+// mcp/netlify/index.js) rather than re-implementing the REST calls here the way
+// the Trello/Gmail/WhatsApp actions above do. It is the same path the operator
+// chat takes, so the panel doubles as a live check that the client is healthy.
+async function netlifyAction(action, params = {}) {
+  const tool = {
+    list_sites: "netlify_list_sites",
+    get_site: "netlify_get_site",
+    list_env: "netlify_list_env",
+    get_env: "netlify_get_env",
+    list_deploys: "netlify_list_deploys",
+  }[action];
+  if (!tool) return { ok: false, error: `unknown netlify action ${action}` };
+  const res = await mcpCallTool(tool, params);
+  if (!res.ok) return { ok: false, error: res.error };
+  return { ok: true, result: res.result };
+}
+
 function googleStatus() {
   return {
     connected: !!(process.env.GMAIL_CLIENT_ID && process.env.GMAIL_REFRESH_TOKEN),
     user: process.env.GMAIL_USER || null,
     consentUrl: process.env.WEBHOOK_BASE_URL ? `${process.env.WEBHOOK_BASE_URL}/oauth/google/start` : null,
   };
+}
+
+/**
+ * Remint the OPERATOR Google token from the dashboard (⚙️ Config → Connect Google).
+ *
+ * A token change has to be pushed to three consumers, none of which notice on
+ * their own:
+ *   - `process.env`          — the config:save path does not run for this flow.
+ *   - the MCP client's children — the servers read credentials AT SPAWN, so a
+ *                             connected child keeps serving with the old token.
+ *   - runner + webhook       — they build their Google clients at startup and
+ *                             GMAIL_REFRESH_TOKEN is not in RESTART_KEYS.
+ * The scopes come from shared/google-scopes.mjs, the same list the CLI
+ * (`npm run setup:gmail-auth`) uses, so this can never mint a weaker token.
+ */
+async function googleConnect() {
+  const res = await connectGoogleOperator(REPO);
+  if (!res.ok) {
+    liveLog.addLog({ source: "electron", subSource: "google", level: "error", message: `Google connect failed: ${res.error}` });
+    notify({ source: "dashboard", level: "error", title: "Google authorization failed", body: clip(res.error) });
+    return res;
+  }
+
+  let closed = 0;
+  try {
+    const mcp = await mcpClient();
+    closed = mcp.status().filter((s) => s.connected).length;
+    await mcp.closeAll();
+  } catch (err) {
+    console.error("[google] closing MCP children failed:", err.message);
+  }
+  const restarted = [];
+  if (await restartService("runner")) restarted.push("runner");
+  if (await restartService("webhook")) restarted.push("webhook");
+
+  liveLog.addLog({
+    source: "electron",
+    subSource: "google",
+    level: "info",
+    message: `operator refresh token updated (${res.store}) for ${res.user || "unknown account"}` +
+      `${closed ? `; closed ${closed} MCP connection(s)` : ""}${restarted.length ? `; restarted ${restarted.join(" + ")}` : ""}`,
+  });
+  return { ok: true, user: res.user, store: res.store, backup: res.backup || null, restarted, closedMcp: closed };
 }
 
 // ── Priority-queue change notifications ──────────────────────────────────────
@@ -953,11 +1078,9 @@ async function checkPriority() {
         body: `${pending} item(s) now pending in the priority queue.`,
       });
       n.on("click", () => {
-        const win = BrowserWindow.getAllWindows()[0];
-        if (win) {
-          win.show();
-          win.focus();
-        }
+        // showDashboard(), not getAllWindows()[0]: the popover is a window too,
+        // and after a close the dashboard may not exist at all.
+        showDashboard();
       });
       n.show();
     }
@@ -1122,13 +1245,15 @@ async function chatSend(id, message) {
 
     // Agentic operator path — multi-turn tool loop with approval gating.
     const agent = await import(pathToFileURL(path.join(__dirname, "main", "chat-agent.mjs")).href);
-    // Operator-only local tools (scoped fs/tasks/queues) ride alongside the
-    // shared executor's cloud tools. Local reads auto-run; local writes ask.
+    // Two tool sources ride side by side: the MCP client (every configured MCP
+    // server, spoken to over the Model Context Protocol) and Electron's own scoped
+    // fs/task/queue tools. mcp-policy decides which of them may auto-run, and the
+    // runner/frontdesk executor is deliberately NOT used here any more.
     const local = await import(pathToFileURL(path.join(__dirname, "main", "local-tools.mjs")).href);
+    const policy = await import(pathToFileURL(path.join(__dirname, "main", "mcp-policy.mjs")).href);
     const localNames = new Set(local.LOCAL_TOOLS.map((t) => t.name));
-    const executor = await import(pathToFileURL(path.join(REPO, "mcp", "agent-runner", "tool-executor.js")).href);
     const executeTool = async (name, args) =>
-      localNames.has(name) ? local.runLocalTool(REPO, name, args) : executor.executeToolCall(name, args, { isFrontdesk: false });
+      localNames.has(name) ? local.runLocalTool(REPO, name, args) : mcpCallTool(name, args);
     const controller = new AbortController();
     chatAborts.set(id, controller);
     const persistEntry = (entry) => {
@@ -1146,6 +1271,7 @@ async function chatSend(id, message) {
         pendingApprovals.set(token, { resolve, sessionId: id, timer });
         chatBroadcast({ sessionId: id, kind: "approval", token, name: proposal.name, args: proposal.args });
       });
+    const mcp = await mcpClient();
     const res = await agent.runOperatorAgent({
       systemMessage,
       entries: [...hist.entries, userEntry], // full prior history + the new user message
@@ -1153,8 +1279,8 @@ async function chatSend(id, message) {
       requestApproval,
       signal: controller.signal,
       model,
-      tools: [...agent.OPERATOR_TOOLS, ...local.LOCAL_TOOLS],
-      readTools: new Set([...agent.OPERATOR_READ_TOOLS, ...local.LOCAL_READ_NAMES]),
+      tools: [...policy.filterTools(mcp.availableTools()), ...local.LOCAL_TOOLS],
+      readTools: new Set([...policy.READ_ONLY, ...local.LOCAL_READ_NAMES]),
       execute: executeTool,
     });
     chatAborts.delete(id);
@@ -1503,7 +1629,6 @@ function registerIpc() {
   // file never composes a licence or edits a blocklist itself.
   ipcMain.handle("pkm:capabilities", async (_e, registry) => (await keyManager()).capabilities(registry, { fresh: true }));
   ipcMain.handle("pkm:status", async (_e, registry) => (await keyManager()).status(registry));
-  ipcMain.handle("pkm:registries", async () => (await keyManager()).registries());
   ipcMain.handle("pkm:list", async (_e, registry, days) => (await keyManager()).listSeats(registry, days));
   ipcMain.handle("pkm:seatInfo", async (_e, registry, sub) => (await keyManager()).seatInfo(registry, sub));
   ipcMain.handle("pkm:issue", async (_e, registry, sub, exp) => {
@@ -1619,7 +1744,9 @@ function registerIpc() {
   ipcMain.handle("tools:trello", (_e, action, params) => trelloAction(action, params));
   ipcMain.handle("tools:gmail", (_e, action, params) => gmailAction(action, params));
   ipcMain.handle("tools:whatsapp", (_e, action, params) => whatsappAction(action, params));
+  ipcMain.handle("tools:netlify", (_e, action, params) => netlifyAction(action, params));
   ipcMain.handle("google:status", () => googleStatus());
+  ipcMain.handle("google:connect", () => googleConnect());
 
   ipcMain.handle("accounts:list", async () => {
     try {
@@ -1729,6 +1856,17 @@ function registerIpc() {
   ipcMain.handle("app:getTheme", () => getAppearanceInfo());
   ipcMain.handle("app:setTheme", (_e, theme) => setAppTheme(theme));
   ipcMain.handle("app:setAppearance", (_e, patch) => setAppearance(patch || {}));
+  // Menu-bar popover (electron/src/renderer/tray.js). Both go through the same
+  // helpers the tray and the dock use, so "open the app" has exactly one
+  // implementation.
+  ipcMain.handle("tray:openDashboard", () => {
+    showDashboard();
+    return { ok: true };
+  });
+  ipcMain.handle("tray:hidePopover", () => {
+    hidePopover();
+    return { ok: true };
+  });
   ipcMain.handle("app:quit", () => {
     app.quit();
     return { ok: true };
@@ -1736,6 +1874,33 @@ function registerIpc() {
 }
 
 // ── Window + tray ────────────────────────────────────────────────────────────
+
+/**
+ * Bring the dashboard up and give it focus.
+ *
+ * This is the ONE way to open the app — the menu-bar item, the dock icon and the
+ * notification click all come through here. Three things it must do that a bare
+ * `mainWindow.show()` does not:
+ *
+ *   1. Recreate the window if it is gone (a destroyed window leaves `mainWindow`
+ *      null, and `mainWindow && mainWindow.show()` then fails *silently*).
+ *   2. Restore a minimised window first — `show()` on a minimised window is a
+ *      no-op on macOS.
+ *   3. Steal focus. A menu-bar click does not activate the application, so
+ *      without `app.focus({ steal: true })` the window comes up behind whatever
+ *      the operator was using.
+ *
+ * The popover is dismissed here too: the dashboard and the panel are never
+ * usefully visible at the same time.
+ */
+function showDashboard() {
+  if (trayPopover && !trayPopover.isDestroyed() && trayPopover.isVisible()) trayPopover.hide();
+  if (!mainWindow || mainWindow.isDestroyed()) createWindow();
+  if (mainWindow.isMinimized()) mainWindow.restore();
+  mainWindow.show();
+  if (process.platform === "darwin") app.focus({ steal: true });
+  mainWindow.focus();
+}
 
 function createWindow() {
   mainWindow = new BrowserWindow({
@@ -1752,9 +1917,126 @@ function createWindow() {
     },
   });
   mainWindow.loadFile(RENDERER_HTML);
+  // Closing the window hides it rather than destroying it. This app's job is to
+  // keep the stack running, so the dashboard is reopened (menu-bar item, dock
+  // icon) instead of rebuilt — and a rebuild used to leave the tray's "Open
+  // dashboard" pointing at a null window. Quit is unaffected: `before-quit`
+  // preventDefaults and exits via app.exit(), so no close event is ever needed
+  // to get out — and `isQuitting` lets one through if that ever changes.
+  mainWindow.on("close", (e) => {
+    if (isQuitting) return;
+    e.preventDefault();
+    mainWindow.hide();
+  });
   mainWindow.on("closed", () => {
     mainWindow = null;
   });
+}
+
+/**
+ * The popover window. Frameless, non-resizable, and never in the window list
+ * the operator cycles through — it is a panel hanging off the menu-bar item, not
+ * a second document window.
+ *
+ * `vibrancy: "popover"` is what makes it read as a native menu-bar panel; the
+ * page's body background is transparent so the material shows through (see
+ * electron/src/renderer/styles/tray.css — an opaque body would paint over it).
+ */
+function createPopover() {
+  try {
+    trayPopover = new BrowserWindow({
+      width: TRAY_POPOVER_WIDTH,
+      height: TRAY_POPOVER_HEIGHT,
+      show: false,
+      frame: false,
+      resizable: false,
+      movable: false,
+      minimizable: false,
+      maximizable: false,
+      fullscreenable: false,
+      skipTaskbar: true,
+      hasShadow: true,
+      vibrancy: "popover",
+      visualEffectState: "active",
+      acceptFirstMouse: true, // one click, not click-to-focus-then-click
+      webPreferences: {
+        preload: path.join(__dirname, "preload.js"),
+        contextIsolation: true,
+        nodeIntegration: false,
+      },
+    });
+    trayPopover.loadFile(TRAY_HTML);
+    // Above full-screen windows and present on every Space, so a tray click works
+    // regardless of what the operator is doing.
+    trayPopover.setAlwaysOnTop(true, "pop-up-menu");
+    trayPopover.setVisibleOnAllWorkspaces(true, { visibleOnFullScreen: true });
+    trayPopover.on("blur", () => {
+      // DevTools steals focus and would close the panel out from under you while
+      // inspecting it.
+      if (trayPopover.webContents.isDevToolsOpened()) return;
+      hidePopover();
+    });
+    // The panel is not a normal window: it must not be reachable by Cmd+`, nor
+    // keep the app "open" in a way that surprises the dock.
+    trayPopover.on("closed", () => {
+      trayPopover = null;
+    });
+  } catch (err) {
+    console.log("[operator] tray popover unavailable:", err.message);
+  }
+}
+
+function hidePopover() {
+  if (!trayPopover || trayPopover.isDestroyed()) return;
+  trayPopover.hide();
+  // Stamped so the click that caused this blur is recognised as one gesture
+  // rather than a close followed immediately by an open.
+  popoverHiddenAt = Date.now();
+}
+
+/**
+ * Show the panel under the menu-bar item.
+ *
+ * `bounds` is the rect macOS hands to the `click` event; it falls back to
+ * `tray.getBounds()` because the event rect is empty on some configurations.
+ * The panel is centred on the icon and clamped to the display's work area, so a
+ * crowded right-hand menu bar cannot push it off-screen.
+ */
+function showPopover(bounds) {
+  if (!trayPopover || trayPopover.isDestroyed()) createPopover();
+  if (!trayPopover || trayPopover.isDestroyed()) return;
+
+  const icon = bounds && bounds.width ? bounds : tray && tray.getBounds();
+  if (icon && icon.width) {
+    const area = screen.getDisplayMatching(icon).workArea;
+    const [w, h] = trayPopover.getSize();
+    const x = Math.round(icon.x + icon.width / 2 - w / 2);
+    const y = Math.round(icon.y + icon.height + TRAY_POPOVER_GAP);
+    trayPopover.setPosition(
+      Math.max(area.x + 4, Math.min(x, area.x + area.width - w - 4)),
+      Math.max(area.y + 4, Math.min(y, area.y + area.height - h - 4)),
+    );
+  }
+  trayPopover.show();
+  trayPopover.focus();
+  // Ask the page to re-read its four values. Deliberately sent on every open
+  // rather than polled: the panel is only looked at for a few seconds at a time,
+  // and the dashboard already polls the same endpoints on its own timer.
+  try {
+    trayPopover.webContents.send("tray:refresh");
+  } catch {
+    /* mid-navigation — the page's own load-time fetch covers it */
+  }
+}
+
+function togglePopover(bounds) {
+  if (!trayPopover || trayPopover.isDestroyed()) return showPopover(bounds);
+  if (trayPopover.isVisible()) return hidePopover();
+  // Clicking the menu-bar item while the panel is open blurs the panel *before*
+  // the click arrives, so by now it is hidden and this would reopen it. Same
+  // gesture, so ignore the second half of it.
+  if (Date.now() - popoverHiddenAt < TRAY_CLICK_GUARD_MS) return;
+  showPopover(bounds);
 }
 
 function createTray() {
@@ -1773,17 +2055,24 @@ function createTray() {
     // macOS template images are alpha-only: the OS paints them black or white to
     // match the current menu-bar appearance.
     if (process.platform === "darwin") image.setTemplateImage(true);
-    const tray = new Tray(image);
+    tray = new Tray(image);
     tray.setToolTip("Frontdesk Operator");
     const menu = Menu.buildFromTemplate([
-      { label: "Open dashboard", click: () => mainWindow && mainWindow.show() },
+      { label: "Open dashboard", click: () => showDashboard() },
       { type: "separator" },
       { label: "Start webhook server", click: () => startService("webhook") },
       { label: "Start agent runner", click: () => startService("runner") },
       { type: "separator" },
       { label: "Quit", click: () => app.quit() }, // before-quit drains every service + script
     ]);
-    tray.setContextMenu(menu);
+    // Left-click opens the popover, right-click opens the menu.
+    //
+    // NOTE — do NOT "simplify" this back to tray.setContextMenu(menu). On macOS a
+    // tray that has a context menu hands left-clicks to that menu and never
+    // emits `click`, so the popover would silently never open.
+    tray.on("click", (_event, bounds) => togglePopover(bounds));
+    tray.on("right-click", () => tray.popUpContextMenu(menu));
+    createPopover();
   } catch (err) {
     console.log("[operator] tray unavailable:", err.message);
   }
@@ -1873,15 +2162,23 @@ app.whenReady().then(() => {
   // cutoff it takes is the real app-start time, not module-load time.
   startNotificationProducers();
 
-  // Autostart the whole stack: webhook + runner + all MCP servers (+ tunnel if configured).
+  // Autostart the stack: webhook + runner (+ tunnel if configured).
+  // The MCP servers are NOT autostarted: the operator chat's MCP client spawns a
+  // child per server on first use, and starting them here as well would leave two
+  // processes for every server the chat touches. They stay manually startable from
+  // the Dashboard rail; set OPERATOR_AUTOSTART_MCP=true for the old behaviour.
   if (process.env.OPERATOR_AUTOSTART !== "false") {
-    const auto = ["webhook", "runner", ...MCP_NAMES.map((n) => `mcp:${n}`)];
+    const auto = ["webhook", "runner"];
+    if (process.env.OPERATOR_AUTOSTART_MCP === "true") auto.push(...MCP_NAMES.map((n) => `mcp:${n}`));
     if (serviceDefs.tunnel.args.length > 0) auto.push("tunnel");
     for (const n of auto) startService(n);
   }
 
   app.on("activate", () => {
-    if (BrowserWindow.getAllWindows().length === 0) createWindow();
+    // Not `getAllWindows().length === 0`: closing the dashboard now hides it
+    // rather than destroying it, so a hidden window would make the dock icon a
+    // no-op. showDashboard() restores, shows and focuses whatever state it is in.
+    showDashboard();
   });
 });
 
@@ -1903,6 +2200,16 @@ function isAlive(proc) {
 
 async function shutdownEverything() {
   if (notifTimer) clearInterval(notifTimer);
+  // The MCP client's children are not in `running` (the SDK transport owns them),
+  // so close them explicitly — and BEFORE the early return below, which would
+  // otherwise skip them when no service is up but a chat tool call left a child.
+  try {
+    const mod = mcpClientMod;
+    mcpClientMod = null;
+    if (mod) await mod.closeAll();
+  } catch (err) {
+    console.error("[shutdown] closing MCP client failed:", err.message);
+  }
   const procs = [
     ...Object.values(running).map((r) => r.proc),
     ...Object.values(scriptRuns).map((r) => r.proc),
@@ -1926,6 +2233,9 @@ let quitting = false;
 function beginQuit() {
   if (quitting) return; // re-entry guard: before-quit + signal handlers can overlap
   quitting = true;
+  // Let the dashboard's close handler stand down — a cancelable `close` during
+  // teardown would otherwise hide the window and strand the shutdown.
+  isQuitting = true;
   void shutdownEverything().finally(() => app.exit(0));
 }
 

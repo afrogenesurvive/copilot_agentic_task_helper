@@ -46,7 +46,6 @@ contextBridge.exposeInMainWorld("api", {
   // disabled control here is a hint, not the boundary.
   pkmCapabilities: (registry) => ipcRenderer.invoke("pkm:capabilities", registry),
   pkmStatus: (registry) => ipcRenderer.invoke("pkm:status", registry),
-  pkmRegistries: () => ipcRenderer.invoke("pkm:registries"),
   pkmList: (registry, days) => ipcRenderer.invoke("pkm:list", registry, days),
   pkmSeatInfo: (registry, sub) => ipcRenderer.invoke("pkm:seatInfo", registry, sub),
   pkmIssue: (registry, sub, exp) => ipcRenderer.invoke("pkm:issue", registry, sub, exp),
@@ -81,6 +80,7 @@ contextBridge.exposeInMainWorld("api", {
   usageCredits: () => ipcRenderer.invoke("usage:credits"),
   usageFlush: () => ipcRenderer.invoke("usage:flush"),
   googleStatus: () => ipcRenderer.invoke("google:status"),
+  googleConnect: () => ipcRenderer.invoke("google:connect"),
   // Accounts & Keys (seat → Google/Trello bindings)
   accountsList: () => ipcRenderer.invoke("accounts:list"),
   accountsConnectGoogle: (sub) => ipcRenderer.invoke("accounts:connectGoogle", sub),
@@ -93,6 +93,7 @@ contextBridge.exposeInMainWorld("api", {
   trello: (action, params) => ipcRenderer.invoke("tools:trello", action, params),
   gmail: (action, params) => ipcRenderer.invoke("tools:gmail", action, params),
   whatsapp: (action, params) => ipcRenderer.invoke("tools:whatsapp", action, params),
+  netlify: (action, params) => ipcRenderer.invoke("tools:netlify", action, params),
   openExternal: (url) => ipcRenderer.invoke("open:external", url),
   // Scripts (scripts/user runner — manual run only)
   scriptsList: () => ipcRenderer.invoke("scripts:list"),
@@ -133,4 +134,13 @@ contextBridge.exposeInMainWorld("api", {
   setTheme: (theme) => ipcRenderer.invoke("app:setTheme", theme),
   setAppearance: (patch) => ipcRenderer.invoke("app:setAppearance", patch),
   quit: () => ipcRenderer.invoke("app:quit"),
+  // Menu-bar popover (electron/src/renderer/tray.js). Same document preload as the
+  // dashboard, so these are the only two channels the panel adds.
+  trayOpenDashboard: () => ipcRenderer.invoke("tray:openDashboard"),
+  trayHide: () => ipcRenderer.invoke("tray:hidePopover"),
+  onTrayRefresh: (cb) => {
+    const listener = () => cb();
+    ipcRenderer.on("tray:refresh", listener);
+    return () => ipcRenderer.removeListener("tray:refresh", listener);
+  },
 });

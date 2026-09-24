@@ -781,7 +781,7 @@ export const photosTools = [
  * decides it. Offering it invited the model to invent one — it sent `"frontdesk"`,
  * `"frontdesk_user"` and even the question text as a seat, and the reply endpoint
  * rejected each with `unknown_seat` (2026-09-24). The Electron operator chat never
- * had this tool (see SUPPORTED_TOOLS in electron/src/main/chat-agent.mjs), so
+ * had this tool (see NEVER_IN_CHAT in electron/src/main/mcp-policy.mjs), so
  * removing the parameter affects the frontdesk channel only.
  */
 export const frontdeskTools = [
@@ -885,4 +885,182 @@ export const whatsappTools = [
   },
 ];
 
-export const allTools = [...trelloTools, ...gmailTools, ...driveTools, ...calendarTools, ...photosTools, ...webSearchTools, ...sheetsTools, ...frontdeskTools, ...whatsappTools];
+/** Netlify tools — sites, build settings, environment variables, deploys.
+ *  These definitions used to be inlined in `mcp/netlify/index.js`; they live here
+ *  so the MCP server, the Tools-tab manifest (Electron `tools:manifest`) and the
+ *  chat's advertised tool list all read the same array and cannot drift.
+ *
+ *  Env-var contract worth remembering: a variable holds ONE value per deploy
+ *  context, so `netlify_set_env` reads the variable first — a blind PUT would
+ *  overwrite contexts the caller never named. */
+export const netlifyTools = [
+  {
+    name: "netlify_list_sites",
+    description:
+      "List all Netlify sites the authenticated account can access. Returns id, name, url, and created date for each so you can identify the site to target.",
+    inputSchema: {
+      type: "object",
+      properties: {
+        perPage: { type: "number", description: "Max results (default 100)", default: 100 },
+      },
+    },
+  },
+  {
+    name: "netlify_get_site",
+    description:
+      "Get full details (incl. build_settings) for a Netlify site. siteId may be the Project ID, site name, or domain (e.g. mysite.netlify.app). Defaults to NETLIFY_SITE_ID.",
+    inputSchema: {
+      type: "object",
+      properties: {
+        siteId: { type: "string", description: "Project ID, site name, or domain" },
+      },
+    },
+  },
+  {
+    name: "netlify_update_site",
+    description:
+      "Update a Netlify site's settings via PATCH. Pass an 'updates' object, e.g. {\"build_settings\":{\"command\":\"npm run build\",\"publish\":\"public\",\"base\":\"webapp/\"}}. WARNING: a committed netlify.toml overrides these on git deploys.",
+    inputSchema: {
+      type: "object",
+      properties: {
+        siteId: { type: "string", description: "Project ID, site name, or domain" },
+        updates: { type: "object", description: "JSON body to PATCH (site attributes, nested build_settings)" },
+      },
+      required: ["updates"],
+    },
+  },
+  {
+    name: "netlify_get_account",
+    description: "Resolve a Netlify team (account) by id or slug, e.g. to find the account_id used for env-var operations.",
+    inputSchema: {
+      type: "object",
+      properties: {
+        accountId: { type: "string", description: "Account/team id OR slug" },
+      },
+    },
+  },
+  {
+    name: "netlify_list_env",
+    description:
+      "List environment variables. With siteId (or NETLIFY_SITE_ID) returns that site's variables; with accountId only, the team's. Values are returned per deploy context, and secret values come back masked by the API.",
+    inputSchema: {
+      type: "object",
+      properties: {
+        siteId: { type: "string", description: "Site (Project ID/name/domain) to scope to" },
+        accountId: { type: "string", description: "Team id/slug for team-level listing" },
+      },
+    },
+  },
+  {
+    name: "netlify_get_env",
+    description:
+      "Get a single environment variable, with its per-context values, for a site (siteId or NETLIFY_SITE_ID) or the team (accountId). Secret values are masked by the API.",
+    inputSchema: {
+      type: "object",
+      properties: {
+        key: { type: "string", description: "Environment variable name, e.g. TRELLO_API_KEY" },
+        siteId: { type: "string" },
+        accountId: { type: "string" },
+      },
+      required: ["key"],
+    },
+  },
+  {
+    name: "netlify_set_env",
+    description:
+      "Create or update an environment variable. With siteId (or NETLIFY_SITE_ID) it sets it on that site; with accountId only, on the team. Reads the variable first, so is_secret, the scopes and any context you did not name are preserved. IMPORTANT: env changes only take effect after a new deploy.",
+    inputSchema: {
+      type: "object",
+      properties: {
+        key: { type: "string", description: "Variable name, e.g. TRELLO_API_KEY" },
+        value: { type: "string", description: "Value to set (an empty string is a valid value)" },
+        siteId: { type: "string", description: "Target site (recommended for the frontdesk site)" },
+        accountId: { type: "string", description: "Team id/slug (team-scoped var)" },
+        context: {
+          type: "string",
+          description:
+            "Deploy context(s) to set: production, deploy-preview, branch-deploy, dev, dev-server. Omit (or pass \"all\") to set every context; comma-separate to set several.",
+        },
+        is_secret: { type: "boolean", description: "Mark the variable secret (default: keep the current setting)" },
+        scopes: {
+          type: "array",
+          items: { type: "string" },
+          description: "Scopes: builds, functions, runtime (default all three on create; existing scopes are preserved on update)",
+        },
+      },
+      required: ["key", "value"],
+    },
+  },
+  {
+    name: "netlify_delete_env",
+    description: "Delete an environment variable from a site (siteId or NETLIFY_SITE_ID) or from the team (accountId).",
+    inputSchema: {
+      type: "object",
+      properties: {
+        key: { type: "string" },
+        siteId: { type: "string" },
+        accountId: { type: "string" },
+      },
+      required: ["key"],
+    },
+  },
+  {
+    name: "netlify_list_deploys",
+    description: "List recent deploys for a site with state, branch, and commit.",
+    inputSchema: {
+      type: "object",
+      properties: {
+        siteId: { type: "string" },
+        perPage: { type: "number", description: "Max results (default 20)" },
+      },
+    },
+  },
+  {
+    name: "netlify_get_deploy",
+    description: "Get a single deploy's full detail (incl. state) for a site.",
+    inputSchema: {
+      type: "object",
+      properties: {
+        siteId: { type: "string" },
+        deployId: { type: "string" },
+      },
+      required: ["deployId"],
+    },
+  },
+  {
+    name: "netlify_trigger_build",
+    description:
+      "Trigger a new build+deploy of the site's linked repo (CI). Useful after changing env vars or to redeploy. Returns the new build id/state.",
+    inputSchema: {
+      type: "object",
+      properties: {
+        siteId: { type: "string" },
+      },
+    },
+  },
+  {
+    name: "netlify_restore_deploy",
+    description: "Roll back a site to a previous deploy by marking it as the live version.",
+    inputSchema: {
+      type: "object",
+      properties: {
+        siteId: { type: "string" },
+        deployId: { type: "string" },
+      },
+      required: ["deployId"],
+    },
+  },
+];
+
+export const allTools = [
+  ...trelloTools,
+  ...gmailTools,
+  ...driveTools,
+  ...calendarTools,
+  ...photosTools,
+  ...webSearchTools,
+  ...sheetsTools,
+  ...frontdeskTools,
+  ...whatsappTools,
+  ...netlifyTools,
+];

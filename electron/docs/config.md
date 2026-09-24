@@ -24,7 +24,14 @@ Settings are grouped into sections, each field showing its **source tag** (`conf
   `/api/rules`) and the server **fails closed**: with no token set those routes return
   `503` instead of serving unauthenticated, so set one (or leave the queue API disabled).
 - **Trello** — API key/token, board and list IDs, webhook model IDs/actions.
-- **Gmail / Google** — client ID/secret, refresh token, user, Pub/Sub topic/subscription.
+- **Gmail / Google** — client ID/secret, refresh token, user, Pub/Sub topic/subscription. The
+  section opens with a **Connect Google** button that remints the **operator** refresh token
+  (the one every MCP server and the 💬 Chat tab run on) straight from the dashboard: it opens the
+  Google consent screen, saves the new token to whichever store wins (see below) and drops the
+  MCP connections plus restarts the runner/webhook so nothing keeps serving the old one. It
+  requests Gmail (+ filters), Drive, **Calendar**, **Tasks** and Photos — the same scope set as
+  `npm run setup:gmail-auth`, so either route gives the token identical capabilities. Use it when
+  the token is stale, revoked, or was minted before a scope was added (e.g. Tasks).
 - **WhatsApp** — Meta Cloud API: system-user access token, WABA ID, active phone-number ID
   (test or burner), optional test-number ID, API version, app secret + webhook verify token.
   See `whatsapp.md` for how to set up the free test number and a real (burner) number.
@@ -41,6 +48,11 @@ Settings are grouped into sections, each field showing its **source tag** (`conf
 - **Appearance** — `light` / `dark` / `system` (same setting as the 🎨 Appearance tab).
 
 Secret fields render as password inputs with a **👁 / 🙈** toggle to reveal.
+
+**Which file a value is in matters.** `config.json` is PRIMARY; `.env` only supplies keys
+`config.json` omits, and a copy of the same key in both files means the `.env` one is ignored.
+**Save** and **Connect Google** both write the store that wins — but if you edit `.env` by hand,
+check the ⚙️ Config tab is not showing that key as coming from `config.json`.
 
 ## Buttons
 

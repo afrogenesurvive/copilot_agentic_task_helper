@@ -4,71 +4,41 @@
  * Turns the operator Chat into a VS Code-chat-like agentic loop:
  *   model proposes a tool → read-only tools run automatically; mutating tools
  *   pause for operator approval (Approve/Deny in the renderer) → the tool runs
- *   (via the agent-runner's shared executor) → its (sanitized) result is fed
- *   back to the model → repeat until it answers in plain text (bounded rounds).
+ *   (through the in-process MCP client, or Electron's local fs/task/queue tools)
+ *   → its (sanitized) result is fed back to the model → repeat until it answers
+ *   in plain text (bounded rounds).
  *
  * Channel/origin enforcement lives in main.js: this loop is ONLY used for the
  * `operator` channel. Frontdesk chats never get tools.
+ *
+ * Tool execution and the read/approve split are injected by the caller — main.js
+ * supplies `execute` (main/mcp-client.mjs), `tools` (the MCP client's manifest
+ * list) and `readTools` (main/mcp-policy.mjs) — so this module stays pure and
+ * testable, and no longer imports the agent-runner's executor. That executor keeps
+ * its own gates (`FRONTDESK_ALLOWLIST` / `BLOCKLIST`) for the runner and the
+ * frontdesk channel, which is why the operator chat can allow `drive_delete_file`
+ * behind an approval card while the runner still refuses to touch it.
  *
  * Dependencies are injected by the caller (persistEntry, requestApproval) so
  * this module stays pure and testable.
  */
 import { callChatHistory, getModelName, getProvider } from "../../../shared/model-provider.mjs";
-import { allTools } from "../../../shared/tool-manifest.js";
-import { executeToolCall } from "../../../mcp/agent-runner/tool-executor.js";
 import { sanitize } from "../../../scripts/sanitize.stub.mjs";
+import { READ_ONLY } from "./mcp-policy.mjs";
 
-// Tools the shared executor can actually run (trello + gmail + web).
-// frontdesk_reply is intentionally excluded — it belongs to the frontdesk
-// agent path, not the operator console.
-const SUPPORTED_TOOLS = new Set([
-  "trello_add_comment",
-  "trello_get_card",
-  "trello_list_cards",
-  "trello_get_lists",
-  "trello_get_card_actions",
-  "trello_create_card",
-  "trello_update_card",
-  "trello_create_checklist",
-  "trello_add_checklist_item",
-  "gmail_list_messages",
-  "gmail_get_message",
-  "gmail_send_message",
-  "web_search",
-  "web_fetch",
-  // WhatsApp (Meta Cloud API) — reads auto-run; sends require approval
-  "whatsapp_status",
-  "whatsapp_list_numbers",
-  "whatsapp_list_messages",
-  "whatsapp_send_text",
-  "whatsapp_send_template",
-  "whatsapp_mark_read",
-]);
-
-// Read-only tools run automatically; anything else requires operator approval.
-const READ_TOOLS = new Set([
-  "trello_get_card",
-  "trello_list_cards",
-  "trello_get_lists",
-  "trello_get_card_actions",
-  "gmail_list_messages",
-  "gmail_get_message",
-  "web_search",
-  "web_fetch",
-  // WhatsApp reads — run automatically (no approval needed)
-  "whatsapp_status",
-  "whatsapp_list_numbers",
-  "whatsapp_list_messages",
-]);
-
-export const OPERATOR_TOOLS = (allTools || []).filter((t) => SUPPORTED_TOOLS.has(t.name));
-
-// Read-only tool names (operator chat: run automatically). Electron merges its
-// local read tools (fs/task/queue reads) into this set at call time.
-export const OPERATOR_READ_TOOLS = READ_TOOLS;
+/** Read-only tool names (operator chat: run automatically). main.js merges
+ *  Electron's local read tools (fs/task/queue reads) into this set at call time. */
+export const OPERATOR_READ_TOOLS = READ_ONLY;
 
 export function isReadTool(name) {
-  return READ_TOOLS.has(name);
+  return READ_ONLY.has(name);
+}
+
+/** Default executor — refuses everything. main.js always injects the real one;
+ *  this exists so a caller that forgets `execute` fails closed rather than
+ *  crashing the turn with "execute is not a function". */
+async function failClosedExecutor(name) {
+  return { ok: false, tool: name, error: "no tool executor wired into runOperatorAgent()" };
 }
 
 /**
@@ -142,9 +112,13 @@ function toProviderMessages(history) {
  * @param {string}  [opts.model]        — model label for the assistant entry
  * @param {number}  [opts.temperature]  — LLM temperature override
  * @param {function} [opts.provider]    — test seam; defaults to callChatHistory
- * @param {function} [opts.execute]     — test seam; defaults to executeToolCall
- * @param {Array}    [opts.tools]       — tool defs to advertise; defaults to OPERATOR_TOOLS
- * @param {Set}      [opts.readTools]   — names that auto-run; defaults to OPERATOR_READ_TOOLS
+ * @param {function} opts.execute       — REQUIRED in practice; runs one tool call.
+ *                                        main.js injects mcp-client's `callTool`
+ *                                        (MCP names) or local-tools' `runLocalTool`.
+ * @param {Array}    [opts.tools]       — tool defs to advertise; defaults to [] (no
+ *                                        tools — fail closed if the caller forgets)
+ * @param {Set}      [opts.readTools]   — names that auto-run; defaults to the policy's
+ *                                        READ_ONLY set
  * @returns {Promise<{ok:boolean, reply:string, model:string, usage:object|null, maxSteps?:boolean}>}
  *          `maxSteps: true` means the tool-step budget was exhausted and the
  *          reply is the wrap-up/sentinel message (the loop did not answer freely).
@@ -158,9 +132,9 @@ export async function runOperatorAgent({
   model,
   temperature,
   provider = callChatHistory,
-  execute = executeToolCall,
-  tools = OPERATOR_TOOLS,
-  readTools = READ_TOOLS,
+  execute = failClosedExecutor,
+  tools = [],
+  readTools = READ_ONLY,
 }) {
   const history = [...entries];
   const record = async (entry) => {

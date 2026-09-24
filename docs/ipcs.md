@@ -30,7 +30,6 @@ preload bridge ([`electron/src/preload.js`](../electron/src/preload.js#L7)) as `
 | `notificationsClear()` | [`notifications:clear`](../electron/src/main.js#L1423) | Deletes every stored notification and resets the in-memory ring |
 | `onNotification(cb)` | `notifications:new` (push) | Each new entry as it is recorded — `{id, ts, source, level, title, body}`, `source` ∈ queue \| logs \| chat \| dashboard \| sessions \| scripts || `pkmCapabilities(registry?)` | [`pkm:capabilities`](../electron/src/main.js#L1322) | `{ok, data:{state, writable, reason, cli, doctor, actions, files, paths}}` — re-probes the key store. `state` ∈ `ready` \| `read-only` \| `blocklist-unreadable` \| `blocklist-missing` \| `store-missing` \| `cli-missing` \| `cli-broken`; `actions` holds a per-command verdict. Every disabled control on the Key Manager tab is painted from this |
 | `pkmStatus(registry?)` | [`pkm:status`](../electron/src/main.js#L1323) | `{ok, data:{present, pkmRepo, pkmBin, storeRoot, indexFile, registry, registries:[{id,name,app,engine,defaultKid,rings,seats,revoked,verifierTargets}], entry, loosePermissions, authorityPublicKey, timeoutMs, capabilities}}`. `registry` defaults to `PKM_REGISTRY` (config.json/.env) |
-| `pkmRegistries()` | [`pkm:registries`](../electron/src/main.js#L1324) | `{ok, data:{registries, indexFile, root}}` — every registry in the store |
 | `pkmList(registry?, days?)` | [`pkm:list`](../electron/src/main.js#L1325) | `{ok, data:{registry, days, counts, archived, rows:[{sub,kid,exp,expUtc,issuedAt,enc,status,daysLeft}]}}`. Note `check-exp` archives already-expired records as a side effect |
 | `pkmSeatInfo(registry?, sub)` | [`pkm:seatInfo`](../electron/src/main.js#L1326) | `{ok, data:{found, row}}` — one seat, for the Issue dialog's guards |
 | `pkmIssue(registry?, sub, exp)` | [`pkm:issue`](../electron/src/main.js#L1327) | `{ok, data:{registry,sub,kid,exp,issuedAt,licenseKey}}` — **displayed once, never logged**. Refuses a seat already on the revocation blocklist, whose licence would be minted and then rejected at login |
@@ -61,15 +60,19 @@ preload bridge ([`electron/src/preload.js`](../electron/src/preload.js#L7)) as `
 | `usageFlush()` | [`usage:flush`](../electron/src/main.js#L1367) | Pushes buffered usage to DS-mon now and returns the real outcome `{ok, at, count, error, paused, reason, bufferCount}` — a `401`/`403` pauses tracking instead of reporting a false success |
 | `configWithSources()` | [`config:getWithSources`](../electron/src/main.js#L1287) | Per-key config with source annotation — `{values: {key: {value, source}}}` where source ∈ `config.json` \| `.env` \| `default` |
 | `googleStatus()` | [`google:status`](../electron/src/main.js#L1160) | `{connected, user, consentUrl}` |
+| `googleConnect()` | [`google:connect`](../electron/src/main.js) | Runs the loopback Google consent flow and rewrites the **operator** refresh token to whichever config store wins (`config.json` over `.env`); then drops the MCP client's children and restarts the runner/webhook. Returns `{ok, user, store, backup, restarted, closedMcp}`. Requests the scope set in `shared/google-scopes.mjs` |
 | `toolsManifest()` | [`tools:manifest`](../electron/src/main.js#L1157) | Shared tool manifest ([`shared/tool-manifest.js`](../shared/tool-manifest.js#L1)) |
 | `trello(action, params)` | [`tools:trello`](../electron/src/main.js#L1158) | Trello REST quick actions (list_boards/lists/cards, add_comment) |
 | `gmail(action, params)` | [`tools:gmail`](../electron/src/main.js#L1159) | Gmail list/get via googleapis |
 | `whatsapp(action, params)` | [`tools:whatsapp`](../electron/src/preload.js#L1) | WhatsApp Cloud API quick actions (status / list numbers / read inbox / send text or template) |
+| `netlify(action, params)` | [`tools:netlify`](../electron/src/preload.js#L1) | Netlify quick actions, executed through the in-process MCP client (`electron/src/main/mcp-client.mjs`) rather than a local REST client: `list_sites` / `get_site` / `list_env` / `get_env` / `list_deploys` |
 | `openExternal(url)` | [`open:external`](../electron/src/main.js#L1259) | Open a URL in the system browser |
 | `getTheme()` | [`app:getTheme`](../electron/src/main.js#L1263) | `{theme: light\|dark\|system, effective: dark\|light, accentColor: string, fontSize: small\|medium\|large\|x-large\|xx-large}` |
 | `setTheme(theme)` | [`app:setTheme`](../electron/src/main.js#L1264) | Persists `APPEARANCE_THEME` to `config.json` (or `.env` fallback), applies it, returns appearance info |
 | `setAppearance(patch)` | [`app:setAppearance`](../electron/src/main.js#L1264) | Applies + persists any subset of `{theme, accentColor, fontSize}` (`APPEARANCE_THEME` / `APPEARANCE_ACCENT_COLOR` / `APPEARANCE_FONT_SIZE`); blank accent clears the override. Returns appearance info |
 | `quit()` | [`app:quit`](../electron/src/main.js#L1265) | Quit the app (main `before-quit` stops all services) |
+| `trayOpenDashboard()` | [`tray:openDashboard`](../electron/src/main.js#L1760) | Show + focus the dashboard (rebuilding or un-minimising it as needed) and dismiss the menu-bar panel. Used by the panel's button and its health pill |
+| `trayHide()` | [`tray:hidePopover`](../electron/src/main.js#L1764) | Dismiss the menu-bar popover (Escape in the panel) |
 | `accountsList()` | [`accounts:list`](../electron/src/main.js#L1162) | `{ok, rows:[{sub, googleConnected, googleUser, trelloConfigured}]}` |
 | `accountsConnectGoogle(sub)` | [`accounts:connectGoogle`](../electron/src/main.js#L1177) | Runs loopback OAuth for the seat → binds Google account |
 | `accountsSetTrello(sub, key, token)` | [`accounts:setTrello`](../electron/src/main.js#L1178) | Stores a seat's Trello credentials |
@@ -91,6 +94,7 @@ preload bridge ([`electron/src/preload.js`](../electron/src/preload.js#L7)) as `
 | `chatDecide(token, approved, editedArgs?)` | [`chat:decide`](../electron/src/main.js#L1229) | Approve/Deny a proposed tool call (optional edited JSON args) |
 | `chatStop(id)` | [`chat:stop`](../electron/src/main.js#L1240) | Stop the running agent loop for a session |
 | `onChatStep(cb)` | `chat:step` (push) | Live chat entries + approval requests (see [`preload.js`](../electron/src/preload.js#L1)) |
+| `onTrayRefresh(cb)` | `tray:refresh` (push) | Sent by main every time the menu-bar popover is shown, so the panel re-reads its four values instead of polling (see [`electron/src/renderer/tray.js`](../electron/src/renderer/tray.js#L1)) |
 
 ## Security notes
 

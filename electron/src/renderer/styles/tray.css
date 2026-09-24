@@ -1,0 +1,167 @@
+/*
+ * The menu-bar popover.
+ *
+ * Loaded after _reset.css and _layout.css (which is where the tokens live), so
+ * this file owns two jobs:
+ *
+ *   1. Undo the app shell's opaque page background. The window is created with
+ *      `vibrancy: "popover"` in electron/src/main.js, and a macOS vibrancy
+ *      material is only visible through a transparent page — _reset.css sets
+ *      `body { background: var(--bg) }`, which would paint straight over it and
+ *      leave a plain rectangular box.
+ *   2. Lay the panel out. Radius, spacing and the pill look deliberately come
+ *      from the same tokens and primitives as the dashboard's status bar, so the
+ *      two cannot drift apart.
+ *
+ * No inline styles anywhere, and none of this can be moved into the markup: the
+ * page pins `style-src 'self'` with no 'unsafe-inline'.
+ */
+
+html,
+body {
+  background: transparent;
+}
+
+/* The panel fills the window. The window itself is not resizable — the size is
+ * fixed in main.js so the popover can be positioned without measuring content
+ * and there is no resize round trip on every open. */
+.tray {
+  display: flex;
+  height: 100vh;
+  overflow: hidden;
+}
+
+.tray__panel {
+  display: flex;
+  flex-direction: column;
+  flex: 1;
+  min-height: 0;
+  /* Translucent rather than opaque, so the material reads through it. `color-mix`
+   * is already used for the pill borders in components/_status-bar.css. */
+  background: color-mix(in srgb, var(--surface) 82%, transparent);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  padding: 10px 12px 12px;
+  gap: 10px;
+}
+
+.tray__head {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 8px;
+  flex-shrink: 0;
+}
+
+.tray__title {
+  font-weight: 600;
+}
+
+/* The version is the least important thing here and reads as metadata, so it is
+ * the smallest and quietest element in the panel. */
+.tray__version {
+  color: var(--text-muted);
+  font-size: 0.78em;
+}
+
+/* Four values, two columns: narrow enough to stay on one line each, which is what
+ * makes them scannable at a glance. */
+.tray__pills {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 6px;
+  flex-shrink: 0;
+}
+
+/* The pills are the shared primitive from components/_status-bar.css. Only the
+ * leading dot's spacing needs relaxing here (the status bar gets that from its
+ * own flex gap). */
+.tray__pills .status-pill {
+  justify-content: flex-start;
+  min-width: 0;
+  max-width: none;
+}
+
+.tray__section {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 8px;
+  flex-shrink: 0;
+  border-top: 1px solid var(--border);
+  padding-top: 8px;
+  color: var(--text-muted);
+  font-size: 0.78em;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+}
+
+.tray__section-note {
+  text-transform: none;
+  letter-spacing: 0;
+}
+
+/* The only scrolling region. `min-height: 0` is what lets it shrink inside the
+ * flex column instead of pushing the footer off the bottom. */
+.tray__list {
+  flex: 1;
+  min-height: 0;
+  overflow-y: auto;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.tray__item {
+  border-left: 2px solid var(--border);
+  padding: 2px 0 2px 8px;
+}
+
+.tray__item-top {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 8px;
+  font-size: 0.8em;
+}
+
+.tray__item-label {
+  color: var(--accent);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.tray__item-time {
+  color: var(--text-muted);
+  flex-shrink: 0;
+}
+
+/* Two lines maximum: the panel is a glance, and the Queue tab is where a long
+ * description belongs. */
+.tray__item-desc {
+  color: var(--text);
+  font-size: 0.85em;
+  line-height: 1.35;
+  overflow: hidden;
+  display: -webkit-box;
+  -webkit-line-clamp: 2;
+  -webkit-box-orient: vertical;
+}
+
+.tray__list .empty {
+  color: var(--text-muted);
+  font-size: 0.85em;
+  padding: 2px 0;
+}
+
+.tray__foot {
+  flex-shrink: 0;
+}
+
+.tray__open {
+  width: 100%;
+}

@@ -14,8 +14,14 @@ npm run electron:dev       # launch dashboard + autostart the whole backend
 
 - Webhook server (`node mcp/webhook-server/index.js`, `:3199`)
 - Agent runner (`node mcp/agent-runner/index.js`)
-- All 6 MCP servers (`node mcp/{trello,gmail,drive,calendar,sheets,web-search}/index.js`)
 - Cloudflare tunnel (only if `CLOUDFLARE_TUNNEL_TOKEN`/`ID` set)
+
+The 9 MCP servers (`node mcp/{trello,gmail,drive,calendar,photos,sheets,web-search,whatsapp,netlify}/index.js`)
+are **not** autostarted. They are startable from the Dashboard rail, and the operator chat's MCP
+client ([`electron/src/main/mcp-client.mjs`](../electron/src/main/mcp-client.mjs)) spawns its own
+child per server the first time one of that server's tools is called — so autostarting them too
+would leave two processes for every server the chat touches. `OPERATOR_AUTOSTART_MCP=true` restores
+the old behaviour.
 
 ## UI (left sidebar)
 
@@ -26,12 +32,13 @@ npm run electron:dev       # launch dashboard + autostart the whole backend
 | 🔴 Queue | Priority + misc queues, per-item clear |
 | 📄 Logs | Live unified log stream (filter by source/sub-source/level, fold JSON details) + Log file browser with pretty JSONL view |
 | 👥 Sessions | Frontdesk login/logout sessions |
-| �📈 Usage | LLM token usage + DS-mon push status + provider credit balance |
-| 🔑 Key Manager | Every registry in the key store (picker): seat licences (issue / revoke / unrevoke / archive expired / validate), master **rings** (new / retire / make default / agent key), the audit log, and blocklist sync for registries that embed it |
+| 📈 Usage | LLM token usage + DS-mon push status + provider credit balance |
+| 🔑 Key Manager | Every registry in the key store (picker): seat licences (issue / revoke / unrevoke / archive expired / validate / per-seat detail), master **rings** (new / retire / make default / agent key), the audit log, blocklist sync for registries that embed it, and a store action row (Archive expired / Export bundle). A **Verify** row runs the checks that matter when issuing — Challenge (does the licence complete a login), Crypto self-test, Revocation check, Permissions, Verify bundle — and stays available even when the store is read-only. When the store cannot support an action, its control is disabled with the reason instead of failing on click |
 | 🔐 Accounts & Keys | Bind Google/Trello accounts per seat; ▶ Spawn MCP for a seat |
 | 💬 Chat | Chat with the configured LLM (the agent) directly from the dashboard — each conversation is saved as its own log file |
 | ⚙️ Config | Sectioned field editor with per-key source badges, secret show/hide, Save (edited keys only), Export / Import, Raw JSON toggle |
-| 🧰 Tools | Shared tool manifest + Trello/Gmail quick actions |
+| 🧰 Tools | Shared tool manifest (grouped per server, incl. Netlify) + Trello/Gmail/WhatsApp/Netlify quick actions |
+| 📜 Scripts | Run vetted helper scripts under `scripts/user/` (and the gitignored `scripts/user/safe/`), with generated forms from a `<script>.params.json` sidecar |
 | 🎨 Appearance | Light / Dark / System theme, accent color (ten presets + custom), font-size preset and sidebar width (`APPEARANCE_THEME`, `APPEARANCE_ACCENT_COLOR`, `APPEARANCE_FONT_SIZE` — native chrome + dashboard; width is a local preference) |
 | ℹ️ About | App name + version (About) + a Guide sub-tab |
 | ⏻ Quit (bottom) | Quits the app — main `before-quit` stops all backend services |
@@ -42,11 +49,13 @@ npm run electron:dev       # launch dashboard + autostart the whole backend
 electron/
   package.json          (electron ^33, electron-builder)
   assets/               app icon + tray template (generated — see make:icon)
-  src/main.js           main process: service manager, IPC, tray, notifications, tools
-  src/main/oauth.js     loopback Google OAuth (bind account → seat)
+  src/main.js           main process: service manager, IPC, tray + menu-bar panel, notifications, tools
+  src/main/oauth.js     loopback Google OAuth (operator remint + bind account → seat)
+  src/main/mcp-client.mjs  in-process MCP client (lazy stdio child per server)
+  src/main/mcp-policy.mjs  operator-chat tool policy (read / approve / never)
   src/preload.js        contextBridge → window.api
-  src/renderer/         index.html, tokens.js, icons.js, app.js (vanilla, no build step)
-  src/renderer/styles/  the design system — 21 stylesheets, linked in cascade order
+  src/renderer/         index.html + tray.html, tokens.js, icons.js, app.js/tray.js (vanilla, no build step)
+  src/renderer/styles/  the design system — 22 stylesheets, linked in cascade order (+ `tray.css` for the panel)
   README.md
 ```
 
@@ -56,9 +65,10 @@ electron/
 - [`electron/src/main/chat-agent.mjs`](../electron/src/main/chat-agent.mjs#L1) — operator chat agentic loop (tools + approvals)
 - [`electron/src/main/local-tools.mjs`](../electron/src/main/local-tools.mjs#L1) — operator local tools (fs/tasks/queues)
 - [`electron/src/preload.js`](../electron/src/preload.js#L7) — `contextBridge` → `window.api`
-- [`electron/src/renderer/`](../electron/src/renderer/index.html#L1) — `index.html`, `app.js` (vanilla, no build step), plus `tokens.js` (theme tokens) and `icons.js` (inline SVG set)
+- [`electron/src/renderer/`](../electron/src/renderer/index.html#L1) — `index.html`, `app.js` (vanilla, no build step), plus `tokens.js` (theme tokens) and `icons.js` (inline SVG set); the menu-bar panel is its own document, [`tray.html`](../electron/src/renderer/tray.html#L1) + `tray.js`
 - [`scripts/make-icon.mjs`](../scripts/make-icon.mjs#L1) — generates the dock/tray icons from a glyph in `icons.js`
 - [`scripts/check-renderer-wiring.mjs`](../scripts/check-renderer-wiring.mjs#L1) — dev check: every id, glyph, asset and class the renderer (and the webapp) references must actually exist
+- [`scripts/check-pkm-wiring.mjs`](../scripts/check-pkm-wiring.mjs#L1) — dev check: preload ↔ `ipcMain.handle` parity for every `pkm:*` channel, each channel documented in the IPCs docs, every `data-pkm-write` naming a real gated command, and no preload method the renderer never calls. `npm run check:wiring` runs this plus the renderer check
 
 ## Build (dmg/zip)
 
@@ -133,10 +143,16 @@ token is corrected. See `electron/docs/usage.md`.
 Operator chats mirror the VS Code agent experience — the model can **chain tools** to actually complete
 requests, with tool activity shown inline as chips and result bubbles:
 
-- **Read-only tools run automatically** — Trello/Gmail reads, web search/fetch, and scoped local reads
-  (files under operator folders, today's daily task file, the pending-queue lists).
+- **Read-only tools run automatically** — Trello/Gmail/Drive/Calendar/Sheets/WhatsApp/Netlify reads,
+  web search/fetch, and scoped local reads (files under operator folders, today's daily task file, the
+  pending-queue lists).
 - **State-changing actions ask first** — a card shows the tool and its parameters with **Approve / Deny**
-  (args editable before you approve); **Stop** aborts the loop.
+  (args editable before you approve); **Stop** aborts the loop. The read/approve split is fail-closed and
+  lives in [`electron/src/main/mcp-policy.mjs`](../electron/src/main/mcp-policy.mjs).
+- **Tool calls run through an in-process MCP client** ([`electron/src/main/mcp-client.mjs`](../electron/src/main/mcp-client.mjs)) —
+  each MCP server is spawned as a stdio child the first time one of its tools is called and reused
+  afterwards, so the chat needs no REST re-implementation of its own. Photos is excluded by design
+  (picker-only), as is `frontdesk_reply` (frontdesk channel).
 - Local file access is allowlisted to operator folders; secrets and private folders are never exposed to
   the model, and external tool results are sanitized before being fed back.
 - Tool access is **operator-channel only** — frontdesk chats stay read-only Q&A by design. Disable tools
@@ -171,8 +187,13 @@ configured in ⚙️ Config rather than hardcoded. See [`electron/docs/keys.md`]
 
 ## Notes
 
-- Tray menu (Open, Start services, Quit) + native notification when the priority queue grows.
-- Closing the window keeps the app running in the background; quit via the tray or the sidebar
+- The menu-bar item: **left**-click opens a 340×440 panel (webhook health, services running, unactioned
+  priority items, key store, then the five most recent priority items and an **Open dashboard** button);
+  **right**-click opens the menu (Open dashboard, Start services, Quit). The panel is a second renderer
+  document (`src/renderer/tray.html` + `tray.js` + `styles/tray.css`), not a mode of the dashboard.
+- A native notification is raised when the priority queue grows.
+- Closing the window **hides** it — the app keeps running in the background, and the menu-bar item, the
+  dock icon and a notification click all restore and focus it. Quit via the menu-bar menu or the sidebar
   Quit button.
 - If `electron --version` reports `Electron failed to install correctly`, reinstall:
   `cd electron && rm -rf node_modules/electron && npm install electron@33.4.11` (decline npx's

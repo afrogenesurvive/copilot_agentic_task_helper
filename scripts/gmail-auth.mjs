@@ -20,62 +20,41 @@ import path from "path";
 import { exec } from "child_process";
 import { fileURLToPath } from "url";
 import { google } from "googleapis";
+import { OPERATOR_SCOPES } from "../shared/google-scopes.mjs";
+import googleToken from "../shared/google-token.cjs";
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const ROOT = path.resolve(__dirname, "..");
 
-const SCOPES = [
-  "https://www.googleapis.com/auth/gmail.modify",
-  // Required to create/manage Gmail FILTERS (auto-label mail on arrival).
-  // Without it, users.settings.filters.* fails with 403 insufficientPermissions.
-  "https://www.googleapis.com/auth/gmail.settings.basic",
-  "https://www.googleapis.com/auth/drive",
-  "https://www.googleapis.com/auth/calendar.events.readonly",
-  "https://www.googleapis.com/auth/calendar.events",
-  // Google Photos Library API — post-2025-03-31 app-created scopes (the old
-  // 'photoslibrary' / 'photoslibrary.readonly' scopes were REMOVED by Google):
-  "https://www.googleapis.com/auth/photoslibrary.appendonly",
-  "https://www.googleapis.com/auth/photoslibrary.readonly.appcreateddata",
-  "https://www.googleapis.com/auth/photoslibrary.edit.appcreateddata",
-  // Google Photos Picker API — interactive, user-selected access to the user's
-  // REAL library photos (the only way to touch non-app-created content now).
-  // Requires a browser step where the user picks items each session.
-  "https://www.googleapis.com/auth/photospicker.mediaitems.readonly",
-];
+// One canonical list, shared with the dashboard's "Connect Google" button
+// (electron/src/main/oauth.js → connectGoogleOperator) so a token minted from
+// either route has identical capabilities. See shared/google-scopes.mjs for why
+// `calendar` (not calendar.events) and `tasks` are required.
+const SCOPES = OPERATOR_SCOPES;
 const CREDENTIALS_PATH = path.join(ROOT, "safe", "gmail-oauth2.json");
 const TOKEN_PATH = path.join(ROOT, "tokens", "gmail-token.json");
 
 /**
- * Write the new refresh token into .env (the file every MCP server reads).
- * Backs the file up first and never touches GMAIL_REFRESH_TOKEN_2.
+ * Write the new refresh token to whichever store actually WINS.
+ *
+ * `config.json` is PRIMARY and `.env` only supplies keys config.json omits
+ * (shared/config-loader.cjs), and this repo's config.json DOES define
+ * GMAIL_REFRESH_TOKEN — so the old write-`.env`-only behaviour was a silent
+ * no-op: the freshly granted token landed in a file that could never win while
+ * the stack kept using the old one. shared/google-token.cjs picks the right
+ * store and backs it up first.
  */
-function updateEnvRefreshToken(refreshToken) {
-  const ENV_PATH = path.join(ROOT, ".env");
-  if (!fs.existsSync(ENV_PATH)) {
-    console.warn(`⚠️  No .env at ${ENV_PATH} - update GMAIL_REFRESH_TOKEN manually.`);
+function persistRefreshToken(refreshToken) {
+  const saved = googleToken.saveOperatorRefreshToken(refreshToken);
+  console.log("──────────────────────────────────────────────");
+  if (!saved.ok) {
+    console.warn(`⚠️  Could not save the token automatically: ${saved.error}`);
+    console.warn("   Paste it into GMAIL_REFRESH_TOKEN by hand (.env or config.json).");
     return false;
   }
-
-  const stamp = new Date().toISOString().replace(/[:.]/g, "-");
-  const backup = `${ENV_PATH}.bak-${stamp}`;
-  fs.copyFileSync(ENV_PATH, backup);
-
-  const lines = fs.readFileSync(ENV_PATH, "utf8").split("\n");
-  let replaced = 0;
-  const out = lines.map((line) => {
-    // Anchored on '=' so the GMAIL_REFRESH_TOKEN_2 line cannot match.
-    if (/^GMAIL_REFRESH_TOKEN=/.test(line)) {
-      replaced++;
-      return `GMAIL_REFRESH_TOKEN=${refreshToken}`;
-    }
-    return line;
-  });
-  if (!replaced) out.push(`GMAIL_REFRESH_TOKEN=${refreshToken}`);
-
-  fs.writeFileSync(ENV_PATH, out.join("\n"), "utf8");
-  console.log("──────────────────────────────────────────────");
-  console.log(`✅ .env updated (GMAIL_REFRESH_TOKEN ${replaced ? "replaced" : "appended"})`);
-  console.log(`   Backup: ${path.basename(backup)}`);
+  console.log(`✅ GMAIL_REFRESH_TOKEN written to ${saved.store}`);
+  console.log(`   File:   ${saved.path}`);
+  if (saved.backup) console.log(`   Backup: ${saved.backup}`);
   console.log("   GMAIL_REFRESH_TOKEN_2 left untouched.");
   return true;
 }
@@ -153,7 +132,7 @@ async function main() {
   // Guard: never overwrite good credentials with an empty token.
   if (!refreshToken || typeof refreshToken !== "string" || refreshToken.length < 20) {
     console.error(`❌ Google did not return a refresh_token (got: ${JSON.stringify(refreshToken)}).`);
-    console.error("   .env was NOT modified - your existing credentials are intact.");
+    console.error("   No config file was modified - your existing credentials are intact.");
     console.error("   To force a fresh refresh token:");
     console.error("     1. Open https://myaccount.google.com/permissions");
     console.error("     2. Remove access for this app (Google OAuth2)");
@@ -178,8 +157,8 @@ async function main() {
   console.log(`   Token saved to: ${TOKEN_PATH}`);
   console.log("");
 
-  // Push the new token straight into .env so no secret needs copy-pasting.
-  updateEnvRefreshToken(refreshToken);
+  // Push the new token straight into the winning store so no secret needs copy-pasting.
+  persistRefreshToken(refreshToken);
   console.log("   Restart the MCP servers / webhook server to pick up the new token.");
   console.log("──────────────────────────────────────────────");
   console.log(`   Access token (short-lived): ${accessToken?.slice(0, 20)}...`);

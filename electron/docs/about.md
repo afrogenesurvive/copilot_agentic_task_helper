@@ -20,15 +20,20 @@ for every tab in the app:
 - 🔑 Key Manager
 - 🔐 Accounts & Keys
 - ⚙️ Config
+- 📈 Usage
 - 🧰 Tools
+- 💬 WhatsApp
 - 📜 Scripts
 - 💬 Chat
 - 🎨 Appearance
 - ℹ️ About (this page)
+- Notifications (from `notifications.md` — it is not in the curated order yet, so it is appended last)
 
 Pick a title from the list to view that guide. The guides are Markdown files stored under
 `electron/docs/` in the repo — add a file there (or a new `##` topic in the file you want to
-expand) and it shows up in this list.
+expand) and it shows up in this list. The order and titles above come from `GUIDE_DOCS` in
+`electron/src/renderer/app.js`; any `.md` file that is not in that list is appended
+alphabetically after it.
 
 ## Notes
 

@@ -86,6 +86,14 @@ means blocked.
 Moves ledger records whose expiry has already passed into the `expired/` archive. This only
 tidies already-expired records — it never revokes anything.
 
+### Export bundle
+
+Rebuilds `export/devmon.json` — every registry, ring and seat, **metadata only** — and re-signs it
+with the store's export authority key. This is the bundle the companion `dev_mon` app reads, so run
+it after a change that app should see. The signing keypair is created on demand the first time, so
+there is no separate “authority key” button. **Verify bundle** (see Checks) confirms the file matches
+its signature afterwards.
+
 ### 🔄 Sync blocklist
 
 Only meaningful for registries that **embed** their blocklist in their own source files (the picker
@@ -136,6 +144,20 @@ revoked.
 **Show** lists the registry's append-only action log (issue / revoke / unrevoke / expiry) with
 timestamps, newest first. This is the authoritative history of who was issued what, and when.
 
+## Checks — “will this key actually log in?”
+
+The checks below stay available whenever the CLI answers at all: a store you cannot change is still
+one you can interrogate, and the question they answer matters most when issuing. Their output shares
+one line, so each shows the result of the last check you ran.
+
+| Check | Asks | A failure usually means |
+| --- | --- | --- |
+| **Challenge…** | You paste a licence and the seat signs a fresh nonce, exactly as a login does | The key is expired, revoked, or signed by a retired ring. Stronger than Validate, which only checks the signature |
+| **Crypto self-test…** | An ECDH → AES-256-GCM round trip between the seat and the agent keypair | `FRONTDESK_AGENT_PUBKEY` (⚙️ Config and Netlify) does not match this registry's agent key — replies would fail to decrypt |
+| **Revocation check** | That a revoked seat is refused, and that registries which embed the blocklist are in sync with it | A revoked seat is still accepted, or an embedded app needs a rebuild after a Sync |
+| **Permissions** | Which key-store paths are readable by group or other | Loose file modes. **Fix** tightens them by `chmod` only — key material is never rewritten |
+| **Verify bundle** | `export/devmon.json` against its signature | The bundle was edited by hand or signed by a key that is no longer present. A missing file is reported as missing, not as invalid |
+
 ## Notes
 
 - **Operator-only.** This table lists *every* seat at once. A collaborator never sees it — each
@@ -146,6 +168,8 @@ timestamps, newest first. This is the authoritative history of who was issued wh
   Key Manager picks up a change immediately, while the webhook server / runner need a restart.
 - **Registry directories** come from the authoritative `registries/registry.json` index (`dir`
   field), so a registry whose directory differs from its id still resolves.
-- **Still CLI-only:** creating or removing a whole **registry** (`pkm registry create|remove`) needs
-  an app id and an engine choice that a dashboard click shouldn't guess, so it stays in
-  `personal_key_manager` (see its own notes), together with `pkm export` and `pkm perms`.
+- **Still CLI-only:** creating or removing a whole **registry** (`pkm registry create|remove`) needs an
+  app id and an engine choice that a dashboard click shouldn't guess, and registering a
+  revocation-verifier target (`pkm registry set-verifier --lang ts|py --path <file>`) writes paths into
+  another app's source. Both stay in `personal_key_manager` (see its own notes). Everything else has a
+  control here, including `pkm export` (Export bundle) and `pkm perms --fix` (Permissions → Fix).

@@ -1,5 +1,138 @@
 # Changelog
 
+## [0.3.2-7] — 2026-09-24
+
+### Documentation catch-up for the tray panel, the MCP client and the Google token
+
+A docs pass over the four entries below, plus the older statements they sat next to.
+
+- **"All MCP servers autostart" was no longer true.** Corrected in `copilot-instructions.md`,
+  `docs/safe/frontdesk-v2-operator.md` and `docs/safe/backend-setup.md`: the app autostarts the
+  webhook server, the agent runner and the tunnel only. `OPERATOR_AUTOSTART_MCP=true` is what
+  restores MCP autostart, and `OPERATOR_AUTOSTART=false` skips the backend entirely.
+- **The Electron docs did not mention the menu-bar at all.** `docs/electron.md` and the internal
+  copy now record the panel (left-click vs right-click), that closing the window hides it, the
+  panel's own document (`tray.html` + `tray.js` + `styles/tray.css`) and the two new main-process
+  modules (`mcp-client.mjs`, `mcp-policy.mjs`).
+- **Two sidebar rows were wrong.** The 🧰 Tools row now lists the WhatsApp and Netlify quick
+  actions, and the 📜 Scripts tab — which had no row in either Electron doc — is documented.
+- **`npm run check:wiring` is documented.** `scripts/check-pkm-wiring.mjs` (preload ↔
+  `ipcMain.handle` parity, every `pkm:*` channel present in both IPCs docs, every `data-pkm-write`
+  naming a real gated command, no unreferenced preload method) joins the renderer check in the
+  source map and the conventions list.
+- The root `README.md` gained the components and capabilities it had never listed
+  (`mcp/photos/`, `mcp/sheets/`, `mcp/web-search/`, `electron/`, plus Tasks/Sheets/Photos and the
+  operator dashboard), its OAuth step now names the real scope set, and `electron/docs/about.md`
+  lists the guides that actually exist (Usage and WhatsApp were missing from it).
+
+## [0.3.2-6] — 2026-09-24
+
+### Google tokens: a Connect button, the missing scopes, and a store that actually wins
+
+Three things made a stale Google token hard to fix from the app.
+
+- **⚙️ Config → Connect Google** remints the **operator** refresh token in place — the token every
+  MCP server and the 💬 Chat tab run on. Consent opens in the browser; the new token is saved, the
+  MCP connections are dropped and the runner/webhook are restarted, so nothing keeps serving the
+  old one. The only in-app Google button until now was on the Accounts tab, and it binds a *seat*,
+  not the operator, so "reconnect Google" there never changed what the Chat tab could reach.
+- **Tasks and calendar-list access were never requested.** The token asked for `calendar.events` /
+  `calendar.events.readonly`, which do not cover `CalendarList.list`, and nothing in the Calendar
+  API implies Tasks. `calendar_list_calendars` and `calendar_list_tasks` therefore answered 403
+  "Insufficient Permission" with no way to fix it from the app. Both scopes are now requested — one
+  consent fixes them.
+- **The CLI was writing to a file that could never win.** `config.json` is primary and `.env` only
+  supplies keys it omits, and this repo's `config.json` defines `GMAIL_REFRESH_TOKEN`. So
+  `npm run setup:gmail-auth` updated `.env`, changed nothing, and reported success. Both the CLI
+  and the new button now write whichever store wins, back it up first and say which one they used.
+
+The CLI, the dashboard button and the per-seat flow now share one scope definition
+(`shared/google-scopes.mjs`), so they cannot drift into minting tokens with different capabilities.
+
+## [0.3.2-5] — 2026-09-24
+
+### The operator chat speaks MCP, and Netlify joins the app
+
+The Chat tab could reach Trello, Gmail, Web Search and WhatsApp — nothing else. Tool calls ran
+through the agent runner's in-process executor, so every new server meant a third copy of its REST
+logic. Both problems are gone.
+
+- **An in-process MCP client** (`electron/src/main/mcp-client.mjs`) gives the operator chat every
+  configured MCP server: Trello, Gmail, **Drive, Calendar, Sheets**, Web Search, WhatsApp and
+  **Netlify**. A server is spawned as a stdio child the first time one of its tools is called, then
+  reused until it exits or goes idle. The advertised tool list still comes from
+  `shared/tool-manifest.js` — listing tools costs no processes.
+- **Read vs approve moved into `electron/src/main/mcp-policy.mjs`** and is fail-closed: anything not
+  listed as read-only raises the Approve/Deny card. `drive_delete_file` and `drive_move_file`, which
+  the autonomous runner refuses outright, are now available to the operator behind a card.
+- **Photos is deliberately excluded** — picker-only, needs a human to open a URI, and its download
+  tool writes to a caller-chosen directory. So is `frontdesk_reply`, which belongs to the frontdesk
+  channel.
+- **Netlify is a managed service**: `mcp:netlify` appears on the Dashboard, and Tools gains a
+  **Netlify** panel (Sites / Env vars / Deploys) that runs through the MCP client.
+- Netlify's 12 tool schemas moved out of `mcp/netlify/index.js` into `shared/tool-manifest.js`, so
+  the server, the Tools-tab manifest and the chat's advertised tools cannot drift.
+- The MCP servers are **no longer autostarted** — the chat's client owns its own children, and
+  starting both would leave two processes per server. `OPERATOR_AUTOSTART_MCP=true` restores the old
+  behaviour; `MCP_CLIENT_IDLE_MS` (default 10 minutes) controls how long an idle child is kept.
+
+## [0.3.2-4] — 2026-09-24
+
+### The menu-bar item opens a panel, not just a menu
+
+Answering "is the stack actually alive?" meant opening the dashboard. The menu-bar icon now opens a panel
+instead, carrying the same four values as the status bar — webhook health, services running, unactioned
+priority items, key store — plus the five most recent priority items, each with its queue number, source and
+arrival time. **Open dashboard** sits at the bottom, and the health pill opens it too.
+
+The menu itself is unchanged, it has just moved: **left**-click is the panel, **right**-click is the menu
+(Open dashboard / Start webhook server / Start agent runner / Quit). That split is not cosmetic — on macOS a
+menu-bar item that owns a context menu hands every left-click to that menu, so a panel and a menu cannot both
+live on the left button.
+
+The panel is 340×440, positioned under its icon and clamped to the screen so a crowded menu bar cannot push
+it off the edge. Escape, clicking elsewhere, or opening the dashboard all dismiss it. It is not resizable, and
+it never appears in the window list you cycle through with Cmd+`.
+
+### Closing the dashboard window left the tray item pointing at nothing
+
+Closing the window destroyed it, and every route back then failed **silently**: the tray item checked for a
+window that no longer existed and did nothing, and the dock icon did nothing because the "no windows open"
+case was only handled at startup. Closing now hides the window instead, and all four ways back in — the
+menu-bar panel, the right-click menu, the dock icon, a queue notification — go through one path that rebuilds
+the window when it is gone, un-minimises it when it is not, and takes focus. That last part is what makes it
+feel right: a menu-bar click does not activate an application on macOS, so without it the window came back
+behind whatever you were using.
+
+Closing the window still leaves the stack running, as before — quit from the menu or the sidebar.
+
+## [0.3.2-3] — 2026-09-24
+
+### Key Manager: it declines in advance, and it can answer "will this key log in?"
+
+The Key Manager drives a separate key store that owns every licence, key ring and revocation record; this
+console is a client of it. This work was already in the app — it shipped alongside the entries below — but was
+never written up, so it is recorded here, together with the one action that was missing.
+
+**It refuses rather than half-working.** Every action the console can take is declared up front, and the key
+store is asked whether it can support each one *before* anything runs. When it cannot — the store's CLI is
+missing or not answering, the registry has no master ring yet, or the revocation list cannot be read — the
+affected controls are disabled and say why, and the request is refused even if it is attempted anyway. A
+control is unavailable for its own reason rather than the whole tab going read-only.
+
+**Per-seat detail**, so one seat's key id, expiry, issue date and remaining days can be read without opening
+the ledger file.
+
+**A Verify row** for the questions that matter when issuing a licence: does this key actually complete a login
+(not merely carry a valid signature), do the encryption keys really round-trip, is a revoked seat still refused
+and do the apps that embed the revocation list agree with it, are the key files readable by anyone but you, and
+does the exported bundle still match its signature. These checks stay available whenever the store can be
+reached at all — a store you cannot change is still one you can interrogate.
+
+**Export bundle.** The bundle a companion app reads was being generated but could not be produced from the
+console at all. It can now, next to the other store actions, and it reports where it wrote and which key
+signed it. Running the bundle check afterwards confirms the two agree.
+
 ## [0.3.2-2] — 2026-09-24
 
 ### A notification centre for the operator console

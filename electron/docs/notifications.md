@@ -3,9 +3,10 @@
 An in-app feed of everything the operator should know about, with a red dot on the
 sidebar item responsible for it. Opened from **Notifications** in the sidebar.
 
-This is deliberately **in-app only**: no OS notifications, no tray badge. The tray
-already reports the priority queue (see `electron/src/main.js` → `checkPriority`),
-and the transient in-renderer channel is the toast stack
+This is deliberately **in-app only**: no OS notifications, no tray badge. The menu-bar item reports the
+priority queue instead — its left-click panel shows the pending count and the five most recent items
+(`electron/src/renderer/tray.js`), and `checkPriority` in `electron/src/main.js` raises a native
+notification when the queue grows. The transient in-renderer channel is the toast stack
 (`renderer/styles/components/_notifications.css`).
 
 ## What raises a notification

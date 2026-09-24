@@ -364,6 +364,7 @@
     "mcp:photos": "image",
     "mcp:web-search": "search",
     "mcp:whatsapp": "chat",
+    "mcp:netlify": "upload",
   };
   const svcIcon = (name) => SVC_ICONS[name] || "tools";
 
@@ -1916,6 +1917,36 @@
     refreshLicenses();
   }
 
+  /**
+   * Rebuild and re-sign the public export bundle (`pkm export`).
+   *
+   * The counterpart to the read-only **Verify bundle** check: that one proves an
+   * existing bundle matches its signature, this one writes a fresh pair
+   * (`export/devmon.json` + `.sig`). It is metadata only — registries, rings, seat
+   * status and counts, never a licence or key material — so it is safe to hand to a
+   * consumer app, which is exactly what dev_mon does.
+   *
+   * A write, so it is gated like every other mutation. There is deliberately no
+   * separate "authority key" action: the CLI's `signBundle()` calls
+   * `ensureAuthority()` itself, so the signing keypair is created on demand.
+   */
+  async function exportBundle() {
+    if (gatedWrite("exportBundle")) return;
+    const res = await withLoading("Exporting the bundle…", () => api.pkmExportBundle(), { context: "pkm export" });
+    if (!res) return;
+    if (!res.ok) return toast(`⚠️ Export failed: ${res.error}`, "err");
+    const d = res.data || {};
+    const t = d.totals || {};
+    const counts = typeof t.registries === "number" ? ` — ${t.registries} registry(ies), ${t.seats ?? 0} seat(s)` : "";
+    toast(
+      `Bundle exported${counts} — ${d.bundleFile || "export/devmon.json"} re-signed${d.authorityKid ? ` (kid ${d.authorityKid})` : ""}.`,
+      "ok",
+    );
+    // The export can also have created the authority keypair on the way through, so
+    // re-read the store to keep the status header honest.
+    refreshLicenses();
+  }
+
   /** Re-probe the store on demand (bypasses main's cached CLI liveness check). */
   async function recheckStore() {
     const c = await loadCaps({ fresh: true });
@@ -1934,6 +1965,7 @@
   $("pkm-bundle-check").addEventListener("click", checkBundle);
   $("pkm-refresh").addEventListener("click", () => guarded("licenses", refreshLicenses));
   $("pkm-archive").addEventListener("click", archiveExpiredSeats);
+  $("pkm-export").addEventListener("click", exportBundle);
   $("pkm-validate-open").addEventListener("click", validateLicense);
   $("pkm-audit-load").addEventListener("click", () => guarded("audit", loadAudit));
   // Registry switch — every panel below is scoped to the selected registry, so
@@ -2062,6 +2094,7 @@
     { prefix: "sheets_", label: "Sheets" },
     { prefix: "frontdesk_", label: "Frontdesk" },
     { prefix: "whatsapp_", label: "WhatsApp" },
+    { prefix: "netlify_", label: "Netlify" },
   ];
 
   async function refreshTools() {
@@ -2174,6 +2207,42 @@
   }
   document.querySelector('[data-act="wa-status"]').addEventListener("click", () => runWhatsapp("status"));
   document.querySelector('[data-act="wa-numbers"]').addEventListener("click", () => runWhatsapp("list_numbers"));
+
+  // Netlify quick actions. Unlike the Trello/Gmail/WhatsApp panels above, these do
+  // NOT hit the REST API from the main process — they run through the MCP client
+  // (mcp/netlify/index.js), so a working panel also proves the client can spawn
+  // and talk to a server. Requires NETLIFY_AUTH_TOKEN in .env / config.json.
+  const netlifyLine = (r) => {
+    if (r.url) return `${r.name || r.id} — ${r.url}`;
+    if (r.state) return [r.state, r.branch, r.commit_ref].filter(Boolean).join(" · ");
+    if (r.key) return r.key;
+    return JSON.stringify(r).slice(0, 160);
+  };
+  async function runNetlify(action, params) {
+    const res = await withLoading("Calling the Netlify API…", () => api.netlify(action, params), {
+      context: `netlify ${action}`,
+    });
+    const box = $("netlify-result");
+    if (!res) return;
+    if (!res.ok) {
+      box.innerHTML = `<div class="empty">Error: ${esc(res.error)}</div>`;
+      return;
+    }
+    const data = Array.isArray(res.result) ? res.result : [res.result];
+    box.innerHTML =
+      data
+        .slice(0, 20)
+        .map((r) => (r && typeof r === "object" ? `• <code>${esc(netlifyLine(r))}</code>` : `• ${esc(String(r))}`))
+        .join("<br/>") || "(empty)";
+  }
+  document.querySelector('[data-act="netlify-sites"]').addEventListener("click", () => runNetlify("list_sites"));
+  document.querySelector('[data-act="netlify-deploys"]').addEventListener("click", () => runNetlify("list_deploys"));
+  document.querySelector('[data-act="netlify-env"]').addEventListener("click", async () => {
+    const key = await askText({ title: "Netlify env", label: "Variable name (leave blank to list them all)" });
+    if (key === null) return;
+    const name = String(key || "").trim();
+    runNetlify(name ? "get_env" : "list_env", name ? { key: name } : {});
+  });
 
   // ── Config (config.json) — sectioned field editor with source annotations ──
   const escAttr = (s) => esc(s).replace(/"/g, "&quot;");
@@ -2319,6 +2388,9 @@
     dirty: new Set(),
     raw: false,
     filter: "",
+    // Which Google account the OPERATOR refresh token belongs to (google:status),
+    // shown above the Gmail / Google fields next to the remint button.
+    google: { connected: false, user: null },
     // A stored tab can outlive the section it names, so it is validated on read —
     // otherwise the panel would render nothing at all and say nothing about why.
     tab: (() => {
@@ -2437,9 +2509,34 @@
     return `${pick ? configFieldHTML(pick) : ""}<div class="provider-panel">${rows.join("")}</div>`;
   }
 
+  /**
+   * Inner HTML for the Gmail / Google section: a one-click remint of the OPERATOR
+   * refresh token, above the fields that hold it.
+   *
+   * This is the in-app equivalent of `npm run setup:gmail-auth` and it requests the
+   * identical scope set (shared/google-scopes.mjs), so re-consenting here cannot
+   * leave the token weaker than the CLI's would be. Worth knowing why it exists:
+   * the CLI only ever wrote `.env`, and config.json silently overrides that, so
+   * "I re-ran the auth script and nothing changed" was the normal outcome. Main
+   * writes whichever store wins and reports it back in `store`.
+   */
+  function googleOperatorBodyHTML() {
+    const g = configState.google || { connected: false, user: null };
+    const who = g.connected ? g.user || "connected" : "no refresh token set";
+    return (
+      `<div class="provider-summary"><span class="provider-badge">Operator token</span>` +
+      `<span class="provider-hint">Used by every MCP server and the operator chat — ${esc(who)}</span></div>` +
+      `<div><button id="google-connect">Connect Google</button>` +
+      `<div class="provider-hint" id="google-connect-status">Opens the Google consent screen to mint a new refresh token ` +
+      `(Gmail · Drive · Calendar · Tasks · Photos), then drops the MCP connections and restarts the services holding the old one.</div></div>` +
+      configSectionFields("Gmail / Google").map(configFieldHTML).join("")
+    );
+  }
+
   /** Inner HTML for one section — the fields themselves, with no wrapper. */
   function configBodyHTML(name) {
     if (name === "LLM Provider") return llmProviderBodyHTML();
+    if (name === "Gmail / Google") return googleOperatorBodyHTML();
     return configSectionFields(name).map(configFieldHTML).join("");
   }
 
@@ -2569,12 +2666,43 @@
         b.textContent = show ? "🙈" : "👁";
       }),
     );
+    const googleBtn = $("google-connect");
+    if (googleBtn) googleBtn.addEventListener("click", runGoogleConnect);
     renderConfigMeta();
   }
 
+  /**
+   * Remint the operator Google token (main: google:connect).
+   *
+   * The browser flow means this can sit for minutes, so the loading overlay carries
+   * a slowHint. On success the form is re-rendered (so the account shown updates);
+   * on failure the error is written into the status line AND configMsg, because a
+   * silent no-op here would look exactly like a button that does nothing.
+   */
+  async function runGoogleConnect() {
+    const res = await withLoading("Opening the Google consent screen…", () => api.googleConnect(), {
+      context: "google connect",
+      slowHint: "Approve access in the browser window, then come back to this tab…",
+    });
+    if (!res) return;
+    if (!res.ok) {
+      const note = $("google-connect-status");
+      if (note) note.textContent = `⚠️ ${res.error}`;
+      configMsg(`Google connect failed: ${res.error}`, true);
+      return;
+    }
+    await refreshConfig();
+    const parts = [`token saved to ${res.store}`];
+    if (res.backup) parts.push(`backup ${res.backup}`);
+    if (res.restarted && res.restarted.length) parts.push(`restarted ${res.restarted.join(" + ")}`);
+    if (res.closedMcp) parts.push(`${res.closedMcp} MCP connection(s) dropped`);
+    configMsg(`Google token updated for ${res.user || "the operator"} — ${parts.join(", ")}.`, false);
+  }
+
   async function refreshConfig() {
-    const c = await api.configWithSources();
+    const [c, g] = await Promise.all([api.configWithSources(), api.googleStatus().catch(() => null)]);
     const status = $("config-status");
+    configState.google = g && g.ok !== false ? { connected: !!g.connected, user: g.user || null } : { connected: false, user: null };
     configState.values = {};
     configState.dirty = new Set();
     if (c && c.ok !== false && c.present !== undefined) {

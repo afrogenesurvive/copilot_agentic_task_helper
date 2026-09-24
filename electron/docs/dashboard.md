@@ -42,9 +42,13 @@ local services this app manages, with live output for each one.
 - **Agent runner** — the autonomous runner that processes priority queue items and daily tasks.
 - **Cloudflare tunnel** — only appears as "configured" when `CLOUDFLARE_TUNNEL_TOKEN` or
   `CLOUDFLARE_TUNNEL_ID` is set in config.
-- **MCP `<name>`** — `trello`, `gmail`, `drive`, `calendar`, `sheets`, `web-search`, `whatsapp`.
-  Each starts the matching MCP server with the credentials from your current config. The
-  **MCP whatsapp** card additionally shows the active number and connection status (see above).
+- **MCP `<name>`** — `trello`, `gmail`, `drive`, `calendar`, `photos`, `sheets`, `web-search`,
+  `whatsapp`, `netlify`. Each starts the matching MCP server with the credentials from your current
+  config. The **MCP whatsapp** card additionally shows the active number and connection status (see
+  above). These are **not** autostarted: the operator chat's MCP client spawns its own child per
+  server on first use (see chat.md), so starting them here as well would leave two processes for
+  every server the chat touches. Start one manually when you want to watch its log or exercise it
+  on its own; set `OPERATOR_AUTOSTART_MCP=true` to get the old autostart behaviour back.
 - **Per-seat MCP instances** — when you spawn MCPs for a seat from the 🔐 Accounts tab, their
   services also show up here so you can start/stop and inspect them.
 

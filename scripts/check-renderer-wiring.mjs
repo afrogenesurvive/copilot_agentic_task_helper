@@ -24,6 +24,17 @@ const RENDERER = path.join(REPO, "electron", "src", "renderer");
 const appJs = fs.readFileSync(path.join(RENDERER, "app.js"), "utf8");
 const html = fs.readFileSync(path.join(RENDERER, "index.html"), "utf8");
 const iconsJs = fs.readFileSync(path.join(RENDERER, "icons.js"), "utf8");
+// The menu-bar popover is a SECOND renderer document (tray.html + tray.js), loaded
+// with loadFile() exactly like the dashboard. It gets the same checks, because it
+// has the same failure mode: a hand-written id in the markup that the script
+// looks up under a slightly different name renders nothing and says nothing.
+// The two documents are checked as one set — both share styles/** and the glyph
+// set, so a class or glyph introduced for the panel is legitimately "declared"
+// from either file.
+const trayHtml = fs.readFileSync(path.join(RENDERER, "tray.html"), "utf8");
+const trayJs = fs.readFileSync(path.join(RENDERER, "tray.js"), "utf8");
+const htmlAll = `${html}\n${trayHtml}`;
+const jsAll = `${appJs}\n${trayJs}`;
 
 /** Collect all CSS across a directory tree. */
 function readCssTree(dir) {
@@ -71,24 +82,24 @@ const css = readCssTree(path.join(RENDERER, "styles"));
 
 console.log("\n══ Electron renderer ══");
 
-// ── 1. ids app.js looks up via $("…") ────────────────────────────────────────
+// ── 1. ids the renderers look up via $("…") ─────────────────────────────────
 // Some ids are created by app.js itself inside its own template strings (e.g. the
-// service log pane), so "not in index.html" is only a failure if app.js does not
-// declare it either.
-const ids = new Set([...appJs.matchAll(/\$\("([A-Za-z0-9_-]+)"\)/g)].map((m) => m[1]));
+// service log pane), so "not in the HTML" is only a failure if no script declares
+// it either.
+const ids = new Set([...jsAll.matchAll(/\$\("([A-Za-z0-9_-]+)"\)/g)].map((m) => m[1]));
 const missingIds = [...ids].filter(
-  (id) => !html.includes(`id="${id}"`) && !appJs.includes(`id="${id}"`),
+  (id) => !htmlAll.includes(`id="${id}"`) && !jsAll.includes(`id="${id}"`),
 );
-console.log(`\n[1] ids referenced by app.js: ${ids.size}`);
-if (missingIds.length) fail(`never defined in index.html or app.js: ${missingIds.join(", ")}`);
+console.log(`\n[1] ids referenced by the renderers: ${ids.size}`);
+if (missingIds.length) fail(`never defined in the markup or by a script: ${missingIds.join(", ")}`);
 else console.log("  ok   all defined");
 
 // ── 2. icons used by name must exist in the glyph set ─────────────────────────
 const iconNames = new Set([...iconsJs.matchAll(/^\s{4}"?([a-z-]+)"?:\s*"/gm)].map((m) => m[1]));
 const usedIcons = new Set([
-  ...[...html.matchAll(/data-icon="([a-z-]+)"/g)].map((m) => m[1]),
-  ...[...appJs.matchAll(/Icons\.svg\("([a-z-]+)"/g)].map((m) => m[1]),
-  ...[...appJs.matchAll(/iconLabel\("([a-z-]+)"/g)].map((m) => m[1]),
+  ...[...htmlAll.matchAll(/data-icon="([a-z-]+)"/g)].map((m) => m[1]),
+  ...[...jsAll.matchAll(/Icons\.svg\("([a-z-]+)"/g)].map((m) => m[1]),
+  ...[...jsAll.matchAll(/iconLabel\("([a-z-]+)"/g)].map((m) => m[1]),
 ]);
 const missingIcons = [...usedIcons].filter((n) => !iconNames.has(n));
 console.log(`\n[2] glyph names used: ${usedIcons.size} (set has ${iconNames.size})`);
@@ -96,20 +107,20 @@ if (missingIcons.length) fail(`no such glyph: ${missingIcons.join(", ")}`);
 else console.log("  ok   every referenced glyph exists");
 
 // ── 3. every <link>/<script> resolves ────────────────────────────────────────
-console.log("\n[3] assets referenced by index.html");
+console.log("\n[3] assets referenced by the renderer documents");
 const before = failures;
 for (const ref of [
-  ...[...html.matchAll(/href="([^"]+\.css)"/g)].map((m) => m[1]),
-  ...[...html.matchAll(/src="([^"]+\.js)"/g)].map((m) => m[1]),
+  ...[...htmlAll.matchAll(/href="([^"]+\.css)"/g)].map((m) => m[1]),
+  ...[...htmlAll.matchAll(/src="([^"]+\.js)"/g)].map((m) => m[1]),
 ]) {
   if (!fs.existsSync(path.join(RENDERER, ref))) fail(`missing file: ${ref}`);
 }
 if (failures === before) console.log("  ok   all present");
 
 // ── 4. classes must be styled ────────────────────────────────────────────────
-const htmlClasses = declaredClasses(html);
+const htmlClasses = declaredClasses(htmlAll);
 const htmlUnstyled = [...htmlClasses].filter((c) => !styledIn(css, c));
-console.log(`\n[4] classes declared in index.html: ${htmlClasses.size}`);
+console.log(`\n[4] classes declared in the renderer documents: ${htmlClasses.size}`);
 if (htmlUnstyled.length) fail(`unstyled: ${htmlUnstyled.join(", ")}`);
 else console.log("  ok   all styled");
 
