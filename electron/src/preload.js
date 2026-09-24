@@ -28,17 +28,36 @@ contextBridge.exposeInMainWorld("api", {
     return () => ipcRenderer.removeListener("logs:entry", listener);
   },
   sessions: () => ipcRenderer.invoke("frontdesk:sessions"),
+  // Notification centre (feed + read state live in main; see main/notifications.js)
+  notificationsList: (opts) => ipcRenderer.invoke("notifications:list", opts),
+  // Acknowledge: { source } clears one dot, { all: true } clears every dot
+  notificationsRead: (target) => ipcRenderer.invoke("notifications:read", target),
+  notificationsClear: () => ipcRenderer.invoke("notifications:clear"),
+  onNotification: (cb) => {
+    const listener = (_e, entry) => cb(entry);
+    ipcRenderer.on("notifications:new", listener);
+    return () => ipcRenderer.removeListener("notifications:new", listener);
+  },
   // Key Manager — pkm-backed; all licensing logic/data lives in personal_key_manager.
   // `registry` selects which registry a command applies to (PKM_REGISTRY when omitted).
+  //
+  // Writes are gated in main (electron/src/main/key-manager.mjs): a call can be
+  // refused before it spawns anything when the store cannot support it, so a
+  // disabled control here is a hint, not the boundary.
+  pkmCapabilities: (registry) => ipcRenderer.invoke("pkm:capabilities", registry),
   pkmStatus: (registry) => ipcRenderer.invoke("pkm:status", registry),
   pkmRegistries: () => ipcRenderer.invoke("pkm:registries"),
   pkmList: (registry, days) => ipcRenderer.invoke("pkm:list", registry, days),
+  pkmSeatInfo: (registry, sub) => ipcRenderer.invoke("pkm:seatInfo", registry, sub),
   pkmIssue: (registry, sub, exp) => ipcRenderer.invoke("pkm:issue", registry, sub, exp),
   pkmRevoke: (registry, sub, reason) => ipcRenderer.invoke("pkm:revoke", registry, sub, reason),
   pkmUnrevoke: (registry, sub) => ipcRenderer.invoke("pkm:unrevoke", registry, sub),
   pkmArchive: (registry) => ipcRenderer.invoke("pkm:archive", registry),
   pkmAudit: (registry) => ipcRenderer.invoke("pkm:audit", registry),
   pkmValidate: (registry, key) => ipcRenderer.invoke("pkm:validate", registry, key),
+  pkmChallenge: (registry, key) => ipcRenderer.invoke("pkm:challenge", registry, key),
+  pkmSelfTest: (registry, key) => ipcRenderer.invoke("pkm:selfTest", registry, key),
+  pkmCheckRevocation: (registry) => ipcRenderer.invoke("pkm:checkRevocation", registry),
   // Ring management + embedded-blocklist sync (consumer apps that embed it)
   pkmRings: (registry) => ipcRenderer.invoke("pkm:rings", registry),
   pkmRingCreate: (registry, kid) => ipcRenderer.invoke("pkm:ringCreate", registry, kid),
@@ -46,6 +65,11 @@ contextBridge.exposeInMainWorld("api", {
   pkmAgentKey: (registry) => ipcRenderer.invoke("pkm:agentKey", registry),
   pkmSetDefaultKid: (registry, kid) => ipcRenderer.invoke("pkm:setDefaultKid", registry, kid),
   pkmSyncRevocation: (registry) => ipcRenderer.invoke("pkm:syncRevocation", registry),
+  // Store hygiene + the signed export bundle dev_mon reads
+  pkmPerms: () => ipcRenderer.invoke("pkm:perms"),
+  pkmPermsFix: () => ipcRenderer.invoke("pkm:permsFix"),
+  pkmExportBundle: () => ipcRenderer.invoke("pkm:exportBundle"),
+  pkmVerifyBundle: () => ipcRenderer.invoke("pkm:verifyBundle"),
   // Config
   config: () => ipcRenderer.invoke("config:get"),
   configWithSources: () => ipcRenderer.invoke("config:getWithSources"),

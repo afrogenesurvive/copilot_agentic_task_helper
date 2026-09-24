@@ -28,6 +28,9 @@
   const PATHS = {
     // ── navigation ──
     dashboard: "M3 3h7v7H3zM14 3h7v7h-7zM3 14h7v7H3zM14 14h7v7h-7z",
+    // Notification centre: the bell (and its clapper) — see the sidebar dot, which
+    // is drawn in CSS rather than here so it can be coloured by state.
+    bell: "M6 8a6 6 0 0 1 12 0c0 7 3 9 3 9H3s3-2 3-9M10.3 21a1.94 1.94 0 0 0 3.4 0",
     // An open tray: work arriving that has not been dealt with yet.
     queue: "M3 12h4l1.5 2.5h7L17 12h4M5.5 4h13l2.5 8v7H3v-7z",
     logs: "M6 3h7l5 5v13H6zM13 3v5h5M9 10h2M9 13h6M9 16h6",
@@ -67,6 +70,21 @@
     download: "M12 5v14M6 13l6 6 6-6",
     upload: "M12 19V5M6 11l6-6 6 6",
     print: "M7 9V3h10v6M7 18H5v-6h14v6h-2M7 14h10v7H7z",
+
+    // ── services (Dashboard rail) ──
+    // One glyph per local service. The rail collapses to icon-only, so each service
+    // needs an identity that survives the label disappearing — a column of identical
+    // status dots told the operator nothing about which row was which.
+    // `webhook` is a request arriving at a door, `agent` a robot head (no mouth), the
+    // rest are the platform each MCP server talks to.
+    webhook: "M14 4h6v16h-6M4 12h9M13 12l-3.5-3.5M13 12l-3.5 3.5",
+    agent: "M12 4v2M8 6h8v10H8zM10 9.5v.5M14 9.5v.5M10 13h4",
+    cloud: "M7.5 18a4 4 0 0 1 .5-8 5.5 5.5 0 0 1 10.4 1.6A3.5 3.5 0 0 1 17.5 18z",
+    mail: "M3 6h18v12H3zM3.5 7l8.5 6 8.5-6",
+    board: "M4 5h5v11H4zM15 5h5v7h-5zM4 19h16",
+    calendar: "M4 6h16v14H4zM4 10h16M8 3v4M16 3v4",
+    table: "M4 5h16v14H4zM4 10h16M10 10v9",
+    image: "M4 5h16v14H4zM8.5 10.5a1.5 1.5 0 1 0 0-.1M4.5 16.5L9 12l5 5",
 
     // ── structure ──
     "chevron-right": "M9 6l6 6-6 6",

@@ -17,7 +17,7 @@ import fs from "fs";
 import path from "path";
 import { fileURLToPath } from "url";
 import { log } from "../../shared/logger.mjs";
-import { callChat, getModelName, getProvider } from "../../shared/model-provider.mjs";
+import { callChatHistory, getModelName, getProvider } from "../../shared/model-provider.mjs";
 import { sanitizeObject } from "../../scripts/sanitize.stub.mjs";
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
@@ -136,17 +136,16 @@ export function buildEventContext(event) {
 }
 
 /**
- * Call the configured LLM with an event or task context and tool definitions.
- * Delegates to shared/model-provider.mjs for the provider-specific request.
- * @param {object|string} context — A queue event object OR a plain context string
- * @param {Array} toolDefs — Tool definitions from shared/tool-manifest.js
- * @returns {object|null} { name: string, arguments: object } or null if no tool call
+ * The runner's system prompt.
+ *
+ * The frontdesk contract is stated twice on purpose: the seat comes from the
+ * event and never from the model, so `sub` is not offered as a parameter at all
+ * (removed from `frontdeskTools` in shared/tool-manifest.js) — the model used to
+ * invent one (`"frontdesk"`, `"frontdesk_user"`, even the question text) and the
+ * reply endpoint rejected it with unknown_seat.
  */
-export async function callModel(context, toolDefs) {
-  // Support both event objects and plain context strings
-  const eventContext = typeof context === "string" ? context : buildEventContext(context);
-
-  const systemMessage = [
+function buildSystemMessage() {
+  return [
     "You are an autonomous business workflow agent. Your job is to process incoming events",
     "and decide what action to take. You have a full set of tools available (Trello, Gmail, Web Search).",
     "",
@@ -158,26 +157,54 @@ export async function callModel(context, toolDefs) {
     "- Trello: trello_add_comment, trello_get_card, trello_list_cards, trello_get_lists, trello_get_card_actions, trello_get_checklists, trello_create_card, trello_update_card, trello_create_checklist, trello_add_checklist_item",
     "- Gmail: gmail_list_messages, gmail_get_message, gmail_send_message",
     "- Web: web_search (search the web), web_fetch (fetch a URL and read content)",
-    "- Frontdesk: frontdesk_reply (send an encrypted reply to a chat user — pass text only)",
+    "- Frontdesk: frontdesk_reply (send an encrypted reply to a chat user — text only)",
     "",
     "Rules:",
     "- Choose ONE tool and provide ALL required parameters",
     "- If the event is a frontdesk message, reply helpfully but don't make up information",
-    "- For frontdesk_message events (source: frontdesk), answer the user with frontdesk_reply(text=<your answer>). Do NOT pass a 'sub' — the runner supplies the correct seat from the event; any value you invent will be rejected or overridden.",
+    "- For frontdesk_message events, the user gets an answer ONLY when you call frontdesk_reply. A read tool (gmail_list_messages, trello_get_lists, web_search, …) is a step towards that answer, not the answer: its result is fed back to you, so read first and then call frontdesk_reply with what you found.",
+    "- Do not read more than twice before replying. If you already have enough to answer, or the reads did not turn up the thing you were looking for, reply anyway and say what you found.",
+    "- frontdesk_reply takes text only. Never pass a 'sub' — the runner supplies the correct seat from the event.",
+    "- If a tool fails, try a different tool that could answer the question; if none can, call frontdesk_reply explaining that briefly rather than retrying the same call.",
     "- If you're unsure, use trello_add_comment to ask for clarification",
     "- Never make up card IDs, list IDs, or other identifiers",
     "- Respond only with a tool call — no explanatory text",
   ].join("\n");
+}
+
+/**
+ * Call the configured LLM with an event or task context and tool definitions.
+ * Delegates to shared/model-provider.mjs for the provider-specific request.
+ *
+ * @param {object|string} context — A queue event object OR a plain context string
+ * @param {Array} toolDefs — Tool definitions from shared/tool-manifest.js
+ * @param {object} [opts]
+ * @param {Array}  [opts.history] — provider messages from earlier steps of the
+ *   same event (see `toolStepMessages`), so a read tool's result — or its error —
+ *   can be fed back for another turn.
+ * @param {string} [opts.step] — usage-attribution label for this turn
+ * @returns {object|null} { name, arguments, reply, reasoning_content, usage },
+ *   or null when the model chose no tool call.
+ * @throws {Error} with `code === "MODEL_ERROR"` when the provider call itself
+ *   fails. Callers MUST tell this apart from `null`: an LLM outage is not the same
+ *   event as "nothing to do", and treating it as the latter used to mark the
+ *   user's message as processed and drop it (index.js step 1).
+ */
+export async function callModel(context, toolDefs, opts = {}) {
+  // Support both event objects and plain context strings
+  const eventContext = typeof context === "string" ? context : buildEventContext(context);
+  const history = Array.isArray(opts.history) ? opts.history : [];
+  const systemMessage = buildSystemMessage();
 
   // Log the full prompt for audit when AGENT_RUNNER_VERBOSE=true
   logPrompt(systemMessage, eventContext, toolDefs);
 
   try {
-    const { toolCall, reply } = await callChat({
+    const { toolCall, reply, usage, reasoning_content } = await callChatHistory({
       systemMessage,
-      userContext: eventContext,
+      messages: [{ role: "user", content: eventContext }, ...history],
       tools: toolDefs,
-      meta: { source: "agent-runner", step: "decision" },
+      meta: { source: "agent-runner", step: opts.step || "decision" },
     });
 
     if (!toolCall) {
@@ -187,9 +214,42 @@ export async function callModel(context, toolDefs) {
     }
 
     console.log(`   🤖 [MODEL] ${getProvider()}/${getModelName()} chose: ${toolCall.name}(${JSON.stringify(toolCall.arguments)})`);
-    return { name: toolCall.name, arguments: toolCall.arguments };
+    return { name: toolCall.name, arguments: toolCall.arguments, reply: reply || "", reasoning_content, usage };
   } catch (err) {
     console.error(`   ❌ [MODEL] API call failed: ${err.message}`);
-    return null;
+    const wrapped = new Error(err.message || "model call failed");
+    wrapped.code = "MODEL_ERROR";
+    throw wrapped;
   }
+}
+
+/**
+ * Provider-shaped history entries for one completed tool step.
+ *
+ * Lives next to the prompt because of the rule it encodes: on DeepSeek every
+ * replayed assistant turn must carry `reasoning_content` or the API 400s (the
+ * operator chat hit the same thing — see `toProviderMessages` in
+ * electron/src/main/chat-agent.mjs). An empty string is a valid value, so this
+ * only omits the field when the provider never sent one.
+ *
+ * The call id is generated locally: the shared provider returns only
+ * `{name, arguments}`, and `tool_calls[].id` / `tool_call_id` merely have to be
+ * consistent with each other inside the history we resend.
+ */
+export function toolStepMessages(decision, toolText, callId) {
+  return [
+    {
+      role: "assistant",
+      content: decision.reply || "",
+      tool_calls: [
+        {
+          id: callId,
+          type: "function",
+          function: { name: decision.name, arguments: JSON.stringify(decision.arguments ?? {}) },
+        },
+      ],
+      ...(decision.reasoning_content != null ? { reasoning_content: decision.reasoning_content } : {}),
+    },
+    { role: "tool", content: String(toolText ?? ""), tool_call_id: callId },
+  ];
 }

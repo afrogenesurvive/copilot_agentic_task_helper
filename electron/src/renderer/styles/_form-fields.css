@@ -223,6 +223,29 @@ tbody tr:hover {
   font-variant-numeric: tabular-nums;
 }
 
+/* ── Sortable column heading ──
+ *
+ * The label is a button so the whole cell is a hit target and the current sort is
+ * shown with a caret. `th` supplies the base look, so this only strips the button
+ * chrome. Used by the Sessions table (and any table that gains sorting).
+ */
+.s-sort {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  padding: 0;
+  border: 0;
+  background: transparent;
+  color: inherit;
+  font: inherit;
+  cursor: pointer;
+}
+
+.s-sort:hover,
+.s-sort.is-active {
+  color: var(--accent);
+}
+
 /* ── Code / log blocks ────────────────────────────────────────────────────── */
 
 pre {

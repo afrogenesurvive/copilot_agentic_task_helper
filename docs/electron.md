@@ -22,6 +22,7 @@ npm run electron:dev       # launch dashboard + autostart the whole backend
 | Item | Contents |
 | ---- | -------- |
 | 📊 Dashboard | Start/stop every service, live health + per-service log tails, config, Google status |
+| 🔔 Notifications | Unread feed for the app: new frontdesk messages, error logs, chat turns, unexpected service exits, seat logins and script runs. Sortable and searchable, grouped by day into collapsible sections, with a red unread dot on each source's sidebar item |
 | 🔴 Queue | Priority + misc queues, per-item clear |
 | 📄 Logs | Live unified log stream (filter by source/sub-source/level, fold JSON details) + Log file browser with pretty JSONL view |
 | 👥 Sessions | Frontdesk login/logout sessions |

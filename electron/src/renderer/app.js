@@ -76,6 +76,7 @@
         queue: refreshQueue,
         logs: refreshLogs,
         sessions: refreshSessions,
+        notifications: refreshNotifications,
         licenses: refreshLicenses,
         usage: refreshUsage,
         accounts: refreshAccounts,
@@ -87,6 +88,9 @@
         chat: refreshChatSessions,
       };
       if (loaders[tab]) guarded(`tab:${tab}`, loaders[tab]);
+      // Opening a tab acknowledges its notifications: a source tab clears its own
+      // dot, the notification panel clears every dot.
+      acknowledgeTab(tab);
       hydrateIcons();
     });
   });
@@ -341,6 +345,28 @@
     return s.running ? "running" : s.configured ? "stopped" : "error";
   }
 
+  /**
+   * Icon per local service (see the services group in icons.js).
+   *
+   * The rail collapses to icons, so every service needs a glyph that survives its
+   * label disappearing; an unmapped one falls back to `tools` rather than rendering
+   * an empty square, because Icons.svg() returns a blank <svg> for an unknown name.
+   */
+  const SVC_ICONS = {
+    webhook: "webhook",
+    runner: "agent",
+    tunnel: "cloud",
+    "mcp:trello": "board",
+    "mcp:gmail": "mail",
+    "mcp:drive": "folder",
+    "mcp:calendar": "calendar",
+    "mcp:sheets": "table",
+    "mcp:photos": "image",
+    "mcp:web-search": "search",
+    "mcp:whatsapp": "chat",
+  };
+  const svcIcon = (name) => SVC_ICONS[name] || "tools";
+
   function svcStateTitle(s) {
     return s.running ? (s.external ? "running (external — started outside the dashboard)" : "running") : s.configured ? "stopped" : "not configured";
   }
@@ -370,7 +396,7 @@
         .map((s) => {
           const state = svcState(s);
           const cls = ["svc-tab", state, s.name === dash.selected ? "active" : ""].join(" ");
-          return `<button class="${cls}" data-svc="${esc(s.name)}" title="${esc(s.label)} — ${svcStateTitle(s)}"><span class="svc-dot ${state}"></span><span class="svc-tab-label">${esc(s.label)}</span></button>`;
+          return `<button class="${cls}" data-svc="${esc(s.name)}" title="${esc(s.label)} — ${svcStateTitle(s)}"><span class="svc-icon">${window.Icons.svg(svcIcon(s.name), 16)}</span><span class="svc-dot ${state}"></span><span class="svc-tab-label">${esc(s.label)}</span></button>`;
         })
         .join("");
     strip.querySelector("#svc-collapse").addEventListener("click", () => {
@@ -515,24 +541,161 @@
   }
 
   // ── Queue ──
+  // Each panel is an independent view over its own queue file. Collapse state is a
+  // per-machine UI preference (localStorage, like the service rail); filter and sort
+  // state live in memory. Filters never re-fetch: the items are cached, so typing in
+  // the search box cannot hammer the webhook server.
+  const QUEUE_COLLAPSE_KEY = "frontdesk.queueCollapsed";
+  const QUEUE_ROW_LIMIT = 400;
+  /** Per-queue DOM ids. The misc queue's key is `misc_notifications`; its ids say `misc`. */
+  const QUEUE_IDS = {
+    priority: {
+      toggle: "queue-toggle-priority",
+      type: "queue-type-priority",
+      search: "queue-search-priority",
+      sort: "queue-sort-priority",
+      count: "queue-count-priority",
+      body: "queue-priority",
+    },
+    misc_notifications: {
+      toggle: "queue-toggle-misc",
+      type: "queue-type-misc",
+      search: "queue-search-misc",
+      sort: "queue-sort-misc",
+      count: "queue-count-misc",
+      body: "queue-misc",
+    },
+  };
+  const queueState = {
+    priority: { collapsed: false, type: "", search: "", sort: "newest" },
+    misc_notifications: { collapsed: false, type: "", search: "", sort: "newest" },
+  };
+  let queueCache = { priority: [], misc_notifications: [] };
+
+  (function restoreQueueCollapse() {
+    try {
+      const saved = JSON.parse(localStorage.getItem(QUEUE_COLLAPSE_KEY) || "{}");
+      for (const q of Object.keys(queueState)) {
+        if (typeof saved[q] === "boolean") queueState[q].collapsed = saved[q];
+      }
+    } catch {
+      /* storage unavailable — both panels start expanded */
+    }
+  })();
+
+  /** The event source an item belongs to — this is the filter facet. */
+  const queueSource = (item) => item.source || "unknown";
+
+  /** Short tag for the row: `tool_dispatch` is the dispatch engine, not a source. */
+  const queueTypeLabel = (item) => (item.source === "tool_dispatch" ? "dispatch" : queueSource(item));
+
+  /** Everything a free-text search should match for one item. */
+  function queueHaystack(item) {
+    return [
+      item.source,
+      item.type,
+      item.id,
+      item.data?.rule,
+      item.data?.text,
+      item.data?.message,
+      item.data?.sub,
+      item.data?.originalEvent?.data?.card?.name,
+      item.data?.originalEvent?.data?.subject,
+      item.data?.originalEvent?.data?.from,
+    ]
+      .filter(Boolean)
+      .join(" ")
+      .toLowerCase();
+  }
+
+  /** Apply this panel's type filter, text search and sort. */
+  function queueView(list, q) {
+    const st = queueState[q];
+    const needle = st.search.trim().toLowerCase();
+    const out = (list || []).filter((item) => {
+      if (st.type && queueSource(item) !== st.type) return false;
+      if (needle && !queueHaystack(item).includes(needle)) return false;
+      return true;
+    });
+    const seq = (i) => Number(i.seqNo) || 0;
+    const at = (i) => Date.parse(i.queuedAt || i.timestamp || "") || 0;
+    if (st.sort === "oldest") out.sort((a, b) => at(a) - at(b) || seq(a) - seq(b));
+    else if (st.sort === "type") out.sort((a, b) => queueTypeLabel(a).localeCompare(queueTypeLabel(b)) || at(b) - at(a));
+    else if (st.sort === "uncleared") out.sort((a, b) => Number(a.cleared || 0) - Number(b.cleared || 0) || at(b) - at(a));
+    else out.sort((a, b) => at(b) - at(a) || seq(b) - seq(a)); // newest first
+    return out;
+  }
+
+  /**
+   * Rebuild a panel's type options from the items actually present.
+   * A source that has since disappeared would otherwise leave a stale filter hiding
+   * every row with no visible cause.
+   */
+  function queueTypeOptions(el, list, q) {
+    if (!el) return;
+    const st = queueState[q];
+    const sources = [...new Set((list || []).map(queueSource))].sort();
+    el.innerHTML =
+      '<option value="">all types</option>' +
+      sources.map((s) => `<option value="${esc(s)}"${s === st.type ? " selected" : ""}>${esc(s)}</option>`).join("");
+    if (st.type && !sources.includes(st.type)) {
+      st.type = "";
+      el.value = "";
+    }
+  }
+
+  /** Paint a panel's collapse state (caret, aria, body visibility). */
+  function applyQueuePanel(q) {
+    const ids = QUEUE_IDS[q];
+    const st = queueState[q];
+    const body = $(ids.body);
+    if (body) body.classList.toggle("hidden", st.collapsed);
+    const toggle = $(ids.toggle);
+    if (toggle) {
+      toggle.setAttribute("aria-expanded", st.collapsed ? "false" : "true");
+      const caret = toggle.querySelector(".q-caret");
+      if (caret) caret.textContent = st.collapsed ? "▸" : "▾";
+      toggle.title = st.collapsed ? "Expand this section" : "Collapse this section";
+    }
+  }
+
   function renderQueue(list, el, queue) {
+    const ids = QUEUE_IDS[queue];
+    const all = list || [];
+    const view = queueView(all, queue);
+
+    const countEl = $(ids.count);
+    if (countEl) countEl.textContent = view.length === all.length ? String(all.length) : `${view.length} of ${all.length}`;
+    queueTypeOptions($(ids.type), all, queue);
+
     el.innerHTML = "";
-    if (!list || list.length === 0) {
-      el.innerHTML = '<div class="empty">✅ Empty</div>';
+    if (!view.length) {
+      el.innerHTML = `<div class="empty">${all.length ? "No items match the filter." : "✅ Empty"}</div>`;
       return;
     }
-    for (const item of list.slice(0, 60)) {
+    for (const item of view.slice(0, QUEUE_ROW_LIMIT)) {
       const div = document.createElement("div");
       div.className = "qitem" + (item.cleared ? " cleared" : "");
       const label = item.data?.rule || `${item.source}/${item.type}`;
-      const desc = item.data?.text ? `"${item.data.text.slice(0, 70)}"` : item.data?.originalEvent?.data?.card?.name || "";
+      const desc = item.data?.text
+        ? `"${item.data.text.slice(0, 70)}"`
+        : item.data?.originalEvent?.data?.card?.name || item.data?.originalEvent?.data?.subject || "";
       div.innerHTML = `
         <span class="qn">#${item.seqNo ?? "?"}</span>
+        <span class="qtype">${esc(queueTypeLabel(item))}</span>
         <span class="qdesc">${esc(label)} ${esc(desc)}</span>
         <span class="qmeta">${fmt(item.queuedAt)}</span>
         <button data-clear="${item.id}" data-q="${queue}" ${item.cleared ? "disabled" : ""}>clear</button>
       `;
       el.appendChild(div);
+    }
+    if (view.length > QUEUE_ROW_LIMIT) {
+      // Say so rather than cutting the list off — the old version sliced at 60 and
+      // gave no hint that anything was missing.
+      const more = document.createElement("div");
+      more.className = "empty";
+      more.textContent = `${view.length - QUEUE_ROW_LIMIT} more item(s) not shown — narrow the filter to see them.`;
+      el.appendChild(more);
     }
     el.querySelectorAll("[data-clear]").forEach((b) =>
       b.addEventListener("click", async () => {
@@ -542,15 +705,26 @@
     );
   }
 
+  /** Re-render one panel from the cache — what every filter/sort control calls. */
+  function paintQueue(q) {
+    applyQueuePanel(q);
+    const body = $(QUEUE_IDS[q].body);
+    if (body) renderQueue(queueCache[q], body, q);
+  }
+
   async function refreshQueue() {
     const res = await api.queue();
     if (res.status === 0) {
-      $("queue-priority").innerHTML = '<div class="empty">Webhook server not reachable.</div>';
-      $("queue-misc").innerHTML = "";
+      const body = $("queue-priority");
+      if (body) body.innerHTML = '<div class="empty">Webhook server not reachable.</div>';
+      const misc = $("queue-misc");
+      if (misc) misc.innerHTML = "";
       return;
     }
-    renderQueue(res.json?.priority?.items || [], $("queue-priority"), "priority");
-    renderQueue(res.json?.misc?.items || [], $("queue-misc"), "misc_notifications");
+    queueCache.priority = res.json?.priority?.items || [];
+    queueCache.misc_notifications = res.json?.misc?.items || [];
+    paintQueue("priority");
+    paintQueue("misc_notifications");
   }
 
   // ── Logs (Live + Files) ──
@@ -827,18 +1001,91 @@
   }
 
   // ── Sessions ──
-  async function refreshSessions() {
-    const res = await api.sessions();
-    const entries = (res.ok && res.entries) || [];
-    if (!entries.length) {
-      $("sessions-box").innerHTML = '<div class="empty">No frontdesk sessions yet.</div>';
+  // Webapp visit history, read straight from logs/frontdesk/sessions/*.jsonl. No pkm
+  // involvement, so this view keeps working in exactly the states where the Key
+  // Manager's writes are refused.
+  const SESSIONS_COLS = [
+    { key: "ts", label: "Time" },
+    { key: "user", label: "User" },
+    { key: "action", label: "Action" },
+    { key: "ip", label: "IP" },
+    { key: "timezone", label: "TZ" },
+  ];
+  const sessionsState = { rows: [], sort: "ts", dir: -1, query: "" };
+
+  /** Every field a search should match, including the ones not shown as columns. */
+  function sessionHaystack(e) {
+    return [e.user, e.action, e.ip, e.timezone, e.language, e.userAgent]
+      .filter(Boolean)
+      .join(" ")
+      .toLowerCase();
+  }
+
+  function renderSessions() {
+    const box = $("sessions-box");
+    if (!box) return;
+    const needle = sessionsState.query.trim().toLowerCase();
+    const rows = sessionsState.rows.filter((e) => !needle || sessionHaystack(e).includes(needle));
+
+    const k = sessionsState.sort;
+    const val = (e) => (k === "ts" ? Date.parse(e.ts || "") || 0 : String(e[k] ?? "").toLowerCase());
+    const sorted = rows.slice().sort((a, b) => {
+      const av = val(a);
+      const bv = val(b);
+      if (av === bv) return 0;
+      return av < bv ? -sessionsState.dir : sessionsState.dir;
+    });
+
+    const count = $("sessions-count");
+    if (count) count.textContent = rows.length === sessionsState.rows.length ? String(rows.length) : `${rows.length} of ${sessionsState.rows.length}`;
+
+    if (!sessionsState.rows.length) {
+      box.innerHTML = '<div class="empty">No frontdesk sessions yet.</div>';
       return;
     }
-    const rows = entries
-      .slice(-50)
-      .map((e) => `<tr><td>${fmt(e.ts)}</td><td>${esc(e.user || "")}</td><td>${esc(e.action || "")}</td><td>${esc(e.ip || "")}</td></tr>`)
+
+    const head = SESSIONS_COLS.map((c) => {
+      const active = sessionsState.sort === c.key;
+      const arrow = active ? (sessionsState.dir === 1 ? " ▲" : " ▼") : "";
+      return `<th><button class="s-sort${active ? " is-active" : ""}" data-ssort="${esc(c.key)}" title="Sort by ${esc(c.label)}">${esc(c.label)}${arrow}</button></th>`;
+    }).join("");
+    const body = sorted
+      .map(
+        (e) =>
+          `<tr><td>${fmt(e.ts)}</td><td>${esc(e.user || "")}</td><td>${esc(e.action || "")}</td><td>${esc(e.ip || "")}</td><td>${esc(e.timezone || "")}</td></tr>`,
+      )
       .join("");
-    $("sessions-box").innerHTML = `<table><thead><tr><th>Time</th><th>User</th><th>Action</th><th>IP</th></tr></thead><tbody>${rows}</tbody></table>`;
+    box.innerHTML =
+      `<table><thead><tr>${head}</tr></thead><tbody>${
+        body || `<tr><td colspan="${SESSIONS_COLS.length}">No session matches the search.</td></tr>`
+      }</tbody></table>`;
+
+    box.querySelectorAll("[data-ssort]").forEach((b) =>
+      b.addEventListener("click", () => {
+        const key = b.dataset.ssort;
+        if (sessionsState.sort === key) sessionsState.dir *= -1;
+        else {
+          sessionsState.sort = key;
+          // Newest-first is the useful default for a time column; A→Z for the rest.
+          sessionsState.dir = key === "ts" ? -1 : 1;
+        }
+        renderSessions();
+      }),
+    );
+  }
+
+  async function refreshSessions() {
+    const res = await api.sessions();
+    sessionsState.rows = (res.ok && res.entries) || [];
+    renderSessions();
+  }
+
+  function bindSessions() {
+    $("sessions-search")?.addEventListener("input", (e) => {
+      sessionsState.query = e.target.value;
+      renderSessions();
+    });
+    $("sessions-refresh")?.addEventListener("click", () => guarded("sessions", refreshSessions));
   }
 
   // ── Key Manager ──
@@ -847,7 +1094,15 @@
   // The store holds an INDEPENDENT ring + seat ledger per consumer app, so every
   // call is scoped to the registry chosen in the toolbar (frontdesk-agent,
   // transcription-agent, …) — the tab is not hardwired to a single one.
-  const pkmState = { registry: null, registries: [], entry: null, lastError: null };
+  const pkmState = {
+    registry: null,
+    registries: [],
+    entry: null,
+    lastError: null,
+    // Last capability report from main (key-manager.mjs → capabilities()). Drives
+    // every disabled control on this tab: state, reason, and a per-command verdict.
+    caps: { state: "unknown", writable: false, reason: null, actions: {}, files: null, paths: null, checkedAt: 0 },
+  };
   const expLabel = (r) => (r.exp === 0 ? "unlimited" : r.expUtc ? String(r.expUtc).slice(0, 10) : "—");
   const daysLabel = (r) =>
     r.daysLeft == null ? "—" : r.daysLeft < 0 ? `${r.daysLeft} (past)` : String(r.daysLeft);
@@ -856,6 +1111,123 @@
   /** Registry id passed to every pkm call (undefined → PKM_REGISTRY in config). */
   const pkmReg = () => pkmState.registry || undefined;
   const pkmLabel = () => pkmState.registry || "the configured registry";
+
+  // ── Capability gate ──
+  // personal_key_manager owns every licence, ring and revocation record; this app
+  // is only a client of its CLI. `caps` is that store's verdict on what may run,
+  // painted in three places: the status-bar pill, the banner at the head of this
+  // tab, and the disabled state of every control tagged data-pkm-write.
+  //
+  // Disabling here is a HINT, not the boundary: main refuses a write BEFORE it
+  // spawns anything (COMMANDS + gateFor in electron/src/main/key-manager.mjs), so a
+  // bug in this file cannot mint, revoke, retire or re-sign anything the store
+  // disallows. Writes live there because that is where the pkm CLI lives — this
+  // repo deliberately contains no licence logic.
+
+  /** Pill text + colour per state. `kind` maps to status-pill--<kind>. */
+  const GATE_PILL = {
+    ready: { text: "keys ✓", kind: "ok" },
+    "read-only": { text: "keys read-only", kind: "warn" },
+    "blocklist-unreadable": { text: "keys ⚠ revocation off", kind: "bad" },
+    "blocklist-missing": { text: "keys ⚠ revocation off", kind: "bad" },
+    "store-missing": { text: "keys no store", kind: "bad" },
+    "cli-missing": { text: "keys no pkm", kind: "bad" },
+    "cli-broken": { text: "keys pkm error", kind: "bad" },
+    unknown: { text: "keys …", kind: "" },
+  };
+  /** Banner headline per state — the pill has room for a few words, this does not. */
+  const GATE_TITLE = {
+    "read-only": "Key store is read-only",
+    "blocklist-unreadable": "Revocation blocklist unreadable",
+    "blocklist-missing": "Revocation blocklist missing",
+    "store-missing": "Key store not found",
+    "cli-missing": "personal_key_manager not found",
+    "cli-broken": "pkm is not answering",
+  };
+
+  /** Adopt a capabilities payload (from the probe, or from pkm:status). */
+  function setCaps(d) {
+    if (!d || !d.state) return;
+    Object.assign(pkmState.caps, d);
+    renderGate();
+  }
+
+  /** Paint the pill, the banner, and every tagged write control. */
+  function renderGate() {
+    const c = pkmState.caps;
+    const pill = GATE_PILL[c.state] || GATE_PILL.unknown;
+    setStatusText("status-keys", pill.text, pill.kind);
+    const pillEl = $("status-keys");
+    if (pillEl) pillEl.title = c.reason || `Key store: ${c.state}`;
+
+    const banner = $("pkm-gate");
+    if (banner) {
+      if (c.state === "ready" || c.state === "unknown") {
+        banner.className = "gate-banner hidden";
+        banner.innerHTML = "";
+      } else {
+        const warn = c.state === "read-only";
+        banner.className = `gate-banner gate-banner--${warn ? "warn" : "bad"}`;
+        // No extra sentence: `reason` already explains this state and what to do
+        // about it, and in the read-only state most writes are still available.
+        banner.innerHTML =
+          `<span class="gate-banner__icon">${window.Icons.svg("warning", 14)}</span>` +
+          `<span><b>${esc(GATE_TITLE[c.state] || "Key store unavailable")}</b> — ${esc(c.reason || "")}</span>`;
+      }
+    }
+
+    // Static buttons (tagged in index.html) and per-row buttons (tagged as the
+    // tables re-render) take the same path, so a capability verdict can never
+    // disagree between them.
+    document.querySelectorAll("[data-pkm-write]").forEach((btn) => {
+      const action = btn.dataset.pkmWrite;
+      if (btn.dataset.gateTitle === undefined) btn.dataset.gateTitle = btn.title || "";
+      const verdict = (c.actions || {})[action];
+      const ok = c.writable && (!verdict || verdict.ok);
+      btn.disabled = !ok;
+      btn.classList.toggle("is-gated", !ok);
+      const why = !c.writable ? c.reason : verdict && !verdict.ok ? verdict.reason : "";
+      btn.title = ok ? btn.dataset.gateTitle : why || "Unavailable";
+    });
+  }
+
+  /**
+   * Probe the store.
+   *
+   * `fresh` bypasses main's cached CLI liveness check — used by Re-check and after
+   * a PKM_* config change, both of which expect a real answer rather than a verdict
+   * up to a minute old.
+   */
+  async function loadCaps({ fresh = false } = {}) {
+    try {
+      const res = fresh ? await api.pkmCapabilities(pkmReg()) : await api.pkmStatus(pkmReg());
+      setCaps(res && res.data && res.data.capabilities);
+    } catch (err) {
+      reportError(err, "key store probe");
+    }
+    return pkmState.caps;
+  }
+
+  /**
+   * Guard a mutation against the gate before calling it.
+   *
+   * Belt and braces over main's refusal: this turns an unavailable action into a
+   * sentence in the UI instead of an error string from a refused spawn.
+   * @returns {boolean} true when the caller should stop.
+   */
+  function gatedWrite(action) {
+    const c = pkmState.caps;
+    const verdict = (c.actions || {})[action];
+    if (verdict && !verdict.ok) {
+      toast(`⚠️ ${verdict.reason}`, "err");
+      return true;
+    }
+    if (!c.writable) {
+      toast(`⚠️ Key store is read-only — ${c.reason || "unavailable"}`, "err");
+      return true;
+    }
+    return false;
+  }
 
   /** Populate the registry picker from the store, keeping the current selection. */
   function renderPkmRegistryPicker(d) {
@@ -882,9 +1254,19 @@
     const e = pkmState.entry;
     if (meta) {
       const targets = Object.keys(e?.verifierTargets || {});
+      // Where the blocklist comes from is the wrong thing to advertise when it is
+      // unreadable — that is the state this whole tab is warning about.
+      const bl = (pkmState.caps.files || {}).blocklist;
+      const blNote =
+        bl === "unreadable"
+          ? ' · <b class="gate-inline">⚠ blocklist UNREADABLE</b>'
+          : bl === "missing"
+            ? ' · <b class="gate-inline">⚠ blocklist MISSING</b>'
+            : targets.length
+              ? ` · <b>blocklist embedded</b> (${esc(targets.join(", "))})`
+              : " · blocklist read live";
       meta.innerHTML = e
-        ? `app <b>${esc(e.app)}</b> · engine ${esc(e.engine)} · ${e.rings} ring(s) · ${e.seats} seat(s) · ${e.revoked} revoked` +
-          (targets.length ? ` · <b>blocklist embedded</b> (${esc(targets.join(", "))})` : " · blocklist read live")
+        ? `app <b>${esc(e.app)}</b> · engine ${esc(e.engine)} · ${e.rings} ring(s) · ${e.seats} seat(s) · ${e.revoked} revoked` + blNote
         : "";
     }
   }
@@ -917,6 +1299,9 @@
     } catch (err) {
       res = { ok: false, error: (err && err.message) || "pkm status failed" };
     }
+    // The gate verdict rides on this payload (main probes once and reports it), so
+    // the status line and the controls below can never disagree with each other.
+    setCaps(res.data && res.data.capabilities);
     if (!res.ok) {
       pkmState.lastError = res.error;
       badge.className = "badge down";
@@ -937,14 +1322,27 @@
     }
     renderPkmRegistryPicker(d);
     const e = pkmState.entry;
-    badge.className = e ? "badge ok" : "badge down";
-    badge.textContent = e ? `${e.seats} seats · ${e.defaultKid || "no ring"}` : "no registry";
+    const c = pkmState.caps;
+    // The header badge is the gate's headline when the store is not ready: "42 seats"
+    // is misleading while revocation is not being enforced.
+    if (c.state !== "ready" && c.state !== "unknown") {
+      badge.className = c.state === "read-only" ? "badge" : "badge down";
+      badge.textContent = (GATE_PILL[c.state] || GATE_PILL.unknown).text.replace("keys ", "");
+    } else {
+      badge.className = e ? "badge ok" : "badge down";
+      badge.textContent = e ? `${e.seats} seats · ${e.defaultKid || "no ring"}` : "no registry";
+    }
     host.innerHTML =
       `<div class="svc-note">📦 <code>${esc(d.storeRoot)}</code> — registry <b>${esc(pkmLabel())}</b>` +
       (e ? ` · engine ${esc(e.engine)} · ${e.rings} ring(s) · ${e.revoked} revoked` : "") +
-      (d.loosePermissions ? ` · <b>⚠ ${d.loosePermissions} loose key path(s)</b>` : "") +
+      (d.loosePermissions
+        ? ` · <b>⚠ ${d.loosePermissions} loose key path(s)</b> <button id="pkm-perms-fix" data-pkm-write="permsFix" title="Tighten group/other-accessible files under the key store (pkm perms --fix)">Fix</button>`
+        : "") +
+      (d.authorityPublicKey ? ` · bundle signer <code>${esc(shortKey(d.authorityPublicKey))}</code>` : "") +
       ` · timeout ${Math.round((d.timeoutMs || 20000) / 1000)}s` +
       `</div>`;
+    $("pkm-perms-fix")?.addEventListener("click", fixPerms);
+    renderGate();
     return true;
   }
 
@@ -970,10 +1368,10 @@
         const isDefault = r.kid === d.defaultKid;
         return (
           `<tr><td>${esc(r.kid)}</td>` +
-          `<td>${isDefault ? '<span class="tag valid">default</span>' : `<button data-ringdefault="${escAttr(r.kid)}">Make default</button>`}</td>` +
+          `<td>${isDefault ? '<span class="tag valid">default</span>' : `<button data-ringdefault="${escAttr(r.kid)}" data-pkm-write="setDefault">Make default</button>`}</td>` +
           `<td><code title="${escAttr(r.publicKey || "")}">${esc(shortKey(r.publicKey))}</code></td>` +
           `<td>${esc(na)}${retired ? ' <span class="tag revoked">retired</span>' : ""}</td>` +
-          `<td>${retired ? "" : `<button data-ringretire="${escAttr(r.kid)}">Retire</button>`}</td></tr>`
+          `<td>${retired ? "" : `<button data-ringretire="${escAttr(r.kid)}" data-pkm-write="ringRetire">Retire</button>`}</td></tr>`
         );
       })
       .join("");
@@ -985,6 +1383,7 @@
     box.querySelectorAll("[data-ringdefault]").forEach((b) =>
       b.addEventListener("click", () => makeRingDefault(b.dataset.ringdefault)),
     );
+    renderGate();
     return true;
   }
 
@@ -1006,8 +1405,8 @@
       .map((r) => {
         const action =
           r.status === "revoked"
-            ? `<button data-unrevoke="${escAttr(r.sub)}">Unrevoke</button>`
-            : `<button data-revoke="${escAttr(r.sub)}">Revoke</button>`;
+            ? `<button data-unrevoke="${escAttr(r.sub)}" data-pkm-write="unrevoke">Unrevoke</button>`
+            : `<button data-revoke="${escAttr(r.sub)}" data-pkm-write="revoke">Revoke</button>`;
         return `<tr><td>${esc(r.sub)}</td><td><span class="tag ${escAttr(r.status)}">${esc(r.status)}</span></td><td>${esc(r.kid || "—")}</td><td>${esc(expLabel(r))}</td><td>${esc(daysLabel(r))}</td><td>${r.enc ? "yes" : "no"}</td><td>${esc(String(r.issuedAt || "").slice(0, 10))}</td><td>${action}</td></tr>`;
       })
       .join("");
@@ -1018,6 +1417,7 @@
       `</p>`;
     box.querySelectorAll("[data-revoke]").forEach((b) => b.addEventListener("click", () => revokeSeat(b.dataset.revoke)));
     box.querySelectorAll("[data-unrevoke]").forEach((b) => b.addEventListener("click", () => unrevokeSeat(b.dataset.unrevoke)));
+    renderGate();
     return true;
   }
 
@@ -1115,6 +1515,34 @@
       msg.textContent = 'Expiry is required — a date like 2027-12-31, or "unlimited".';
       return;
     }
+    if (gatedWrite("issue")) return;
+
+    // ── The two guards pkm itself does not apply ──
+    // 1. A seat already on the blocklist: `issue` would happily sign a licence that
+    //    `loadRevokedSeats()` then refuses (`revoked_seat`), so the operator would get
+    //    a display-once key that can never log in. Main refuses this too.
+    // 2. An existing seat: re-issuing mints a NEW keypair and overwrites the stored
+    //    licence file, orphaning anything already encrypted under the old one. The
+    //    revoke dialog says so; the issue dialog used to say nothing.
+    const info = await api.pkmSeatInfo(pkmReg(), sub);
+    const row = info && info.ok && info.data ? info.data.row : null;
+    if (row && (row.revoked === true || row.status === "revoked")) {
+      msg.className = "config-msg err";
+      msg.textContent = `"${sub}" is on the revocation blocklist, so a new licence would be refused at login. Reinstate it first (Unrevoke).`;
+      return;
+    }
+    if (row) {
+      const exp0 = row.exp === 0 ? "unlimited" : String(row.expUtc || "").slice(0, 10);
+      if (
+        !window.confirm(
+          `"${sub}" already has a licence (${row.status}, expires ${exp0}).\n\n` +
+            "Re-issuing mints a new keypair and overwrites the stored licence file, so the old key stops " +
+            "working and anything encrypted under it becomes unreadable. Continue?",
+        )
+      )
+        return;
+    }
+
     msg.className = "config-msg";
     msg.textContent = "Issuing…";
     const res = await withLoading(`Issuing a licence for ${sub} in ${pkmLabel()}…`, () => api.pkmIssue(pkmReg(), sub, exp), {
@@ -1136,6 +1564,7 @@
   }
 
   async function revokeSeat(sub) {
+    if (gatedWrite("revoke")) return;
     const reason = await askText({
       title: `Revoke "${sub}"?`,
       label: "Reason (optional)",
@@ -1159,6 +1588,7 @@
   }
 
   async function unrevokeSeat(sub) {
+    if (gatedWrite("unrevoke")) return;
     if (!window.confirm(`Reinstate "${sub}" in ${pkmLabel()}?`)) return;
     const res = await withLoading(`Reinstating ${sub}…`, () => api.pkmUnrevoke(pkmReg(), sub), { context: "pkm unrevoke" });
     if (!res) return;
@@ -1171,6 +1601,7 @@
   }
 
   async function archiveExpiredSeats() {
+    if (gatedWrite("archive")) return;
     if (
       !window.confirm(
         `Move already-expired seat records in ${pkmLabel()} into its expired/ ledger?\n\nThis archives records whose expiry has already passed — it never revokes anything.`,
@@ -1241,6 +1672,7 @@
 
   // ── Rings (master keys) ──
   async function createRing() {
+    if (gatedWrite("ringCreate")) return;
     const kid = await askText({
       title: `New master ring in ${pkmLabel()}`,
       label: "kid (ring id)",
@@ -1262,6 +1694,7 @@
   }
 
   async function retireRing(kid) {
+    if (gatedWrite("ringRetire")) return;
     const at = await askText({
       title: `Retire ring "${kid}"?`,
       label: "Retire at (a date, or “now”)",
@@ -1283,6 +1716,7 @@
   }
 
   async function makeRingDefault(kid) {
+    if (gatedWrite("setDefault")) return;
     if (!window.confirm(`Sign all NEW seats in ${pkmLabel()} with ring "${kid}"?\n\nExisting seats keep the ring that signed them.`)) return;
     const res = await withLoading(`Switching the default ring to ${kid}…`, () => api.pkmSetDefaultKid(pkmReg(), kid), {
       context: "pkm set-default",
@@ -1297,6 +1731,7 @@
   }
 
   async function rotateAgentKey() {
+    if (gatedWrite("agentKey")) return;
     if (
       !window.confirm(
         `Regenerate the X25519 agent keypair for ${pkmLabel()}?\n\n` +
@@ -1322,6 +1757,7 @@
   }
 
   async function syncBlocklist() {
+    if (gatedWrite("syncRevocation")) return;
     const e = pkmState.entry || {};
     const targets = Object.keys(e.verifierTargets || {});
     if (!targets.length) {
@@ -1345,6 +1781,157 @@
     window.alert(`${lines || "Nothing to sync."}\n\nRebuild the consumer app for the change to take effect.`);
   }
 
+  // ── Read-only checks ──
+  // These answer the questions an operator actually has about a licence, and they
+  // keep working in every state where the CLI answers at all — including the states
+  // where writes are refused, which is precisely when something is wrong. All three
+  // are strictly stronger than Validate: challenge proves the login handshake,
+  // self-test proves the E2E envelope round-trips, and check-revocation proves the
+  // blocklist is both enforced and in sync with the consumer apps.
+
+  /** Write a one-line result under the Verify row. */
+  function checksOut(text, kind) {
+    const el = $("pkm-checks-out");
+    if (!el) return;
+    el.className = `pkm-checks__out${kind ? ` pkm-checks__out--${kind}` : ""}`;
+    el.textContent = text || "";
+  }
+
+  const claimsLine = (claims) => {
+    if (!claims) return "";
+    const exp = claims.exp ? new Date(claims.exp * 1000).toISOString().slice(0, 10) : "unlimited";
+    return `${esc(claims.sub)} · kid ${esc(claims.kid)} · exp ${esc(exp)}`;
+  };
+
+  /** Shared shape for the two "check this licence" flows. */
+  async function runLicenseCheck({ title, desc, action, context, okText, failText }) {
+    const entered = await askText({ title, label: "Licence key", desc, placeholder: "TA1…" });
+    if (entered === null || !entered.trim()) return;
+    const res = await withLoading(`${title}…`, () => api[action](pkmReg(), entered.trim()), { context });
+    if (!res) return;
+    if (!res.ok) return checksOut(`${title}: ${res.error}`, "err");
+    const d = res.data || {};
+    checksOut(d.ok ? okText(d) : `${failText} — ${d.reason || "rejected"}`, d.ok ? "ok" : "err");
+  }
+
+  function checkChallenge() {
+    return runLicenseCheck({
+      title: "Challenge",
+      desc: `Simulates the webapp login handshake for a licence in ${pkmLabel()}: the seat signs a fresh nonce, so a pass means the key can actually log in. Validate only checks the signature and expiry.`,
+      action: "pkmChallenge",
+      context: "pkm challenge-test",
+      okText: (d) => `Challenge ✅ — the handshake succeeds. ${claimsLine(d.claims)}`,
+      failText: "Challenge ❌",
+    });
+  }
+
+  function checkSelfTest() {
+    return runLicenseCheck({
+      title: "Crypto self-test",
+      desc: `ECDH → AES-256-GCM round trip between the seat and the agent keypair in ${pkmLabel()}. A pass means replies will decrypt; a fail usually means FRONTDESK_AGENT_PUBKEY (.env and Netlify) does not match this registry's agent key.`,
+      action: "pkmSelfTest",
+      context: "pkm crypto-self-test",
+      okText: (d) => `Crypto ✅ — the envelope round-trips. ${claimsLine(d.claims)}`,
+      failText: "Crypto ❌",
+    });
+  }
+
+  async function checkRevocationState() {
+    const res = await withLoading("Running the revocation check…", () => api.pkmCheckRevocation(pkmReg()), {
+      context: "pkm check-revocation",
+    });
+    if (!res) return;
+    if (!res.ok) return checksOut(`Revocation check: ${res.error}`, "err");
+    const d = res.data || {};
+    const parts = [];
+    for (const r of d.reject?.results || []) parts.push(`[${r.registry}] ${r.message}`);
+    for (const p of d.parity || []) {
+      for (const t of p.targets || []) {
+        const state = !t.exists
+          ? "MISSING"
+          : !t.markerFound
+            ? "NO MARKER"
+            : t.matches
+              ? "in sync"
+              : "OUT OF SYNC";
+        parts.push(`[${p.registry}] ${t.lang} ${state} ${t.path}`);
+      }
+    }
+    checksOut(
+      `Revocation ${d.ok ? "✅" : "❌"} — ${parts.join(" · ") || "no revoked seats and no embedded blocklists to check"}`,
+      d.ok ? "ok" : "err",
+    );
+  }
+
+  async function checkPerms() {
+    const res = await withLoading("Reading key-store permissions…", () => api.pkmPerms(), { context: "pkm perms" });
+    if (!res) return;
+    if (!res.ok) return checksOut(`Permissions: ${res.error}`, "err");
+    const d = res.data || {};
+    const loose = d.loose || [];
+    checksOut(
+      d.clean ? "Permissions ✅ — every key path is tight." : `Permissions ⚠️ — ${loose.length} group/other-accessible path(s): ${loose.slice(0, 3).join(", ")}${loose.length > 3 ? " …" : ""}`,
+      d.clean ? "ok" : "warn",
+    );
+  }
+
+  async function checkBundle() {
+    const res = await withLoading("Verifying the export bundle…", () => api.pkmVerifyBundle(), {
+      context: "pkm verify-bundle",
+    });
+    if (!res) return;
+    if (!res.ok) return checksOut(`Bundle: ${res.error}`, "err");
+    const d = res.data || {};
+    if (d.ok) return checksOut(`Bundle ✅ — the signature matches${d.kid ? ` (kid ${d.kid})` : ""}.`, "ok");
+    checksOut(
+      d.reason === "absent"
+        ? "Bundle ⚠️ — no export/devmon.json.sig, so the bundle is unverifiable (not invalid)."
+        : "Bundle ❌ — export/devmon.json does NOT match its signature. Do not ship it.",
+      d.reason === "absent" ? "warn" : "err",
+    );
+  }
+
+  /**
+   * Tighten loose key paths (`pkm perms --fix`).
+   *
+   * A write, so it is gated — but key-file hygiene rather than key management: it
+   * chmods directories and private keys, and never touches key material.
+   */
+  async function fixPerms() {
+    if (gatedWrite("permsFix")) return;
+    if (
+      !window.confirm(
+        "Tighten group/other-accessible files under the key store?\n\n" +
+          "Directories become 700 and private keys 600. No key material is changed.",
+      )
+    )
+      return;
+    const res = await withLoading("Tightening key-store permissions…", () => api.pkmPermsFix(), {
+      context: "pkm perms --fix",
+    });
+    if (!res) return;
+    if (!res.ok) return toast(`⚠️ Permission fix failed: ${res.error}`, "err");
+    const n = ((res.data && res.data.fixed) || []).length;
+    toast(n ? `Tightened ${n} path(s).` : "Nothing to fix.", "ok");
+    refreshLicenses();
+  }
+
+  /** Re-probe the store on demand (bypasses main's cached CLI liveness check). */
+  async function recheckStore() {
+    const c = await loadCaps({ fresh: true });
+    toast(
+      c.state === "ready" ? "Key store ready — all actions available." : `Key store: ${c.state} — ${c.reason || ""}`,
+      c.state === "ready" ? "ok" : "err",
+    );
+    guarded("licenses", refreshLicenses);
+  }
+
+  $("pkm-recheck").addEventListener("click", recheckStore);
+  $("pkm-challenge").addEventListener("click", checkChallenge);
+  $("pkm-selftest").addEventListener("click", checkSelfTest);
+  $("pkm-revocation-check").addEventListener("click", checkRevocationState);
+  $("pkm-perms").addEventListener("click", checkPerms);
+  $("pkm-bundle-check").addEventListener("click", checkBundle);
   $("pkm-refresh").addEventListener("click", () => guarded("licenses", refreshLicenses));
   $("pkm-archive").addEventListener("click", archiveExpiredSeats);
   $("pkm-validate-open").addEventListener("click", validateLicense);
@@ -1671,11 +2258,18 @@
     // Agent runner
     { key: "AGENT_RUNNER_ENABLED", label: "Agent Runner Enabled", section: "Agent runner", secret: false, options: ["true", "false"] },
     { key: "AGENT_TASK_INTERVAL", label: "Task Check Interval (ms)", section: "Agent runner", secret: false },
+    { key: "AGENT_RUNNER_MAX_ROUNDS", label: "Max Turns per Frontdesk Event", section: "Agent runner", secret: false },
+    { key: "AGENT_MAX_ITEMS_PER_PASS", label: "Max Queue Items per Wake-up", section: "Agent runner", secret: false },
     { key: "AGENT_RUNNER_VERBOSE", label: "Verbose Prompt Logging", section: "Agent runner", secret: false, options: ["true", "false"] },
     // Logging
     { key: "LOG_LEVEL", label: "Log Level", section: "Logging", secret: false, options: ["debug", "info", "warn", "error"] },
     { key: "LOG_DIR", label: "Log Directory", section: "Logging", secret: false },
     { key: "LOG_CONSOLE", label: "Echo to Console", section: "Logging", secret: false, options: ["0", "1", "true", "false"] },
+    // Notification centre — the feed + read state under logs/notifications/.
+    // Saving either of these needs no restart: the store reads them at startup and
+    // the app is the only writer.
+    { key: "NOTIFY_ENABLED", label: "Enable Notifications", section: "Notifications", secret: false, options: ["true", "false"] },
+    { key: "NOTIFY_RETENTION_DAYS", label: "Keep Notifications (days)", section: "Notifications", secret: false },
     // Usage tracking (DS-mon) — per-LLM-call token usage buffer + push. Ollama is
     // never tracked (local + free). Mirrors the transcription agent's section.
     { key: "USAGE_TRACKING_ENABLED", label: "Enable Usage Tracking", section: "Usage tracking", secret: false, options: ["true", "false"] },
@@ -1700,7 +2294,48 @@
     { key: "APPEARANCE_FONT_SIZE", label: "Font Size", section: "Appearance", secret: false, options: ["small", "medium", "large", "x-large", "xx-large"] },
   ];
 
-  const configState = { values: {}, sources: {}, dirty: new Set(), raw: false, open: new Set() };
+  // ── Config (config.json) — TABBED field editor with source annotations ──
+  // One section at a time, plus a filter that deliberately searches every section:
+  // a search that only looked inside the active tab would be useless exactly when it
+  // is wanted — when you know the key but not where it lives. The layout follows the
+  // study_aide_agent config panel; section names and tab labels are separate because
+  // a heading can afford a sentence and a tab strip cannot.
+  const CONFIG_TAB_KEY = "frontdesk.configTab";
+  /** Section names in declaration order — derived, so a new section needs no edit. */
+  const CONFIG_SECTIONS = [...new Set(CONFIG_FIELDS.map((f) => f.section))];
+  /** Short tab label per section (falls back to the section name). */
+  const CONFIG_TAB_LABELS = {
+    "LLM Provider": "Model",
+    "Gmail / Google": "Google",
+    "Agent runner": "Runner",
+    "Usage tracking": "Usage",
+    "GitHub backup": "GitHub",
+  };
+  const CONFIG_TAB_FALLBACK = CONFIG_SECTIONS[0];
+
+  const configState = {
+    values: {},
+    sources: {},
+    dirty: new Set(),
+    raw: false,
+    filter: "",
+    // A stored tab can outlive the section it names, so it is validated on read —
+    // otherwise the panel would render nothing at all and say nothing about why.
+    tab: (() => {
+      try {
+        const saved = localStorage.getItem(CONFIG_TAB_KEY);
+        return saved && CONFIG_SECTIONS.includes(saved) ? saved : CONFIG_TAB_FALLBACK;
+      } catch {
+        return CONFIG_TAB_FALLBACK;
+      }
+    })(),
+  };
+
+  /** Fields belonging to one section. */
+  const configSectionFields = (name) => CONFIG_FIELDS.filter((f) => f.section === name);
+
+  /** The section a key lives in — used for the per-tab dirty counts. */
+  const configKeySection = (key) => (CONFIG_FIELDS.find((f) => f.key === key) || {}).section;
 
   // Provider-aware metadata for the ⚙️ Config "LLM Provider" section — mirrors
   // shared/model-provider.mjs. Which keys apply per provider, the required API
@@ -1781,18 +2416,14 @@
       </div>`;
   }
 
-  // One collapsible config section: a clickable <h4> header + a hideable body.
-  // Open state lives in configState.open so re-renders (provider change, 15s
-  // auto-refresh) don't wipe it. Sections start closed by default.
-  function configSectionHTML(name, inner) {
-    const open = configState.open.has(name);
-    return `<div class="config-section${open ? "" : " collapsed"}">
-      <h4 class="config-sec-head" data-config-sec="${escAttr(name)}" title="click to expand/collapse"><span class="caret">${open ? "▾" : "▸"}</span>${esc(name)}</h4>
-      <div class="config-sec-body">${inner}</div>
-    </div>`;
-  }
-
-  function llmProviderSectionHTML() {
+  /**
+   * Inner HTML for the LLM Provider section.
+   *
+   * Only the ACTIVE provider's keys are rendered, so switching provider does not
+   * leave a wall of irrelevant inputs on screen (metadata mirrors
+   * shared/model-provider.mjs).
+   */
+  function llmProviderBodyHTML() {
     const pick = CONFIG_FIELDS.find((f) => f.key === "LLM_PROVIDER");
     const temp = CONFIG_FIELDS.find((f) => f.key === "LLM_TEMPERATURE");
     const meta = LLM_PROVIDERS[activeProvider()];
@@ -1803,8 +2434,67 @@
       rows.push(configFieldHTML({ ...def, placeholder: f.placeholder, providerRequired: !!f.required }));
     }
     if (temp) rows.push(configFieldHTML(temp));
-    const inner = `${pick ? configFieldHTML(pick) : ""}<div class="provider-panel">${rows.join("")}</div>`;
-    return configSectionHTML("LLM Provider", inner);
+    return `${pick ? configFieldHTML(pick) : ""}<div class="provider-panel">${rows.join("")}</div>`;
+  }
+
+  /** Inner HTML for one section — the fields themselves, with no wrapper. */
+  function configBodyHTML(name) {
+    if (name === "LLM Provider") return llmProviderBodyHTML();
+    return configSectionFields(name).map(configFieldHTML).join("");
+  }
+
+  /** A read-only group heading + fields, used by the filtered (all-sections) view. */
+  function configGroupHTML(name, fields) {
+    return (
+      `<div class="config-section">` +
+      `<h4 class="config-sec-head">${esc(name)}<span class="config-sec-count">${fields.length}</span></h4>` +
+      `<div class="config-sec-body">${fields.map(configFieldHTML).join("")}</div>` +
+      `</div>`
+    );
+  }
+
+  /**
+   * The tab strip, plus the Save label's dirty count.
+   *
+   * Split out of renderConfigForm() because it is the only part that must update
+   * while you type — the fields themselves must not be re-created (that would steal
+   * focus mid-keystroke).
+   */
+  function renderConfigMeta() {
+    const strip = $("config-tabs");
+    const saveBtn = $("config-save");
+    if (saveBtn) saveBtn.textContent = configState.dirty.size ? `Save ${configState.dirty.size}` : "Save";
+    if (!strip) return;
+
+    // Filter mode spans every section, so a tab strip would misrepresent what is on
+    // screen; the filter note takes its place.
+    if (configState.filter.trim()) {
+      strip.innerHTML = "";
+      strip.classList.add("hidden");
+      return;
+    }
+    strip.classList.remove("hidden");
+    strip.innerHTML = CONFIG_SECTIONS.map((name) => {
+      const count = configSectionFields(name).filter((f) => configState.dirty.has(f.key)).length;
+      const active = name === configState.tab;
+      return (
+        `<button role="tab" aria-selected="${active ? "true" : "false"}" class="ctab${active ? " is-active" : ""}" data-ctab="${escAttr(name)}">` +
+        `${esc(CONFIG_TAB_LABELS[name] || name)}` +
+        `${count ? `<span class="ctab__count">${count}</span>` : ""}` +
+        `</button>`
+      );
+    }).join("");
+    strip.querySelectorAll("[data-ctab]").forEach((b) =>
+      b.addEventListener("click", () => {
+        configState.tab = b.dataset.ctab;
+        try {
+          localStorage.setItem(CONFIG_TAB_KEY, configState.tab);
+        } catch {
+          /* storage unavailable — the tab still applies for this session */
+        }
+        renderConfigForm();
+      }),
+    );
   }
 
   function renderConfigForm() {
@@ -1813,43 +2503,43 @@
     if (configState.raw) {
       wrap.classList.add("hidden");
       raw.classList.remove("hidden");
+      $("config-tabs")?.classList.add("hidden");
       const flat = {};
       for (const k of Object.keys(configState.values)) flat[k] = configState.values[k].value;
       raw.value = JSON.stringify(flat, null, 2);
+      renderConfigMeta();
       return;
     }
     wrap.classList.remove("hidden");
     raw.classList.add("hidden");
-    const sections = [];
-    for (const f of CONFIG_FIELDS) {
-      let sec = sections.find((s) => s.name === f.section);
-      if (!sec) {
-        sec = { name: f.section, fields: [] };
-        sections.push(sec);
-      }
-      sec.fields.push(f);
+
+    const needle = configState.filter.trim().toLowerCase();
+    if (needle) {
+      const groups = CONFIG_SECTIONS.map((name) => ({
+        name,
+        fields: configSectionFields(name).filter(
+          (f) =>
+            f.key.toLowerCase().includes(needle) ||
+            f.label.toLowerCase().includes(needle) ||
+            f.section.toLowerCase().includes(needle),
+        ),
+      })).filter((g) => g.fields.length);
+      const total = groups.reduce((n, g) => n + g.fields.length, 0);
+      wrap.innerHTML =
+        `<div class="config-filter-note">Searching all ${CONFIG_SECTIONS.length} sections — ${total} setting(s) match.` +
+        ` <button id="config-filter-clear">Clear filter</button></div>` +
+        (groups.length ? groups.map((g) => configGroupHTML(g.name, g.fields)).join("") : '<div class="empty">No setting matches that filter.</div>');
+      $("config-filter-clear")?.addEventListener("click", () => {
+        configState.filter = "";
+        const input = $("config-search");
+        if (input) input.value = "";
+        renderConfigForm();
+      });
+    } else {
+      // One section at a time. No per-section heading: the tab already says it.
+      wrap.innerHTML = `<div class="config-tab-body" data-ctab-body="${escAttr(configState.tab)}">${configBodyHTML(configState.tab)}</div>`;
     }
-    wrap.innerHTML = sections
-      .map((s) => (s.name === "LLM Provider" ? llmProviderSectionHTML() : configSectionHTML(s.name, s.fields.map(configFieldHTML).join(""))))
-      .join("");
-    // Collapse/expand toggle — click a section header.
-    wrap.querySelectorAll("[data-config-sec]").forEach((h) =>
-      h.addEventListener("click", () => {
-        const sec = h.closest(".config-section");
-        if (!sec) return;
-        const name = h.dataset.configSec;
-        const caret = h.querySelector(".caret");
-        if (configState.open.has(name)) {
-          configState.open.delete(name);
-          sec.classList.add("collapsed");
-          if (caret) caret.textContent = "▸";
-        } else {
-          configState.open.add(name);
-          sec.classList.remove("collapsed");
-          if (caret) caret.textContent = "▾";
-        }
-      }),
-    );
+
     wrap.querySelectorAll("[data-cfield]").forEach((el) =>
       el.addEventListener("input", (e) => {
         const k = e.currentTarget.dataset.cfield;
@@ -1857,6 +2547,7 @@
         configState.values[k].value = e.currentTarget.value;
         configState.dirty.add(k);
         configMsg("");
+        renderConfigMeta(); // refresh the dirty counts on the affected tabs
       }),
     );
     // Switching provider re-renders so only the active provider's fields show.
@@ -1878,6 +2569,7 @@
         b.textContent = show ? "🙈" : "👁";
       }),
     );
+    renderConfigMeta();
   }
 
   async function refreshConfig() {
@@ -1899,6 +2591,11 @@
     configMsg("");
   }
 
+  $("config-search").addEventListener("input", (e) => {
+    // Searches every section, not just the active tab — see renderConfigForm().
+    configState.filter = e.target.value;
+    renderConfigForm();
+  });
   $("config-refresh").addEventListener("click", refreshConfig);
   $("config-raw").addEventListener("click", () => {
     configState.raw = !configState.raw;
@@ -1935,6 +2632,16 @@
       }
       if (meta.required && !(configState.values[meta.required] && configState.values[meta.required].value)) {
         msg += ` ⚠️ ${meta.label} has no ${meta.required} set — calls will fail until you add it.`;
+      }
+      // A key-store path or registry change takes effect for THIS window on the next
+      // call (the adapter resolves paths per call), so re-probe for real rather than
+      // trusting the cached verdict. The webhook server and runner resolve their
+      // paths once at import and need a restart — their hints say so.
+      if (Object.keys(payload).some((k) => k.startsWith("PKM_"))) {
+        pkmState.registry = null; // let the probe use the (possibly new) default
+        const c = await loadCaps({ fresh: true });
+        msg += ` Key store: ${c.state}${c.reason ? ` — ${c.reason}` : ""}`;
+        guarded("licenses", refreshLicenses);
       }
       configMsg(msg);
       refreshConfig();
@@ -2811,6 +3518,45 @@
   });
   $("scripts-refresh").addEventListener("click", refreshScripts);
 
+  // ── Queue: collapse / filter / sort ──
+  function bindQueueControls() {
+    for (const q of Object.keys(QUEUE_IDS)) {
+      const ids = QUEUE_IDS[q];
+      const st = queueState[q];
+
+      $(ids.toggle)?.addEventListener("click", () => {
+        st.collapsed = !st.collapsed;
+        // The collapse preference is per-machine UI state, not config.
+        try {
+          const map = {};
+          for (const [k, v] of Object.entries(queueState)) map[k] = v.collapsed;
+          localStorage.setItem(QUEUE_COLLAPSE_KEY, JSON.stringify(map));
+        } catch {
+          /* storage unavailable — the toggle still applies for this session */
+        }
+        applyQueuePanel(q);
+      });
+
+      // Filter and sort re-render from the cache; only Refresh re-fetches.
+      $(ids.type)?.addEventListener("change", (e) => {
+        st.type = e.target.value;
+        paintQueue(q);
+      });
+      $(ids.sort)?.addEventListener("change", (e) => {
+        st.sort = e.target.value;
+        paintQueue(q);
+      });
+      $(ids.search)?.addEventListener("input", (e) => {
+        st.search = e.target.value;
+        paintQueue(q);
+      });
+
+      // Apply a remembered collapse before the first fetch, so the panel does not
+      // flash open and then shut.
+      applyQueuePanel(q);
+    }
+  }
+
   // ── Queue: clear-all (hard-clear a whole queue) ──
   function bindQueueClearAll() {
     const hook = (id, queue, label) => {
@@ -2842,12 +3588,304 @@
 
   safeInit("dashboard", refreshDashboard);
   safeInit("config", refreshConfig);
+  // ── Notification centre ──
+  // The durable feed is owned by the main process (electron/src/main/notifications.js):
+  // one JSONL file per day under logs/notifications/feed/. This view renders and
+  // acknowledges only — the read marks live in main, so the dots survive a restart
+  // and cannot drift from the list.
+  const NOTIF_COLS = [
+    { key: "ts", label: "Time" },
+    { key: "source", label: "Source" },
+    { key: "level", label: "Level" },
+    { key: "title", label: "Notification" },
+  ];
+  /** Notification source → the sidebar tab that acknowledges it. */
+  const NOTIF_TAB = { queue: "queue", logs: "logs", chat: "chat", dashboard: "dashboard", sessions: "sessions", scripts: "scripts" };
+  const NOTIF_COLLAPSE_KEY = "notif-collapsed-days";
+  const notifState = {
+    rows: [],
+    counts: null,
+    sort: "ts",
+    dir: -1,
+    source: "",
+    level: "",
+    query: "",
+    unreadOnly: false,
+    expanded: new Set(),
+    collapsed: new Set(),
+  };
+
+  function loadNotifCollapsed() {
+    try {
+      const raw = JSON.parse(localStorage.getItem(NOTIF_COLLAPSE_KEY) || "[]");
+      if (Array.isArray(raw)) notifState.collapsed = new Set(raw);
+    } catch {
+      /* first run */
+    }
+  }
+
+  function saveNotifCollapsed() {
+    try {
+      localStorage.setItem(NOTIF_COLLAPSE_KEY, JSON.stringify([...notifState.collapsed]));
+    } catch {
+      /* storage blocked — the panel still works, it just will not remember */
+    }
+  }
+
+  /**
+   * Unread is derived from main's read marks rather than tracked here: a second
+   * source of truth for "has this been seen" is exactly the bug that let the queue
+   * and the runner disagree about what had been handled.
+   */
+  function notifIsUnread(e) {
+    const read = notifState.counts?.read || {};
+    return Date.parse(e.ts) > Math.max(read.global || 0, read[e.source] || 0);
+  }
+
+  function notifHaystack(e) {
+    return `${e.title} ${e.body || ""} ${e.source} ${e.level}`.toLowerCase();
+  }
+
+  /** Paint every sidebar dot from the counts main handed us. */
+  function paintNotifDots() {
+    const bySource = notifState.counts?.bySource || {};
+    for (const [source, tab] of Object.entries(NOTIF_TAB)) {
+      const btn = document.querySelector(`#sidebar-nav .sidebar-btn[data-tab="${tab}"]`);
+      if (!btn) continue;
+      const n = bySource[source] || 0;
+      if (n > 0) btn.setAttribute("data-unread", "1");
+      else btn.removeAttribute("data-unread");
+      btn.title = n > 0 ? `${n} unread notification${n === 1 ? "" : "s"}` : "";
+    }
+    const self = document.querySelector('#sidebar-nav .sidebar-btn[data-tab="notifications"]');
+    if (self) {
+      const total = notifState.counts?.total || 0;
+      if (total > 0) self.setAttribute("data-unread", "1");
+      else self.removeAttribute("data-unread");
+      self.title = total > 0 ? `${total} unread notification${total === 1 ? "" : "s"}` : "";
+    }
+  }
+
+  /** A source tab clears its own dot; the notification panel clears them all. */
+  function acknowledgeTab(tab) {
+    if (!notifState.counts) return; // counts not loaded yet — the first refresh paints
+    if (tab === "notifications") {
+      if (!notifState.counts.total) return;
+      void Promise.resolve(api.notificationsRead({ all: true }))
+        .then((counts) => {
+          notifState.counts = counts || notifState.counts;
+          paintNotifDots();
+          renderNotifications();
+        })
+        .catch(() => {});
+      return;
+    }
+    const source = Object.keys(NOTIF_TAB).find((s) => NOTIF_TAB[s] === tab);
+    if (!source || !notifState.counts.bySource?.[source]) return;
+    void Promise.resolve(api.notificationsRead({ source }))
+      .then((counts) => {
+        notifState.counts = counts || notifState.counts;
+        paintNotifDots();
+      })
+      .catch(() => {});
+  }
+
+  /** Facets come from the data, so a new source needs no change here. */
+  function paintNotifSources() {
+    const sel = $("notif-source");
+    if (!sel) return;
+    const sources = notifState.counts?.sources || Object.keys(NOTIF_TAB);
+    const unread = notifState.counts?.bySource || {};
+    sel.innerHTML =
+      `<option value="">All sources</option>` +
+      sources.map((s) => `<option value="${escAttr(s)}">${esc(s)}${unread[s] ? ` (${unread[s]})` : ""}</option>`).join("");
+    sel.value = notifState.source;
+  }
+
+  function renderNotifications() {
+    const box = $("notif-box");
+    if (!box) return;
+
+    const needle = notifState.query.trim().toLowerCase();
+    const filtered = notifState.rows.filter((e) => {
+      if (notifState.source && e.source !== notifState.source) return false;
+      if (notifState.level && e.level !== notifState.level) return false;
+      if (notifState.unreadOnly && !notifIsUnread(e)) return false;
+      if (needle && !notifHaystack(e).includes(needle)) return false;
+      return true;
+    });
+
+    const k = notifState.sort;
+    const val = (e) => (k === "ts" ? Date.parse(e.ts || "") || 0 : String(e[k] ?? "").toLowerCase());
+    // Same comparator as the sessions table: `-dir` for "a sorts before b" is what
+    // makes dir = -1 mean newest-first. Getting the sign the other way round silently
+    // renders the list oldest-first, which looks plausible until you read a timestamp.
+    const sorted = filtered.slice().sort((a, b) => {
+      const av = val(a);
+      const bv = val(b);
+      if (av === bv) return 0;
+      return av < bv ? -notifState.dir : notifState.dir;
+    });
+
+    const count = $("notif-count");
+    if (count) {
+      const unread = notifState.counts?.total || 0;
+      const shown = filtered.length === notifState.rows.length ? `${filtered.length}` : `${filtered.length} of ${notifState.rows.length}`;
+      count.textContent = unread ? `${shown} · ${unread} unread` : shown;
+    }
+    paintNotifSources();
+
+    if (!notifState.rows.length) {
+      box.innerHTML =
+        '<div class="empty">No notifications yet. They collect here as the app works: frontdesk messages, errors, chat turns, service changes, seat logins and script runs.</div>';
+      return;
+    }
+
+    const head = `<div class="n-sortrow">${NOTIF_COLS.map((c) => {
+      const active = notifState.sort === c.key;
+      const arrow = active ? (notifState.dir === -1 ? " ▼" : " ▲") : "";
+      return `<button class="n-sort${active ? " n-sort--active" : ""}" data-nsort="${escAttr(c.key)}" title="Sort by ${escAttr(c.label)}">${esc(c.label)}${arrow}</button>`;
+    }).join("")}</div>`;
+
+    // One group per day, newest first; the day heading is the collapse handle.
+    const groups = new Map();
+    for (const e of sorted) {
+      const day = String(e.ts).slice(0, 10);
+      if (!groups.has(day)) groups.set(day, []);
+      groups.get(day).push(e);
+    }
+
+    const body = [...groups.entries()]
+      .map(([day, items]) => {
+        const collapsed = notifState.collapsed.has(day);
+        const rows = items
+          .map((e) => {
+            const open = notifState.expanded.has(e.id);
+            const unread = notifIsUnread(e);
+            return `<div class="n-row n-row--clickable${open ? " n-row--open" : ""}${unread ? " n-row--unread" : ""}" data-nid="${escAttr(e.id)}" title="${open ? "Click to hide details" : "Click to show details"}">
+              <span class="n-when">${esc(new Date(e.ts).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit", second: "2-digit" }))}</span>
+              <span class="n-src" data-source="${escAttr(e.source)}">${esc(e.source)}</span>
+              <span class="n-level" data-level="${escAttr(e.level)}">${esc(e.level)}</span>
+              <span class="n-title">${esc(e.title)}${e.body ? `<span class="n-body">${esc(e.body)}</span>` : ""}</span>
+            </div>`;
+          })
+          .join("");
+        return `<div class="n-group${collapsed ? " n-group--collapsed" : ""}">
+          <button class="n-head" data-nday="${escAttr(day)}" title="Show or hide this day"><span class="n-caret">${collapsed ? "▸" : "▾"}</span>${esc(day)}<span class="n-count">${items.length}</span></button>
+          <div class="n-rows">${rows}</div>
+        </div>`;
+      })
+      .join("");
+
+    box.innerHTML = head + body;
+    if (!body) box.innerHTML = head + '<div class="n-empty">Nothing matches those filters.</div>';
+
+    box.querySelectorAll("[data-nsort]").forEach((b) =>
+      b.addEventListener("click", () => {
+        const key = b.dataset.nsort;
+        if (notifState.sort === key) notifState.dir *= -1;
+        else {
+          notifState.sort = key;
+          // Newest-first for time; A→Z for the text columns.
+          notifState.dir = key === "ts" ? -1 : 1;
+        }
+        renderNotifications();
+      }),
+    );
+    box.querySelectorAll("[data-nday]").forEach((b) =>
+      b.addEventListener("click", () => {
+        const day = b.dataset.nday;
+        if (notifState.collapsed.has(day)) notifState.collapsed.delete(day);
+        else notifState.collapsed.add(day);
+        saveNotifCollapsed();
+        renderNotifications();
+      }),
+    );
+    box.querySelectorAll("[data-nid]").forEach((row) =>
+      row.addEventListener("click", () => {
+        const id = row.dataset.nid;
+        if (notifState.expanded.has(id)) notifState.expanded.delete(id);
+        else notifState.expanded.add(id);
+        renderNotifications();
+      }),
+    );
+  }
+
+  async function refreshNotifications() {
+    const res = await api.notificationsList({ limit: 500 });
+    notifState.rows = (res && res.items) || [];
+    notifState.counts = (res && res.counts) || null;
+    paintNotifDots();
+    renderNotifications();
+  }
+
+  /** Counts only — keeps the dots honest without rebuilding the panel. */
+  async function refreshNotifCounts() {
+    const res = await api.notificationsList({ limit: 1 });
+    notifState.counts = (res && res.counts) || null;
+    paintNotifDots();
+  }
+
+  function bindNotifications() {
+    loadNotifCollapsed();
+    $("notif-search")?.addEventListener("input", (e) => {
+      notifState.query = e.target.value;
+      renderNotifications();
+    });
+    $("notif-source")?.addEventListener("change", (e) => {
+      notifState.source = e.target.value;
+      renderNotifications();
+    });
+    $("notif-level")?.addEventListener("change", (e) => {
+      notifState.level = e.target.value;
+      renderNotifications();
+    });
+    $("notif-unread")?.addEventListener("change", (e) => {
+      notifState.unreadOnly = e.target.checked;
+      renderNotifications();
+    });
+    $("notif-refresh")?.addEventListener("click", () => guarded("notifications", refreshNotifications));
+    $("notif-clear")?.addEventListener("click", async () => {
+      try {
+        await api.notificationsClear();
+        notifState.rows = [];
+        await refreshNotifications();
+        toast("Notifications cleared", "ok");
+      } catch (err) {
+        reportError(err, "notifications:clear");
+      }
+    });
+    // Live rows: a new notification moves the dots immediately, and lands in the
+    // list without a round trip when the panel is already open.
+    subscribe("onNotification", (entry) => {
+      if (!entry || !entry.id) return;
+      notifState.rows = [entry, ...notifState.rows].slice(0, 500);
+      if (notifState.counts) {
+        notifState.counts.bySource[entry.source] = (notifState.counts.bySource[entry.source] || 0) + 1;
+        notifState.counts.total = (notifState.counts.total || 0) + 1;
+      }
+      paintNotifDots();
+      if ($("tab-notifications")?.classList.contains("active")) renderNotifications();
+    });
+  }
+
   safeInit("appearance", refreshAppearance);
   safeInit("about", refreshAbout);
+  // Probe the key store up front, so the status pill and every pkm control are
+  // correct before the Key Manager is ever opened. Nothing here mints or revokes —
+  // it only asks personal_key_manager what it will allow.
+  guarded("keys", () => loadCaps());
   safeInit("logs", bindLogFilters);
   safeInit("logs", bindLogStream);
   safeInit("logs", bindLogFiles);
   safeInit("queue", bindQueueClearAll);
+  safeInit("queue", bindQueueControls);
+  safeInit("sessions", bindSessions);
+  // Bind before the first fetch (so the filters work the moment the tab opens) and
+  // fetch straight away, so the sidebar dots are right before the panel is ever
+  // visited.
+  safeInit("notifications", bindNotifications);
+  safeInit("notifications", refreshNotifications);
   setInterval(() => {
     // Light background refresh of health + dashboard while visible (guarded, so
     // a transient failure can't wedge the visible panel).
@@ -2860,5 +3898,11 @@
     if (active("about")) guarded("about", refreshAbout);
     if (active("chat")) guarded("chat", refreshChatSessions);
     if (active("scripts")) guarded("scripts", refreshScripts);
+    // Keep the key-store pill honest without spawning the CLI again — the probe
+    // reuses its cached liveness verdict inside that window.
+    if (active("licenses")) guarded("keys", () => loadCaps());
+    // The push keeps the dots live; this is the safety net if one is missed.
+    if (active("notifications")) guarded("notifications", refreshNotifications);
+    else guarded("notif-dots", refreshNotifCounts);
   }, 15000);
 })();

@@ -55,3 +55,99 @@
   word-break: break-all;
   resize: vertical;
 }
+
+/* ── Capability gate ──
+ *
+ * The key store's verdict (electron/src/main/key-manager.mjs → capabilities()).
+ * personal_key_manager owns every licence, ring and revocation record; when it
+ * cannot be reached or trusted, the writes below are disabled and this banner says
+ * why. A disabled control always carries the reason in its own `title`, so the
+ * styling here only has to make "unavailable" unmistakable without looking broken.
+ */
+
+.gate-banner {
+  display: flex;
+  align-items: flex-start;
+  gap: 8px;
+  margin: 10px 0;
+  padding: 10px 12px;
+  border: 1px solid var(--border);
+  border-left-width: 3px;
+  border-radius: var(--radius-sm);
+  background: var(--surface);
+  font-size: 0.85rem;
+  line-height: 1.5;
+}
+
+.gate-banner__icon {
+  flex: 0 0 auto;
+  display: flex;
+}
+
+.gate-banner--warn {
+  border-left-color: var(--color-yellow);
+  color: var(--color-yellow);
+}
+
+.gate-banner--bad {
+  border-left-color: var(--color-red);
+  color: var(--color-red);
+}
+
+/* Keeps its place in the layout, but stops reading as an available action. */
+button.is-gated {
+  opacity: 0.55;
+  cursor: not-allowed;
+}
+
+/* Inline "this is broken" marker, e.g. an unreadable blocklist in the registry line. */
+.gate-inline {
+  color: var(--color-red);
+}
+
+/* ── Verify row (read-only checks) ──
+ *
+ * challenge / crypto self-test / revocation parity / permissions / bundle signature.
+ * These are never gated: a store you cannot change is still one you can interrogate,
+ * and that is when an operator most needs to.
+ */
+
+.pkm-checks {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-wrap: wrap;
+  margin: 10px 0;
+  padding: 8px 10px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  background: var(--surface);
+}
+
+.pkm-checks__label {
+  font-size: 0.72rem;
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+  color: var(--text-muted);
+}
+
+/* One result line for whichever check ran last. */
+.pkm-checks__out {
+  flex: 1 1 320px;
+  min-width: 0;
+  font-size: 0.8rem;
+  color: var(--text-muted);
+  word-break: break-word;
+}
+
+.pkm-checks__out--ok {
+  color: var(--color-green);
+}
+
+.pkm-checks__out--warn {
+  color: var(--color-yellow);
+}
+
+.pkm-checks__out--err {
+  color: var(--color-red);
+}

@@ -142,6 +142,7 @@ function saveAll() {
   try {
     fs.mkdirSync(QUEUE_DIR, { recursive: true });
     for (const name of Object.keys(QUEUES)) {
+      adoptExternalClears(name);
       const sanitized = stores[name].map((e) => sanitizeObject(e, { auditSource: "event-queue/saveAll" }));
       const content = sanitized.map((e) => JSON.stringify(e)).join("\n") + "\n";
       fs.writeFileSync(queueFilePath(name), content, "utf8");
@@ -166,9 +167,52 @@ for (const name of Object.keys(QUEUES)) {
   }
 }
 
+/**
+ * Adopt `cleared` markers another process wrote straight to the queue file.
+ *
+ * The agent runner clears events by editing `priority.jsonl` in place (and, when
+ * the server is reachable, through PATCH /events/:id — which lands here anyway).
+ * This module's `stores[name]` is loaded once at startup and never re-read, so a
+ * plain `saveQueue()` would re-serialise the stale copy over the runner's edit:
+ * every already-answered event came back to life on the next enqueue and was
+ * answered again (event #1510 was answered four times on 2026-09-24). Merging the
+ * on-disk flags before writing makes the file authoritative for `cleared` while
+ * the server stays authoritative for everything else.
+ */
+function adoptExternalClears(name) {
+  const file = queueFilePath(name);
+  let onDisk;
+  try {
+    if (!fs.existsSync(file)) return;
+    onDisk = fs
+      .readFileSync(file, "utf8")
+      .split("\n")
+      .filter(Boolean)
+      .map((l) => JSON.parse(l));
+  } catch {
+    return; // unreadable or mid-write — the next persist will try again
+  }
+
+  const clearedById = new Map();
+  for (const e of onDisk) {
+    if (e && e.id && e.cleared) clearedById.set(e.id, e);
+  }
+  if (clearedById.size === 0) return;
+
+  for (const evt of stores[name]) {
+    if (evt.cleared) continue;
+    const disk = clearedById.get(evt.id);
+    if (!disk) continue;
+    evt.cleared = true;
+    if (disk.clearedAt) evt.clearedAt = disk.clearedAt;
+    if (disk.clearedBy) evt.clearedBy = disk.clearedBy;
+  }
+}
+
 function saveQueue(name) {
   try {
     fs.mkdirSync(QUEUE_DIR, { recursive: true });
+    adoptExternalClears(name);
     const sanitized = stores[name].map((e) => sanitizeObject(e, { auditSource: "event-queue/saveQueue" }));
     const content = sanitized.map((e) => JSON.stringify(e)).join("\n") + "\n";
     fs.writeFileSync(queueFilePath(name), content, "utf8");
@@ -205,7 +249,7 @@ export function enqueueEvent(event, queueName = "misc_notifications") {
   stores[name].push(entry);
   saveQueue(name);
   console.log(`   📋 [QUEUE] Enqueued #${seqNo} → "${name}" (${event.source}/${event.type})`);
-  logEvent({ source: "webhook", subSource: "queue", level: "info", message: `enqueued #${seqNo} → ${name} (${event.source}/${event.type})`, data: { id, seqNo, queue: name, source: event.source, type: event.type } });
+  logEvent({ source: "webhook", subSource: "queue", level: "info", message: `enqueued #${seqNo} → ${name} (${event.source}/${event.type})`, data: { id, seqNo, queue: name, source: event.source, type: event.type, ...(event.data?.sub ? { sub: event.data.sub } : {}), ...(event.data?.text ? { text: String(event.data.text).slice(0, 200) } : {}) } });
   // Notify the agent runner if this was a priority queue item
   if (name === "priority") {
     signalAgentRunner();

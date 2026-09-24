@@ -772,7 +772,18 @@ export const photosTools = [
   },
 ];
 
-/** Combined list of all tools for use by the agent runner */
+/**
+ * Frontdesk chat tools. `frontdesk_reply` takes `text` ONLY.
+ *
+ * There is deliberately no `sub` parameter: the seat comes from the event
+ * (`event.data.sub`, resolved from the licence when the envelope decrypted) and
+ * `resolveReplySeat()` in mcp/agent-runner/tool-executor.js is the only thing that
+ * decides it. Offering it invited the model to invent one — it sent `"frontdesk"`,
+ * `"frontdesk_user"` and even the question text as a seat, and the reply endpoint
+ * rejected each with `unknown_seat` (2026-09-24). The Electron operator chat never
+ * had this tool (see SUPPORTED_TOOLS in electron/src/main/chat-agent.mjs), so
+ * removing the parameter affects the frontdesk channel only.
+ */
 export const frontdeskTools = [
   {
     name: "frontdesk_reply",
@@ -780,7 +791,6 @@ export const frontdeskTools = [
     inputSchema: {
       type: "object",
       properties: {
-        sub: { type: "string", description: "Optional. The frontdesk user's seat id. The runner fills this in from the event automatically — omit it and just send `text`." },
         text: { type: "string", description: "The reply text to send to the user" },
       },
       required: ["text"],

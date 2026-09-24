@@ -411,23 +411,25 @@ async function whatsappMarkRead(args) {
  * The reply seat is NEVER taken from the model.
  *
  * The event carries the authoritative seat (`event.data.sub`, resolved from the
- * licence during decryption) and the runner passes it here as `ctx.sub`. The
- * model used to be told to copy it out of the prompt, which it got wrong — it
- * hallucinated `sub: "frontdesk"` from the event source name and the API
- * rejected it with `unknown_seat:frontdesk` (event #1510). Preferring the
- * event's seat removes that whole failure mode and stops a model-supplied id
- * from ever choosing which user a reply is encrypted for.
+ * licence during decryption) and the runner passes it here as `ctx.sub`.
+ *
+ * History: the model used to be asked to copy the seat out of the prompt, which it
+ * got wrong (`sub: "frontdesk"` from the event source name, `"frontdesk_user"`, and
+ * once the question text itself) — each rejected with `unknown_seat`, and event #1510
+ * was answered four times over on 2026-09-24. A first fix preferred the event seat
+ * but kept the model's value as a fallback for events with no seat; that fallback is
+ * gone too, because it was the last path by which a model-supplied id could decide
+ * which user's key encrypts a reply. `sub` is no longer in the tool schema either.
  */
 function resolveReplySeat(ctx, args) {
   const fromEvent = ctx?.sub || null;
-  const fromModel = args?.sub || null;
-  if (fromEvent) {
-    if (fromModel && fromModel !== fromEvent) {
-      console.log(`   🔒 [EXECUTOR] frontdesk_reply sub overridden: model sent "${fromModel}", using event seat "${fromEvent}"`);
-    }
-    return fromEvent;
+  if (!fromEvent) {
+    throw new Error("frontdesk_reply needs the event's seat — this event carried no 'sub'");
   }
-  return fromModel;
+  if (args?.sub) {
+    console.log(`   🔒 [EXECUTOR] frontdesk_reply ignoring the model-supplied sub "${args.sub}" (using "${fromEvent}")`);
+  }
+  return fromEvent;
 }
 
 async function frontdeskReply(sub, text) {

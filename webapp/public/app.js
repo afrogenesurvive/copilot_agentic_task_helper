@@ -154,9 +154,7 @@ function forceRelogin(reason) {
   const sub = state.sub;
   doLogout();
   const errEl = document.getElementById("login-error");
-  errEl.textContent =
-    `Session ended${sub ? ` for ${sub}` : ""} — ${reason || "the backend restarted"}. ` +
-    "Paste your license key to log in again.";
+  errEl.textContent = `Session ended${sub ? ` for ${sub}` : ""} — ${reason || "the backend restarted"}. ` + "Paste your license key to log in again.";
   errEl.classList.remove("hidden");
 }
 
@@ -238,9 +236,7 @@ async function loadAccountStatus() {
       document.getElementById("google-status").textContent = out.google.connected
         ? `Connected as ${out.google.user || "your account"}`
         : "Not connected yet.";
-      document.getElementById("acct-trello").textContent = out.trello.configured
-        ? "Custom (seat-specific)"
-        : "Default (agent .env)";
+      document.getElementById("acct-trello").textContent = out.trello.configured ? "Custom (seat-specific)" : "Default (agent .env)";
     }
   } catch {
     /* offline — leave defaults */
@@ -526,9 +522,7 @@ async function degradedSend(text) {
   pendingOutbox.push({ text, ts: new Date().toISOString() });
   saveOutbox();
   addBubble(
-    online
-      ? "⚠️ Couldn't send — queued locally and will retry automatically."
-      : "📡 Offline — queued locally, will send when connected.",
+    online ? "⚠️ Couldn't send — queued locally and will retry automatically." : "📡 Offline — queued locally, will send when connected.",
     "System",
     new Date().toISOString(),
   );

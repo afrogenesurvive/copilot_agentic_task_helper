@@ -1,5 +1,61 @@
 # Changelog
 
+## [0.3.2-2] — 2026-09-24
+
+### A notification centre for the operator console
+
+Everything worth knowing was either transient — a message that faded after four seconds — or invisible
+unless you happened to be looking at the right panel. A service that stopped in the small hours, a script
+that failed, a collaborator who signed in, an error in the background: none of them left a lasting trace.
+
+There is now a **Notifications** item in the sidebar listing everything that has happened, newest first.
+Columns sort on click, the list searches and filters by source and level, entries are grouped by day in
+sections you can collapse, and clicking one shows the detail behind it.
+
+A red dot appears on the sidebar item a notification belongs to — Queue for a new chat message, Logs for
+an error, Chat for a reply or a reply that failed, Dashboard for a service that stopped unexpectedly,
+Sessions for a sign-in, Scripts for a run that finished or failed. Opening a tab marks its own
+notifications as seen; opening the notification list clears every dot.
+
+Stopping a service or a script yourself is never reported as a failure, and sign-outs are not reported at
+all — the feed is for things you would want to have been told about.
+
+Notifications are stored in the log folder, one file per day with the "seen" marks beside them, so they
+survive a restart. Old files are removed after 30 days by default. That, and a master on/off switch, are
+both in the Config tab.
+
+## [0.3.2-1] — 2026-09-24
+
+### Frontdesk chat: answers that never arrived, and one that arrived four times
+
+A single day of logs revealed four separate faults behind a chat that looked silent from the outside.
+
+**Replies were addressed to a seat that does not exist.** The agent was asked for a reply "seat" it
+had no way to know, guessed one, and the reply was refused — so the question was never answered. That
+parameter no longer exists: the seat comes from the licence the message arrived with, and it is now the
+only thing that can decide it.
+
+**The same message could be answered repeatedly while newer ones waited.** Two parts of the system
+kept their own copy of the message queue, and one of them rewrote the other's work — so events that had
+already been handled came back to life, and because the queue is served oldest-first, new messages sat
+behind them. The two now agree on what has been handled, and one wake-up drains the backlog instead of
+handling a single item.
+
+**A question that needed a lookup got no answer at all.** Asking for the latest email made the agent
+read your inbox and then stop — the result was never passed back to it, so nothing was ever sent. The
+agent now takes another turn with what it read and is expected to finish with an answer.
+
+**Failures were silent.** A reply that failed was marked done and forgotten. Failures now get a second
+attempt, the user gets a short apology rather than silence, and anything still failing is recorded for
+the operator instead of disappearing.
+
+New settings, both optional: `AGENT_RUNNER_MAX_ROUNDS` (default 5) bounds how many steps one chat
+question may take, and `AGENT_MAX_ITEMS_PER_PASS` (default 10) bounds how much of a backlog one wake-up
+drains.
+
+If the operator console is open, restart the agent runner from the Dashboard — it is a long-lived
+process and does not pick up code changes on its own.
+
 ## [0.3.1-2] — 2026-09-24
 
 ### The app was called "Electron" in the dock

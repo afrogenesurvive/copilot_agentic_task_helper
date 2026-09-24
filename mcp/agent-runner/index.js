@@ -35,8 +35,9 @@ import {
   acquireTaskLock,
   releaseTaskLock,
   isTaskLocked,
+  appendDeadLetter,
 } from "./poller.js";
-import { callModel, buildTaskContext } from "./model-client.js";
+import { callModel, buildTaskContext, toolStepMessages } from "./model-client.js";
 import { getModelName } from "../../shared/model-provider.mjs";
 import { executeToolCall } from "./tool-executor.js";
 import { logAction } from "./logger.js";
@@ -48,6 +49,31 @@ const PID_FILE = path.resolve(__dirname, ".runner.pid");
 // ── Config ──
 
 const ENABLED = process.env.AGENT_RUNNER_ENABLED !== "false";
+
+/**
+ * How many model turns one frontdesk event may take: read → answer, plus room to
+ * recover from a failed tool or a second read.
+ *
+ * The initial default of 3 was measured too tight on the first live run: asked
+ * "check latest inbox message" the model made two reads and ran out before it could
+ * reply, so the user got the fallback apology instead of an answer. Non-frontdesk
+ * events always get exactly one turn.
+ */
+const MAX_ROUNDS = (() => {
+  const n = parseInt(process.env.AGENT_RUNNER_MAX_ROUNDS || "5", 10);
+  return Number.isFinite(n) && n > 0 ? Math.min(n, 10) : 5;
+})();
+
+/**
+ * Upper bound on how many queue items a single wake-up will process. The loop in
+ * mainLoop drains the backlog instead of stopping after one item (the fallback
+ * timer below used to be the only thing that continued, and it skipped a non-empty
+ * queue — so 5 queued messages needed 5 separate triggers).
+ */
+const MAX_ITEMS_PER_PASS = (() => {
+  const n = parseInt(process.env.AGENT_MAX_ITEMS_PER_PASS || "10", 10);
+  return Number.isFinite(n) && n > 0 ? Math.min(n, 50) : 10;
+})();
 
 // Trigger file path — the webhook server touches this whenever it
 // enqueues a priority item, waking the runner up (no polling).
@@ -97,15 +123,24 @@ function printTaskState(label) {
 
 // ── Main processing loop ──
 
+/**
+ * What a chat user gets when the event could not be answered at all. The reply
+ * itself is sent through the normal executor, so it is encrypted for the seat by
+ * the webhook server exactly like any other reply.
+ */
+const FALLBACK_REPLY =
+  "Sorry — I hit a problem handling that message on my side. A team member will pick it up and follow up with you shortly.";
+
 async function processEvent(event) {
   const eventId = event.id;
   const seqNo = event.seqNo;
   const tag = seqNo ? `#${seqNo}` : `(${eventId?.slice(0, 8)}...)`;
+  const eventType = `${event.source}/${event.type}`;
 
   console.log(`\n   ╔══════════════════════════════════════════════╗`);
   console.log(`   ║       🔄 PROCESSING EVENT ${tag.padEnd(16)}║`);
   console.log(`   ╚══════════════════════════════════════════════╝`);
-  console.log(`   📋 [RUNNER] ${event.source}/${event.type}`);
+  console.log(`   📋 [RUNNER] ${eventType}`);
 
   // Show queue state before processing
   printQueueState("before");
@@ -126,55 +161,148 @@ async function processEvent(event) {
     console.log(`   🔒 [RUNNER] Frontdesk event detected — read-only + commenting only`);
   }
 
-  try {
-    // Step 1: Send to the configured LLM for reasoning
-    console.log(`   🤖 [RUNNER] Asking ${getModelName()}...`);
-    const decision = await callModel(event, allTools);
+  const seat = event.data?.sub || null;
+  // A frontdesk question normally needs two turns (read the data, then reply with
+  // it) and may need a third after a failed tool. Everything else is decided in a
+  // single turn, exactly as before.
+  const maxRounds = isFrontdesk ? MAX_ROUNDS : 1;
+  const history = [];
+  let lastError = null;
 
-    if (!decision) {
-      console.log(`   ⏭️  [RUNNER] No decision — marking as skipped`);
-      logAction({ eventId, seqNo, eventType: `${event.source}/${event.type}`, action: "skipped" });
-      markCleared(eventId);
+  try {
+    for (let round = 1; round <= maxRounds; round++) {
+      // Step 1: Send to the configured LLM for reasoning
+      // (throws with code MODEL_ERROR when the provider itself is unreachable)
+      console.log(`   🤖 [RUNNER] Asking ${getModelName()}${round > 1 ? ` (turn ${round}/${maxRounds})` : ""}...`);
+      const decision = await callModel(event, allTools, { history, step: `decision-${round}` });
+
+      if (!decision) {
+        console.log(`   ⏭️  [RUNNER] No decision — marking as skipped`);
+        logAction({ eventId, seqNo, eventType, action: "skipped", reason: `no tool call on turn ${round}` });
+        await markCleared(eventId);
+        printQueueState("after");
+        return;
+      }
+
+      // Step 2: Taking action
+      console.log(`\n   ╔══════════════════════════════════════════════╗`);
+      console.log(`   ║        🛠️  TAKING ACTION                       ║`);
+      console.log(`   ╚══════════════════════════════════════════════╝`);
+      console.log(`   🎯 [RUNNER] ${decision.name}`);
+      console.log(`   📝 [RUNNER] Params: ${JSON.stringify(decision.arguments)}`);
+
+      const result = await executeToolCall(decision.name, decision.arguments, { isFrontdesk, sub: seat });
+
+      // Step 3: Log the outcome
+      logAction({
+        eventId,
+        seqNo,
+        eventType,
+        toolName: decision.name,
+        toolArgs: decision.arguments,
+        toolResult: result.ok ? "success" : "failed",
+        error: result.error || null,
+        action: result.ok ? "processed" : "failed",
+      });
+
+      // A reply — or any non-frontdesk action — ends the event here.
+      if (result.ok && (!isFrontdesk || decision.name === "frontdesk_reply")) {
+        console.log(`\n   ✅ [RUNNER] Event ${tag} processed successfully`);
+        await markCleared(eventId);
+        printQueueState("after");
+        return;
+      }
+
+      // Otherwise there is another turn: either a read result to answer from, or an
+      // error to work around. Both are just context for the next request.
+      lastError = result.ok ? null : result.error;
+      if (result.ok) {
+        console.log(`   ↩️  [RUNNER] ${decision.name} done — feeding the result back for the answer`);
+      } else {
+        console.log(`   ⚠️  [RUNNER] Turn ${round}/${maxRounds} failed: ${result.error}`);
+      }
+
+      history.push(...toolStepMessages(decision, summarizeToolResult(result), `${eventId}-turn-${round}`));
+    }
+
+    // Budget spent without reaching a terminal action.
+    await failEvent({
+      event,
+      eventId,
+      seqNo,
+      eventType,
+      isFrontdesk,
+      seat,
+      reason: lastError || `no terminal action within ${maxRounds} turn(s)`,
+    });
+    printQueueState("after");
+  } catch (err) {
+    if (err && err.code === "MODEL_ERROR") {
+      // The provider was unreachable. Not the event's fault, and emphatically not
+      // "nothing to do" — this used to be swallowed as a skip and cleared.
+      await failEvent({ event, eventId, seqNo, eventType, isFrontdesk, seat, reason: `model unavailable: ${err.message}` });
       printQueueState("after");
       return;
     }
-
-    // Step 2: Taking action
-    console.log(`\n   ╔══════════════════════════════════════════════╗`);
-    console.log(`   ║        🛠️  TAKING ACTION                       ║`);
-    console.log(`   ╚══════════════════════════════════════════════╝`);
-    console.log(`   🎯 [RUNNER] ${decision.name}`);
-    console.log(`   📝 [RUNNER] Params: ${JSON.stringify(decision.arguments)}`);
-
-    const result = await executeToolCall(decision.name, decision.arguments, { isFrontdesk, sub: event.data?.sub });
-
-    // Step 3: Log the outcome
-    logAction({
-      eventId,
-      seqNo,
-      eventType: `${event.source}/${event.type}`,
-      toolName: decision.name,
-      toolArgs: decision.arguments,
-      toolResult: result.ok ? "success" : "failed",
-      error: result.error || null,
-      action: result.ok ? "processed" : "failed",
-    });
-
-    // Step 4: Mark as cleared
-    if (result.ok) {
-      console.log(`\n   ✅ [RUNNER] Event ${tag} processed successfully`);
-    } else {
-      console.log(`   ❌ [RUNNER] Event ${tag} failed: ${result.error}`);
-    }
-    markCleared(eventId);
-
-    // Show queue state after
-    printQueueState("after");
-  } catch (err) {
     console.error(`   ❌ [RUNNER] Unexpected error processing ${tag}: ${err.message}`);
-    logAction({ eventId, seqNo, eventType: `${event.source}/${event.type}`, action: "failed", error: err.message });
+    logAction({ eventId, seqNo, eventType, action: "failed", error: err.message });
     releaseLock(eventId);
     printQueueState("after");
+  }
+}
+
+/**
+ * Terminal failure for one event: tell the user, record it, then clear it.
+ *
+ * Clearing is deliberate even though the run failed — every trigger retries
+ * `pending[0]`, so leaving it pending would block the whole queue behind it (the
+ * old code left exception-path events pending forever for exactly that reason).
+ * The dead-letter file is what makes the loss visible and recoverable.
+ */
+async function failEvent({ event, eventId, seqNo, eventType, isFrontdesk, seat, reason }) {
+  console.error(`   ❌ [RUNNER] Event ${seqNo ? `#${seqNo}` : eventId} failed: ${reason}`);
+
+  // Never leave a chat user in silence — say something, even when we could not help.
+  if (isFrontdesk && seat) {
+    await sendFallbackReply(seat, reason);
+  }
+
+  appendDeadLetter({
+    eventId,
+    seqNo,
+    eventType,
+    isFrontdesk,
+    seat,
+    reason,
+    text: event.data?.text ?? null,
+    data: event.data ?? null,
+  });
+
+  logAction({ eventId, seqNo, eventType, action: "failed", error: reason, deadLettered: true });
+  await markCleared(eventId, { failed: true, lastError: String(reason).slice(0, 500) });
+}
+
+/** Best-effort apology to a frontdesk seat after a terminal failure. */
+async function sendFallbackReply(sub, reason) {
+  try {
+    const r = await executeToolCall("frontdesk_reply", { text: FALLBACK_REPLY }, { isFrontdesk: true, sub });
+    if (r.ok) console.log(`   💬 [RUNNER] Sent the fallback reply to ${sub} (reason: ${reason})`);
+    else console.error(`   ❌ [RUNNER] Fallback reply failed: ${r.error}`);
+    return r.ok;
+  } catch (err) {
+    console.error(`   ❌ [RUNNER] Fallback reply threw: ${err.message}`);
+    return false;
+  }
+}
+
+/** Tool result → the text fed back to the model (the executor already sanitized it). */
+function summarizeToolResult(result) {
+  if (!result.ok) return `[error] ${result.error || "tool failed"}`;
+  try {
+    const out = JSON.stringify(result.result !== undefined ? result.result : result);
+    return out.length > 4000 ? `${out.slice(0, 4000)}…(truncated)` : out;
+  } catch {
+    return "ok";
   }
 }
 
@@ -276,44 +404,58 @@ async function processTask(task) {
 // Guard to prevent concurrent mainLoop runs
 let isProcessing = false;
 
+// Set when a trigger arrives while an event is mid-flight. Without it the trigger
+// is dropped (the old `if (isProcessing) return;`) and the new item waits for some
+// later, unrelated trigger — which is how a 5-item backlog produced latencies of
+// 23 minutes and 2h48m in the logs.
+let pendingWork = false;
+
 async function mainLoop() {
-  if (isProcessing) return;
+  if (isProcessing) {
+    pendingWork = true;
+    return;
+  }
   isProcessing = true;
 
-  if (!ENABLED) {
-    console.log(`   ⏸️  [RUNNER] Disabled (AGENT_RUNNER_ENABLED=false)`);
-    isProcessing = false;
-    return;
-  }
+  try {
+    if (!ENABLED) {
+      console.log(`   ⏸️  [RUNNER] Disabled (AGENT_RUNNER_ENABLED=false)`);
+      return;
+    }
 
-  // First check the priority queue
-  const pending = readPending();
-  if (pending.length > 0) {
-    console.log(`\n   🔔 [RUNNER] ${pending.length} pending item(s) detected in priority queue`);
-    const event = pending[0];
-    await processEvent(event);
-    isProcessing = false;
-    return;
-  }
+    // Drain the priority queue (oldest first). `seen` keeps a single pass from
+    // retrying an item that failed but stayed pending.
+    const seen = new Set();
+    for (let pass = 0; pass < MAX_ITEMS_PER_PASS; pass++) {
+      const pending = readPending().filter((e) => !seen.has(e.id));
+      if (pending.length === 0) break;
+      const event = pending[0];
+      seen.add(event.id);
+      console.log(
+        `\n   🔔 [RUNNER] ${pending.length} pending item(s) ${pass === 0 ? "detected" : "still"} in priority queue`,
+      );
+      await processEvent(event);
+    }
 
-  // Queue empty — check for uncompleted tasks
-  const tasks = readTasks();
-  const pendingTasks = tasks.filter((t) => !t.checked);
-  if (pendingTasks.length === 0) {
-    isProcessing = false;
-    return;
-  }
+    // Queue is empty — fall through to the daily task list
+    const tasks = readTasks();
+    const pendingTasks = tasks.filter((t) => !t.checked);
+    if (pendingTasks.length === 0) return;
 
-  // Skip tasks already being processed by another cycle
-  const availableTask = pendingTasks.find((t) => !isTaskLocked(t.lineIndex));
-  if (!availableTask) {
-    isProcessing = false;
-    return;
-  }
+    // Skip tasks already being processed by another cycle
+    const availableTask = pendingTasks.find((t) => !isTaskLocked(t.lineIndex));
+    if (!availableTask) return;
 
-  console.log(`\n   🔔 [RUNNER] ${pendingTasks.length} uncompleted task(s) in daily task list`);
-  await processTask(availableTask);
-  isProcessing = false;
+    console.log(`\n   🔔 [RUNNER] ${pendingTasks.length} uncompleted task(s) in daily task list`);
+    await processTask(availableTask);
+  } finally {
+    isProcessing = false;
+    // A trigger that arrived while we were busy still needs servicing.
+    if (pendingWork) {
+      pendingWork = false;
+      setTimeout(() => mainLoop(), 50);
+    }
+  }
 }
 
 // ── Startup ──
@@ -360,13 +502,10 @@ const triggerWatcher = fs.watch(TRIGGER_FILE, () => {
 // task file changes aren't tracked. This slow fallback picks up tasks.
 let taskTimer = null;
 if (TASK_CHECK_INTERVAL > 0) {
-  taskTimer = setInterval(() => {
-    // Only bother if the queue is empty (otherwise mainLoop already runs)
-    const pending = readPending();
-    if (pending.length === 0) {
-      mainLoop();
-    }
-  }, TASK_CHECK_INTERVAL);
+  // Safety net only: the trigger file drives the queue in normal operation. This
+  // fires unconditionally (it used to skip a non-empty queue) so a missed trigger
+  // or a crashed pass cannot leave the backlog sitting there.
+  taskTimer = setInterval(() => mainLoop(), TASK_CHECK_INTERVAL);
 }
 
 // Run once immediately on startup (handles backlog + tasks)

@@ -15,7 +15,15 @@ import { sanitizeObject } from "../../scripts/sanitize.stub.mjs";
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const QUEUE_FILE = path.resolve(__dirname, "..", "..", "logs", "pending-tool-calls", "priority.jsonl");
+// Events that failed every attempt are appended here instead of being silently dropped.
+const DEAD_LETTER_FILE = path.resolve(__dirname, "..", "..", "logs", "pending-tool-calls", "dead-letter.jsonl");
 const TASKS_DIR = path.resolve(__dirname, "..", "..", "tasks");
+
+// The webhook server holds the queue in memory and rewrites the file from that
+// copy, so clearing through its API is what keeps the two in step (a bare file
+// edit gets reverted on the next enqueue — see event-queue.js saveQueue).
+const QUEUE_NAME = "priority";
+const WEBHOOK_BASE = `http://localhost:${process.env.WEBHOOK_PORT || "3199"}`;
 
 // In-memory set of event IDs currently being processed (lock)
 const processing = new Set();
@@ -55,12 +63,58 @@ export function readPending() {
 }
 
 /**
- * Mark an event as cleared in the queue file (soft-delete).
- * Adds "cleared": true and "clearedAt" timestamp to the JSON line.
+ * Clear an event so it is never processed again.
+ *
+ * The webhook server owns the queue in memory, so the API is tried first: it
+ * updates that copy *and* rewrites the file (PATCH /events/:id?queue=priority).
+ * Anything else — server down, token unset, event not in its memory — falls back
+ * to the in-place file edit this used to do on its own.
+ *
+ * The processing lock is released in `finally`, so a line that cannot be
+ * rewritten (already cleared, or absent because the server just rewrote the
+ * file) no longer locks the id for the life of the process.
+ *
  * @param {string} eventId — The event ID to mark
- * @returns {boolean} Success
+ * @param {object} [extra] — Extra fields for the queue line (e.g. failure detail)
+ * @returns {Promise<boolean>} Success
  */
-export function markCleared(eventId) {
+export async function markCleared(eventId, extra) {
+  try {
+    let ok = false;
+    try {
+      ok = await clearViaApi(eventId);
+    } catch (err) {
+      console.warn(`   ⚠️  [POLLER] API clear failed (${err.message}) — editing the queue file instead`);
+    }
+    // `extra` only ever lands in the file: the server has no way to store arbitrary
+    // fields, so its next saveQueue drops them and the dead-letter file remains the
+    // durable record of the failure.
+    if (!ok || extra) ok = clearInFile(eventId, extra) || ok;
+    return ok;
+  } finally {
+    processing.delete(eventId);
+  }
+}
+
+/**
+ * PATCH the event cleared on the webhook server. False means "use the file
+ * fallback" — unreachable, refused (503 with no WEBHOOK_API_TOKEN, 401 on
+ * mismatch), or an event that server does not hold.
+ */
+async function clearViaApi(eventId) {
+  const token = process.env.WEBHOOK_API_TOKEN || "";
+  if (!token) return false; // /events fails closed without it — skip the round trip
+  const res = await fetch(`${WEBHOOK_BASE}/events/${encodeURIComponent(eventId)}?queue=${QUEUE_NAME}`, {
+    method: "PATCH",
+    headers: { Authorization: `Bearer ${token}` },
+  });
+  if (res.ok) return true;
+  if (res.status !== 404) console.warn(`   ⚠️  [POLLER] API clear returned HTTP ${res.status}`);
+  return false;
+}
+
+/** In-place JSONL edit — the offline path, and the only one that can store `extra`. */
+function clearInFile(eventId, extra) {
   try {
     if (!fs.existsSync(QUEUE_FILE)) return false;
 
@@ -72,10 +126,13 @@ export function markCleared(eventId) {
       if (!line.trim()) return line;
       try {
         const evt = JSON.parse(line);
-        if (evt.id === eventId && !evt.cleared) {
-          evt.cleared = true;
-          evt.clearedAt = new Date().toISOString();
-          evt.clearedBy = "agent-runner";
+        if (evt.id === eventId && (!evt.cleared || extra)) {
+          if (!evt.cleared) {
+            evt.cleared = true;
+            evt.clearedAt = new Date().toISOString();
+            evt.clearedBy = "agent-runner";
+          }
+          if (extra && typeof extra === "object") Object.assign(evt, extra);
           found = true;
           return JSON.stringify(evt);
         }
@@ -85,14 +142,32 @@ export function markCleared(eventId) {
       }
     });
 
-    if (found) {
-      fs.writeFileSync(QUEUE_FILE, updated.join("\n"), "utf8");
-      processing.delete(eventId);
-    }
-
+    if (found) fs.writeFileSync(QUEUE_FILE, updated.join("\n"), "utf8");
     return found;
   } catch (err) {
     console.error("   ❌ [POLLER] Error marking cleared:", err.message);
+    return false;
+  }
+}
+
+/**
+ * Append a permanently-failed event to the dead-letter file.
+ *
+ * A failed reply used to be marked cleared and forgotten: the user saw silence and
+ * nothing recorded why. This keeps the event and its error so the operator can
+ * replay or fix it, and it lives outside the queue so it can never block the head
+ * of the line (every trigger retries `pending[0]`).
+ *
+ * @param {object} entry — anything JSON-serializable (event summary + error)
+ * @returns {boolean} Success
+ */
+export function appendDeadLetter(entry) {
+  try {
+    fs.mkdirSync(path.dirname(DEAD_LETTER_FILE), { recursive: true });
+    fs.appendFileSync(DEAD_LETTER_FILE, JSON.stringify({ deadLetteredAt: new Date().toISOString(), ...entry }) + "\n", "utf8");
+    return true;
+  } catch (err) {
+    console.error("   ❌ [POLLER] Error writing dead letter:", err.message);
     return false;
   }
 }

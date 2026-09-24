@@ -73,17 +73,86 @@
   border-bottom: 1px solid var(--border);
 }
 
-.config-sec-head {
-  cursor: pointer;
-  user-select: none;
+/* ── Tab strip + filter ──
+ *
+ * Tabs replace the accordion: one section at a time, with the dirty count shown on
+ * each tab so a pending edit cannot be forgotten on a tab you have navigated away
+ * from. (`.ctab`, not `.tab` — `.tab` is the app's own panel class.)
+ */
+
+.config-tabs {
+  display: flex;
+  align-items: center;
+  gap: 2px;
+  flex-wrap: wrap;
+  margin: 4px 0 12px;
+  padding-bottom: 6px;
+  border-bottom: 1px solid var(--border);
 }
 
-.config-sec-head:hover .caret {
+.ctab {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  padding: 4px 10px;
+  border: 1px solid transparent;
+  border-radius: var(--radius-sm);
+  background: transparent;
+  color: var(--text-muted);
+  font-size: 0.82rem;
+}
+
+.ctab:hover:not(:disabled) {
+  color: var(--text);
+  border-color: var(--border);
+  background: var(--surface);
+}
+
+.ctab.is-active {
   color: var(--accent);
+  border-color: var(--accent-border);
+  background: var(--surface);
+  font-weight: 600;
 }
 
-.config-section.collapsed .config-sec-body {
-  display: none;
+/* Unsaved changes — on a tab, or on a group inside the filtered view. */
+.ctab__count,
+.config-sec-count {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  min-width: 1.15rem;
+  height: 1.15rem;
+  padding: 0 4px;
+  border-radius: 999px;
+  background: var(--accent);
+  color: #ffffff;
+  font-size: 0.7rem;
+  font-weight: 600;
+}
+
+.config-tab-body {
+  display: flex;
+  flex-direction: column;
+}
+
+/* Filter mode: sections are labelled groups spanning every tab, not toggles. */
+.config-filter-note {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  margin-bottom: 10px;
+  color: var(--text-muted);
+  font-size: 0.82rem;
+}
+
+.config-sec-head {
+  cursor: default;
+}
+
+.config-sec-body {
+  display: flex;
+  flex-direction: column;
 }
 
 .config-field {

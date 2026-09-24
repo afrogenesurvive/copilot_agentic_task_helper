@@ -25,22 +25,33 @@ preload bridge ([`electron/src/preload.js`](../electron/src/preload.js#L7)) as `
 | `logsClear()` | [`logs:clear`](../electron/src/main.js#L1105) | Clears the in-memory live buffer |
 | `onLogEntry(cb)` | `logs:entry` (push) | Live entries pushed from main via `webContents.send`; see [`main/logger.js`](../electron/src/main/logger.js#L1) |
 | `toolLog(lines?)` | [`logs:tool`](../electron/src/main.js#L1096) | `/tool-logs?lines=` result (legacy tool-call tail) |
-| `sessions()` | [`frontdesk:sessions`](../electron/src/main.js#L1109) | Last 200 frontdesk session entries |
-| `pkmStatus(registry?)` | [`pkm:status`](../electron/src/main.js#L1294) | `{ok, data:{present, pkmRepo, pkmBin, storeRoot, indexFile, registry, registries:[{id,name,app,engine,defaultKid,rings,seats,revoked,verifierTargets}], entry, loosePermissions, authorityPublicKey, timeoutMs}}`. `registry` defaults to `PKM_REGISTRY` (config.json/.env) |
-| `pkmRegistries()` | [`pkm:registries`](../electron/src/main.js#L1295) | `{ok, data:{registries, indexFile, root}}` — every registry in the store |
-| `pkmList(registry?, days?)` | [`pkm:list`](../electron/src/main.js#L1296) | `{ok, data:{registry, days, counts, archived, rows:[{sub,kid,exp,expUtc,issuedAt,enc,status,daysLeft}]}}`. Note `check-exp` archives already-expired records as a side effect |
-| `pkmIssue(registry?, sub, exp)` | [`pkm:issue`](../electron/src/main.js#L1297) | `{ok, data:{registry,sub,kid,exp,issuedAt,licenseKey}}` — **displayed once, never logged** |
-| `pkmRevoke(registry?, sub, reason?)` | [`pkm:revoke`](../electron/src/main.js#L1298) | `{ok, data:{registry, sub, blocklistSize, archived}}` |
-| `pkmUnrevoke(registry?, sub)` | [`pkm:unrevoke`](../electron/src/main.js#L1299) | `{ok, data:{registry, sub, changed, blocklistSize}}` |
-| `pkmArchive(registry?)` | [`pkm:archive`](../electron/src/main.js#L1300) | `{ok, data:{registry, archived}}` |
-| `pkmAudit(registry?)` | [`pkm:audit`](../electron/src/main.js#L1301) | `{ok, data:{registry, entries:[{ts,action,sub,kid,exp,detail}]}}` |
-| `pkmValidate(registry?, key)` | [`pkm:validate`](../electron/src/main.js#L1302) | `{ok, data:{ok, claims?, reason?}}` |
-| `pkmRings(registry?)` | [`pkm:rings`](../electron/src/main.js#L1304) | `{ok, data:{registry, defaultKid, rings:[{kid,publicKey,notAfter,createdAt}]}}` |
-| `pkmRingCreate(registry?, kid)` | [`pkm:ringCreate`](../electron/src/main.js#L1305) | `{ok, data:{registry, kid, dir, privateKeyPath, publicKey}}` — mints a new master keypair (private half stays 0600 on disk) |
-| `pkmRingRetire(registry?, kid, at?)` | [`pkm:ringRetire`](../electron/src/main.js#L1306) | `{ok, data:{registry, kid, notAfter}}` — `at` is an ISO date or `now` |
-| `pkmAgentKey(registry?)` | [`pkm:agentKey`](../electron/src/main.js#L1307) | `{ok, data:{registry, dir, publicKey, privateKeyPath}}` — regenerates the X25519 peer keypair (ed25519+x25519 only) |
-| `pkmSetDefaultKid(registry?, kid)` | [`pkm:setDefaultKid`](../electron/src/main.js#L1308) | `{ok, data:{registry, defaultKid}}` — ring that signs new seats |
-| `pkmSyncRevocation(registry?)` | [`pkm:syncRevocation`](../electron/src/main.js#L1309) | `{ok, data:{results:[{registry, seats, changes:[{label,path,changed}]}]}}` — rewrites an embedded blocklist; **rebuild the consumer app** afterwards |
+| `sessions()` | [`frontdesk:sessions`](../electron/src/main.js#L1109) | Last 200 frontdesk session entries || `notificationsList(opts)` | [`notifications:list`](../electron/src/main.js#L1417) | `{ok, items, counts}` — feed entries newest-first, filtered by `{source, level, search, unreadOnly, limit}`, plus per-source unread counts and the read marks. The store owns the feed (`logs/notifications/feed/*.jsonl`); the renderer only renders and acknowledges |
+| `notificationsRead(target)` | [`notifications:read`](../electron/src/main.js#L1422) | Acknowledge: `{source}` clears that source's dot, `{all: true}` clears every dot. Returns the new counts |
+| `notificationsClear()` | [`notifications:clear`](../electron/src/main.js#L1423) | Deletes every stored notification and resets the in-memory ring |
+| `onNotification(cb)` | `notifications:new` (push) | Each new entry as it is recorded — `{id, ts, source, level, title, body}`, `source` ∈ queue \| logs \| chat \| dashboard \| sessions \| scripts || `pkmCapabilities(registry?)` | [`pkm:capabilities`](../electron/src/main.js#L1322) | `{ok, data:{state, writable, reason, cli, doctor, actions, files, paths}}` — re-probes the key store. `state` ∈ `ready` \| `read-only` \| `blocklist-unreadable` \| `blocklist-missing` \| `store-missing` \| `cli-missing` \| `cli-broken`; `actions` holds a per-command verdict. Every disabled control on the Key Manager tab is painted from this |
+| `pkmStatus(registry?)` | [`pkm:status`](../electron/src/main.js#L1323) | `{ok, data:{present, pkmRepo, pkmBin, storeRoot, indexFile, registry, registries:[{id,name,app,engine,defaultKid,rings,seats,revoked,verifierTargets}], entry, loosePermissions, authorityPublicKey, timeoutMs, capabilities}}`. `registry` defaults to `PKM_REGISTRY` (config.json/.env) |
+| `pkmRegistries()` | [`pkm:registries`](../electron/src/main.js#L1324) | `{ok, data:{registries, indexFile, root}}` — every registry in the store |
+| `pkmList(registry?, days?)` | [`pkm:list`](../electron/src/main.js#L1325) | `{ok, data:{registry, days, counts, archived, rows:[{sub,kid,exp,expUtc,issuedAt,enc,status,daysLeft}]}}`. Note `check-exp` archives already-expired records as a side effect |
+| `pkmSeatInfo(registry?, sub)` | [`pkm:seatInfo`](../electron/src/main.js#L1326) | `{ok, data:{found, row}}` — one seat, for the Issue dialog's guards |
+| `pkmIssue(registry?, sub, exp)` | [`pkm:issue`](../electron/src/main.js#L1327) | `{ok, data:{registry,sub,kid,exp,issuedAt,licenseKey}}` — **displayed once, never logged**. Refuses a seat already on the revocation blocklist, whose licence would be minted and then rejected at login |
+| `pkmRevoke(registry?, sub, reason?)` | [`pkm:revoke`](../electron/src/main.js#L1335) | `{ok, data:{registry, sub, blocklistSize, archived}}` |
+| `pkmUnrevoke(registry?, sub)` | [`pkm:unrevoke`](../electron/src/main.js#L1336) | `{ok, data:{registry, sub, changed, blocklistSize}}` |
+| `pkmArchive(registry?)` | [`pkm:archive`](../electron/src/main.js#L1337) | `{ok, data:{registry, archived}}` |
+| `pkmAudit(registry?)` | [`pkm:audit`](../electron/src/main.js#L1338) | `{ok, data:{registry, entries:[{ts,action,sub,kid,exp,detail}]}}` |
+| `pkmValidate(registry?, key)` | [`pkm:validate`](../electron/src/main.js#L1339) | `{ok, data:{ok, claims?, reason?}}` |
+| `pkmChallenge(registry?, key)` | [`pkm:challenge`](../electron/src/main.js#L1342) | `{ok, data:{ok, challengeResponseVerified, claims}}` — simulates the webapp login handshake; stronger than `pkmValidate` |
+| `pkmSelfTest(registry?, key)` | [`pkm:selfTest`](../electron/src/main.js#L1343) | `{ok, data:{ok, ecdhAesGcmRoundTrip, claims}}` — the ECDH → AES-GCM round trip (`ed25519+x25519` only) |
+| `pkmCheckRevocation(registry?)` | [`pkm:checkRevocation`](../electron/src/main.js#L1344) | `{ok, data:{ok, reject, parity}}` — reject test + per-file verifier parity for embedded blocklists |
+| `pkmPerms()` | [`pkm:perms`](../electron/src/main.js#L1353) | `{ok, data:{loose, clean}}` — group/other-accessible paths under the store |
+| `pkmPermsFix()` | [`pkm:permsFix`](../electron/src/main.js#L1354) | `{ok, data:{loose, fixed}}` — `pkm perms --fix` (chmod only; no key material is touched) |
+| `pkmExportBundle()` | [`pkm:exportBundle`](../electron/src/main.js#L1355) | `{ok, data:{bundleFile, signatureFile, authorityPublicKey, authorityKid, totals}}` — re-signs `export/devmon.json` |
+| `pkmVerifyBundle()` | [`pkm:verifyBundle`](../electron/src/main.js#L1356) | `{ok, data:{ok, reason, kid}}` — checks the export bundle against its signature; `reason:"absent"` means *unverifiable*, not invalid |
+| `pkmRings(registry?)` | [`pkm:rings`](../electron/src/main.js#L1346) | `{ok, data:{registry, defaultKid, rings:[{kid,publicKey,notAfter,createdAt}]}}` |
+| `pkmRingCreate(registry?, kid)` | [`pkm:ringCreate`](../electron/src/main.js#L1347) | `{ok, data:{registry, kid, dir, privateKeyPath, publicKey}}` — mints a new master keypair (private half stays 0600 on disk) |
+| `pkmRingRetire(registry?, kid, at?)` | [`pkm:ringRetire`](../electron/src/main.js#L1348) | `{ok, data:{registry, kid, notAfter}}` — `at` is an ISO date or `now` |
+| `pkmAgentKey(registry?)` | [`pkm:agentKey`](../electron/src/main.js#L1349) | `{ok, data:{registry, dir, publicKey, privateKeyPath}}` — regenerates the X25519 peer keypair (ed25519+x25519 only; refused for `ed25519`) |
+| `pkmSetDefaultKid(registry?, kid)` | [`pkm:setDefaultKid`](../electron/src/main.js#L1350) | `{ok, data:{registry, defaultKid}}` — ring that signs new seats |
+| `pkmSyncRevocation(registry?)` | [`pkm:syncRevocation`](../electron/src/main.js#L1351) | `{ok, data:{results:[{registry, seats, changes:[{label,path,changed}]}]}}` — rewrites an embedded blocklist; **rebuild the consumer app** afterwards |
 | `config()` | [`config:get`](../electron/src/main.js#L1271) | Config summary: `{present, source, configPath, values, webhookBaseUrl, …}` (config.json primary, `.env` fallback) |
 | `configSave(values)` | [`config:save`](../electron/src/main.js#L1291) | Merges the changed keys into `config.json` (other keys preserved) and applies them to `process.env`; provider/usage-tracking key changes restart the runner + webhook |
 | `configExport()` | [`config:export`](../electron/src/main.js#L1316) | `{ok, present, source, json}` — effective config as pretty JSON |
@@ -53,6 +64,7 @@ preload bridge ([`electron/src/preload.js`](../electron/src/preload.js#L7)) as `
 | `toolsManifest()` | [`tools:manifest`](../electron/src/main.js#L1157) | Shared tool manifest ([`shared/tool-manifest.js`](../shared/tool-manifest.js#L1)) |
 | `trello(action, params)` | [`tools:trello`](../electron/src/main.js#L1158) | Trello REST quick actions (list_boards/lists/cards, add_comment) |
 | `gmail(action, params)` | [`tools:gmail`](../electron/src/main.js#L1159) | Gmail list/get via googleapis |
+| `whatsapp(action, params)` | [`tools:whatsapp`](../electron/src/preload.js#L1) | WhatsApp Cloud API quick actions (status / list numbers / read inbox / send text or template) |
 | `openExternal(url)` | [`open:external`](../electron/src/main.js#L1259) | Open a URL in the system browser |
 | `getTheme()` | [`app:getTheme`](../electron/src/main.js#L1263) | `{theme: light\|dark\|system, effective: dark\|light, accentColor: string, fontSize: small\|medium\|large\|x-large\|xx-large}` |
 | `setTheme(theme)` | [`app:setTheme`](../electron/src/main.js#L1264) | Persists `APPEARANCE_THEME` to `config.json` (or `.env` fallback), applies it, returns appearance info |
@@ -65,6 +77,8 @@ preload bridge ([`electron/src/preload.js`](../electron/src/preload.js#L7)) as `
 | `accountsSpawnForSeat(sub)` | [`accounts:spawnForSeat`](../electron/src/main.js#L1196) | Spawns dedicated `mcp:gmail:<sub>` / `mcp:trello:<sub>` with per-seat env |
 | `accountsStopForSeat(sub)` | [`accounts:stopForSeat`](../electron/src/main.js#L1197) | Stops the per-seat MCP instances |
 | `appVersion()` | [`app:version`](../electron/src/main.js#L1203) | `{ok, name, version}` — app name/version (About tab) |
+| `docsList()` | [`docs:list`](../electron/src/main.js#L1) | `{ok, files:[{file,title}]}` — the end-user guides under `electron/docs/` (About → Guide) |
+| `docsGet(file)` | [`docs:get`](../electron/src/main.js#L1) | `{ok, content}` for one guide (path-guarded against escape) |
 | `scriptsList()` | [`scripts:list`](../electron/src/main.js#L1042) | `{ok, preflight, scripts, runs}` — runnable scripts under the operator scripts folder (safe subfolder included) |
 | `scriptsRun(name, payload)` | [`scripts:run`](../electron/src/main.js#L1048) | Runs a script — raw args string, or `{values, extra}` from a `.params.json` form |
 | `scriptsStop(target)` | [`scripts:stop`](../electron/src/main.js#L1049) | Stops a running script |

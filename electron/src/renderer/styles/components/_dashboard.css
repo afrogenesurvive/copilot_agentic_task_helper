@@ -41,7 +41,11 @@
   border-radius: var(--radius);
 }
 
-/* Collapsed → a narrow rail showing only the status dots. */
+/* Collapsed → a narrow rail showing only each service's icon.
+ *
+ * The status dot is hidden rather than kept: the icon itself is tinted by state
+ * (.svc-tab.running/.stopped/.error below), so one glyph carries identity AND
+ * health, and the `title` spells both out for a hover or a screen reader. */
 .svc-tabs.collapsed {
   flex-basis: 46px;
   max-width: 46px;
@@ -71,8 +75,23 @@
 }
 
 .svc-tabs.collapsed .svc-tabs-title,
-.svc-tabs.collapsed .svc-tab-label {
+.svc-tabs.collapsed .svc-tab-label,
+.svc-tabs.collapsed .svc-dot {
   display: none;
+}
+
+/* Centre the lone glyph in the collapsed rail, and lean on spacing rather than a
+ * label to fill the row. */
+.svc-tabs.collapsed .svc-tab {
+  justify-content: center;
+  padding-left: 0;
+  padding-right: 0;
+}
+
+.svc-icon {
+  flex: 0 0 auto;
+  display: flex;
+  align-items: center;
 }
 
 .svc-tab {

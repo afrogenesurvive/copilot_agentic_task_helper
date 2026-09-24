@@ -28,6 +28,7 @@
     <link rel="stylesheet" href="styles/components/_dashboard.css" />
     <link rel="stylesheet" href="styles/components/_queue.css" />
     <link rel="stylesheet" href="styles/components/_logs.css" />
+    <link rel="stylesheet" href="styles/components/_notification-center.css" />
     <link rel="stylesheet" href="styles/components/_keys.css" />
     <link rel="stylesheet" href="styles/components/_config.css" />
     <link rel="stylesheet" href="styles/components/_tools.css" />
@@ -53,16 +54,19 @@
 
           <nav class="sidebar-scroll" id="sidebar-nav">
             <button data-tab="dashboard" class="sidebar-btn sidebar-btn--active">
-              <span data-icon="dashboard"></span><span class="sidebar-btn__label">Dashboard</span>
+              <span data-icon="dashboard"></span><span class="sidebar-btn__label">Dashboard</span><span class="sidebar-btn__dot" aria-hidden="true"></span>
+            </button>
+            <button data-tab="notifications" class="sidebar-btn">
+              <span data-icon="bell"></span><span class="sidebar-btn__label">Notifications</span><span class="sidebar-btn__dot" aria-hidden="true"></span>
             </button>
             <button data-tab="queue" class="sidebar-btn">
-              <span data-icon="queue"></span><span class="sidebar-btn__label">Queue</span>
+              <span data-icon="queue"></span><span class="sidebar-btn__label">Queue</span><span class="sidebar-btn__dot" aria-hidden="true"></span>
             </button>
             <button data-tab="logs" class="sidebar-btn">
-              <span data-icon="logs"></span><span class="sidebar-btn__label">Logs</span>
+              <span data-icon="logs"></span><span class="sidebar-btn__label">Logs</span><span class="sidebar-btn__dot" aria-hidden="true"></span>
             </button>
             <button data-tab="sessions" class="sidebar-btn">
-              <span data-icon="sessions"></span><span class="sidebar-btn__label">Sessions</span>
+              <span data-icon="sessions"></span><span class="sidebar-btn__label">Sessions</span><span class="sidebar-btn__dot" aria-hidden="true"></span>
             </button>
 
             <div class="sidebar-divider"></div>
@@ -86,10 +90,10 @@
               <span data-icon="tools"></span><span class="sidebar-btn__label">Tools</span>
             </button>
             <button data-tab="scripts" class="sidebar-btn">
-              <span data-icon="terminal"></span><span class="sidebar-btn__label">Scripts</span>
+              <span data-icon="terminal"></span><span class="sidebar-btn__label">Scripts</span><span class="sidebar-btn__dot" aria-hidden="true"></span>
             </button>
             <button data-tab="chat" class="sidebar-btn">
-              <span data-icon="chat"></span><span class="sidebar-btn__label">Chat</span>
+              <span data-icon="chat"></span><span class="sidebar-btn__label">Chat</span><span class="sidebar-btn__dot" aria-hidden="true"></span>
             </button>
 
             <div class="sidebar-divider"></div>
@@ -132,25 +136,57 @@
         </div>
       </section>
 
-      <!-- Queue -->
+      <!-- Queue.
+           Two independent panels (priority = tool dispatch + authorized frontdesk;
+           misc = every other raw webhook event). Each collapses, filters by event
+           type and by free text, and sorts — the filter facets are built from the
+           items themselves, so a new event source appears without a code change. -->
       <section id="tab-queue" class="tab">
-        <div class="panel">
+        <div class="panel" id="queue-panel-priority">
           <div class="panel__header">
-            <h3 class="panel__title"><span data-icon="queue"></span>Priority queue</h3>
+            <h3 class="panel__title">
+              <button id="queue-toggle-priority" class="q-head" aria-expanded="true" aria-controls="queue-priority" title="Collapse this section">
+                <span class="q-caret">▾</span><span data-icon="queue"></span><span>Priority queue</span><span id="queue-count-priority" class="q-count"></span>
+              </button>
+            </h3>
             <div class="panel__actions">
+              <select id="queue-type-priority" class="q-filter" title="Filter by the event's source — frontdesk, trello, gmail, tool_dispatch, …">
+                <option value="">all types</option>
+              </select>
+              <input id="queue-search-priority" class="q-search" type="text" placeholder="search…" spellcheck="false" />
+              <select id="queue-sort-priority" class="q-filter" title="Sort order">
+                <option value="newest">newest first</option>
+                <option value="oldest">oldest first</option>
+                <option value="type">by type</option>
+                <option value="uncleared">uncleared first</option>
+              </select>
               <button id="queue-clear-priority" class="clear-all">Clear all</button>
             </div>
           </div>
-          <div id="queue-priority"></div>
+          <div id="queue-priority" class="q-body"></div>
         </div>
-        <div class="panel">
+        <div class="panel" id="queue-panel-misc">
           <div class="panel__header">
-            <h3 class="panel__title"><span data-icon="file"></span>Misc notifications</h3>
+            <h3 class="panel__title">
+              <button id="queue-toggle-misc" class="q-head" aria-expanded="true" aria-controls="queue-misc" title="Collapse this section">
+                <span class="q-caret">▾</span><span data-icon="file"></span><span>Misc notifications</span><span id="queue-count-misc" class="q-count"></span>
+              </button>
+            </h3>
             <div class="panel__actions">
+              <select id="queue-type-misc" class="q-filter" title="Filter by the event's source — frontdesk, trello, gmail, tool_dispatch, …">
+                <option value="">all types</option>
+              </select>
+              <input id="queue-search-misc" class="q-search" type="text" placeholder="search…" spellcheck="false" />
+              <select id="queue-sort-misc" class="q-filter" title="Sort order">
+                <option value="newest">newest first</option>
+                <option value="oldest">oldest first</option>
+                <option value="type">by type</option>
+                <option value="uncleared">uncleared first</option>
+              </select>
               <button id="queue-clear-misc" class="clear-all">Clear all</button>
             </div>
           </div>
-          <div id="queue-misc"></div>
+          <div id="queue-misc" class="q-body"></div>
         </div>
       </section>
 
@@ -226,11 +262,56 @@
         <div class="panel">
           <div class="panel__header">
             <h3 class="panel__title"><span data-icon="sessions"></span>Frontdesk sessions</h3>
+            <div class="panel__actions">
+              <input id="sessions-search" class="q-search" type="text" placeholder="search user, IP, action…" spellcheck="false" />
+              <span id="sessions-count" class="q-count"></span>
+              <button id="sessions-refresh">Refresh</button>
+            </div>
           </div>
           <div id="sessions-box"><div class="loading-block"><span class="spin"></span><span>Loading…</span></div></div>
           <p class="hint">
-            Webapp visitor sessions, seen from the operator's side. The visitors (seats) never
-            see this view — they only use their own webapp chat.
+            Webapp visitor sessions, seen from the operator's side. Click a column heading to sort;
+            the search box matches user, IP, timezone, language and user agent. Read straight from
+            <code>logs/frontdesk/sessions/</code>, so it keeps working when the key store does not.
+            The visitors (seats) never see this view — they only use their own webapp chat.
+          </p>
+        </div>
+      </section>
+
+      <!-- Notifications.
+           One durable feed for everything the app wants to tell the operator: new
+           frontdesk messages, error logs, chat turns, service crashes, seat logins
+           and script outcomes. Sortable and filterable here, grouped by day and
+           collapsible; the per-source counts drive the sidebar dots. -->
+      <section id="tab-notifications" class="tab">
+        <div class="panel n-panel">
+          <div class="panel__header">
+            <h3 class="panel__title">
+              <span data-icon="bell"></span>Notifications
+              <span id="notif-count" class="q-count"></span>
+            </h3>
+            <div class="panel__actions">
+              <select id="notif-source" class="q-search" title="Filter by source"></select>
+              <select id="notif-level" class="q-search" title="Filter by level">
+                <option value="">All levels</option>
+                <option value="error">Error</option>
+                <option value="warn">Warn</option>
+                <option value="info">Info</option>
+              </select>
+              <input id="notif-search" class="q-search" type="text" placeholder="search title, body, source…" spellcheck="false" />
+              <label class="n-toggle"><input id="notif-unread" type="checkbox" />unread only</label>
+              <button id="notif-refresh">Refresh</button>
+              <button id="notif-clear" title="Delete every stored notification">Clear</button>
+            </div>
+          </div>
+          <div id="notif-box" class="n-box">
+            <div class="loading-block"><span class="spin"></span><span>Loading…</span></div>
+          </div>
+          <p class="hint">
+            One JSONL file per day under <code>logs/notifications/feed/</code>, with the read state in
+            <code>logs/notifications/feed-state.json</code> — so this survives a restart and needs no
+            database. Opening this panel clears every unread dot; opening a source tab (Queue, Logs, Chat,
+            Dashboard, Sessions, Scripts) clears only its own. Click a column heading to sort.
           </p>
         </div>
       </section>
@@ -244,11 +325,32 @@
               <span id="pkm-badge" class="badge">checking…</span>
             </h3>
             <div class="panel__actions">
+              <button id="pkm-recheck" title="Re-probe the key store now (the CLI liveness check is cached for a minute)">Re-check store</button>
               <button id="pkm-refresh">Refresh</button>
               <button id="pkm-validate-open" title="Check a licence string against the live ring + revocation blocklist">Validate…</button>
-              <button id="pkm-archive" title="Move expired seat records into the expired/ ledger">Archive expired</button>
-              <button id="pkm-issue-open" class="primary">Issue license</button>
+              <button id="pkm-archive" data-pkm-write="archive" title="Move expired seat records into the expired/ ledger">Archive expired</button>
+              <button id="pkm-issue-open" class="primary" data-pkm-write="issue">Issue license</button>
             </div>
+          </div>
+
+          <!-- Store availability. personal_key_manager owns every licence, ring and
+               revocation record; this app is a client of its CLI. When that store
+               cannot be reached or trusted, the write controls below are disabled
+               and main refuses the call anyway — see the capability gate in
+               electron/src/main/key-manager.mjs. -->
+          <div id="pkm-gate" class="gate-banner hidden" role="status"></div>
+
+          <!-- Read-only checks. They stay available wherever the CLI answers at
+               all: a store you cannot change is still one you can interrogate,
+               and "will this key actually log in?" matters most when issuing. -->
+          <div class="pkm-checks">
+            <span class="pkm-checks__label">Verify</span>
+            <button id="pkm-challenge" title="Simulate the webapp login handshake for a licence — stronger than Validate, which only checks the signature">Challenge…</button>
+            <button id="pkm-selftest" title="ECDH → AES-256-GCM round trip (ed25519+x25519 registries) — catches a FRONTDESK_AGENT_PUBKEY mismatch">Crypto self-test…</button>
+            <button id="pkm-revocation-check" title="Reject test + embedded-blocklist parity: is a revoked seat still refused, and do consumer apps match the authoritative blocklist?">Revocation check</button>
+            <button id="pkm-perms" title="Report group/other-accessible files under the key store">Permissions</button>
+            <button id="pkm-bundle-check" title="Check export/devmon.json against its signature — the bundle dev_mon consumes">Verify bundle</button>
+            <span id="pkm-checks-out" class="pkm-checks__out"></span>
           </div>
 
           <div id="pkm-host"></div>
@@ -273,9 +375,9 @@
           <div class="panel__header">
             <h3 class="panel__title"><span data-icon="refresh"></span>Rings (master keys)</h3>
             <div class="panel__actions">
-              <button id="pkm-ring-create" title="Generate a new master Ed25519 keypair">New ring</button>
-              <button id="pkm-agent-key" title="Regenerate the X25519 peer keypair (ed25519+x25519 registries only)">Agent key</button>
-              <button id="pkm-sync-revocation" title="Rewrite the blocklist embedded in this registry's consumer-app source files">Sync blocklist</button>
+              <button id="pkm-ring-create" data-pkm-write="ringCreate" title="Generate a new master Ed25519 keypair">New ring</button>
+              <button id="pkm-agent-key" data-pkm-write="agentKey" title="Regenerate the X25519 peer keypair (ed25519+x25519 registries only)">Agent key</button>
+              <button id="pkm-sync-revocation" data-pkm-write="syncRevocation" title="Rewrite the blocklist embedded in this registry's consumer-app source files">Sync blocklist</button>
             </div>
           </div>
           <div id="pkm-rings-box"><div class="loading-block"><span class="spin"></span><span>Loading…</span></div></div>
@@ -298,7 +400,7 @@
                 </div>
               </div>
               <div class="config-actions">
-                <button id="pkm-issue-go" class="primary">Issue</button>
+                <button id="pkm-issue-go" class="primary" data-pkm-write="issue">Issue</button>
                 <button id="pkm-issue-cancel">Cancel</button>
               </div>
               <div id="pkm-issue-msg" class="config-msg"></div>
@@ -378,6 +480,7 @@
           <div class="panel__header">
             <h3 class="panel__title"><span data-icon="settings"></span>Config (config.json)</h3>
             <div class="panel__actions">
+              <input id="config-search" class="q-search" type="text" placeholder="filter settings…" spellcheck="false" />
               <button id="config-refresh">Refresh</button>
               <button id="config-raw">Raw JSON</button>
             </div>
@@ -388,7 +491,13 @@
             <b>overrides</b> <code>.env</code>; when absent, <code>.env</code> is used. Edit a field and
             press <b>Save</b> — only the keys you change are written. Saving LLM provider settings
             applies to the Chat tab instantly and restarts the runner/webhook services automatically.
+            Settings are grouped into tabs; the filter box searches <b>every</b> tab at once, for when
+            you know the key name but not the section it lives in.
           </p>
+          <!-- Tab strip, one section at a time. Rendered by renderConfigTabs() from the
+               `section` field on each CONFIG_FIELDS entry, so a new section needs no
+               markup here. -->
+          <div id="config-tabs" class="config-tabs" role="tablist" aria-label="Config sections"></div>
           <div id="config-fields" class="config-fields"></div>
           <textarea id="config-editor" class="hidden" spellcheck="false" placeholder="{ }"></textarea>
           <div class="config-actions">
@@ -587,6 +696,7 @@
           </button>
           <span id="status-services" class="status-pill status-pill--plain" title="Local services running">services —</span>
           <span id="status-queue" class="status-pill status-pill--plain" title="Unactioned priority queue items">queue —</span>
+          <span id="status-keys" class="status-pill status-pill--plain" title="Key store (personal_key_manager) availability">keys —</span>
         </div>
         <div class="status-bar__group status-bar__group--right">
           <span id="status-app" class="status-pill status-pill--plain"></span>

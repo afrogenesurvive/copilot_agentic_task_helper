@@ -56,6 +56,13 @@ const DEFAULTS = {
   PRIORITY_REMINDER_INTERVAL: "300000",
   AGENT_RUNNER_ENABLED: "true",
   AGENT_TASK_INTERVAL: "60000",
+  // Agent runner — model turns per frontdesk event (read → answer, plus one
+  // recovery turn) and the cap on how much of the backlog one wake-up drains.
+  AGENT_RUNNER_MAX_ROUNDS: "5",
+  AGENT_MAX_ITEMS_PER_PASS: "10",
+  // Notification centre — the feed + read state under logs/notifications/
+  NOTIFY_ENABLED: "true",
+  NOTIFY_RETENTION_DAYS: "30",
   LOG_LEVEL: "info",
   OPERATOR_AUTOSTART: "true",
   TRUST_PROXY: "1",
