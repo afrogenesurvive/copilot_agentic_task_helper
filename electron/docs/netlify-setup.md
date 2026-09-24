@@ -21,6 +21,13 @@ end means doing this hosting setup **and** keeping the tunnel backend running.
   auto-discovered as `/.netlify/functions/config` and `/.netlify/functions/trello-proxy`. If the
   dashboard's **Functions** page shows none, set **Site configuration → Functions →
   directory = `netlify/functions`** (relative to the base).
+- **`/api/config` routing**: the webapp asks for its runtime config at the same-origin path
+  `/api/config`, which by itself exists only on the tunnel (Express route). Netlify serves the same
+  JSON from the `config` function, so `netlify.toml` rewrites that path to
+  `/.netlify/functions/config` — mirrored in `webapp/public/_redirects` so drag-and-drop deploys
+  get it too. Without the rewrite `/api/config` 404s, the browser keeps an empty
+  `WEBHOOK_BASE_URL`, and the login card reports *"No backend configured for \<host>"* even though
+  the env var below is set. (`loadConfig()` in `app.js` also falls back to the function path.)
 - Trigger a deploy once the settings/env below are in place.
 
 ### 2. Environment variables
@@ -51,6 +58,9 @@ Optional:
   config JSON (board/list IDs, `WEBHOOK_BASE_URL`, `FRONTDESK_AGENT_PUBKEY`) with
   `TRELLO_API_KEY` and `TRELLO_API_TOKEN` **empty**. Empty values prove the secrets are not being
   leaked to the browser.
+- Open `https://<your-site>.netlify.app/api/config` — the browser's path, and it must return the
+  **same** JSON. A 404 there means the rewrite above is missing (or the deploy predates it), and
+  the app will report "No backend configured" however correct the env vars are.
 - POST to `/.netlify/functions/trello-proxy` — it should respond with something other than a 500
   (a 500 means the Trello credentials are not configured).
 - Open the site and log in with a license key — the chat should route through

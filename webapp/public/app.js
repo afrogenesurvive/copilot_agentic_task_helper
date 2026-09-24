@@ -77,9 +77,21 @@ function fmtTime(iso) {
   return d.toLocaleString(undefined, { month: "short", day: "numeric", hour: "2-digit", minute: "2-digit" });
 }
 
+/**
+ * Runtime config for THIS host — /api/config is the Express route when the page
+ * is served from the tunnel, and Netlify serves the same JSON from the `config`
+ * function. Netlify only maps the function path, so the same-origin call 404s
+ * there unless the _redirects rule is applied; fall back to the function path so
+ * a deploy without it still gets configured instead of silently running with an
+ * empty WEBHOOK_BASE_URL (which surfaces as "No backend configured for <host>").
+ */
 async function loadConfig() {
   try {
-    const r = await fetch("/api/config", { cache: "no-store" });
+    let r = await fetch("/api/config", { cache: "no-store" });
+    if (r.status === 404) {
+      r = await fetch("/.netlify/functions/config", { cache: "no-store" });
+    }
+    if (!r.ok) throw new Error(`HTTP ${r.status}`);
     const cfg = await r.json();
     CONFIG.WEBHOOK_BASE_URL = cfg.WEBHOOK_BASE_URL || CONFIG.WEBHOOK_BASE_URL;
     CONFIG.FRONTDESK_AGENT_PUBKEY = cfg.FRONTDESK_AGENT_PUBKEY || "";

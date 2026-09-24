@@ -1,0 +1,12 @@
+# Netlify redirects for the frontdesk webapp.
+#
+# The app fetches its runtime config from a same-origin /api/config (it must come
+# from whichever host served the page). On the tunnel that is the Express route
+# (mcp/webhook-server/index.js); on Netlify the same JSON is served by the
+# `config` function, which lives at /.netlify/functions/config. Without this rule
+# /api/config 404s on Netlify, loadConfig() keeps WEBHOOK_BASE_URL empty, and the
+# login card reports "No backend configured for <host>".
+#
+# Kept in public/ (the publish directory) as well as netlify.toml so it survives
+# drag-and-drop deploys, not just git-linked ones.
+/api/config  /.netlify/functions/config  200

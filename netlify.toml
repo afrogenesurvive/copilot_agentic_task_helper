@@ -5,3 +5,11 @@
 [build]
   base = "webapp/"
   publish = "public/"
+
+# The webapp fetches its runtime config from a same-origin /api/config, which on
+# Netlify is the `config` function (not the Express route used on the tunnel).
+# Mirrored in webapp/public/_redirects so drag-and-drop deploys get it too.
+[[redirects]]
+  from = "/api/config"
+  to = "/.netlify/functions/config"
+  status = 200
