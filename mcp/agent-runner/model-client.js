@@ -18,6 +18,7 @@ import path from "path";
 import { fileURLToPath } from "url";
 import { log } from "../../shared/logger.mjs";
 import { callChat, getModelName, getProvider } from "../../shared/model-provider.mjs";
+import { sanitizeObject } from "../../scripts/sanitize.stub.mjs";
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const PROMPT_LOG_DIR = path.resolve(__dirname, "..", "..", "logs", "agent-runner", "prompts");
@@ -50,13 +51,34 @@ function logPrompt(systemMessage, userContext, tools) {
 }
 
 /**
+ * Flatten + sanitize an untrusted value before interpolating it into a prompt.
+ *
+ * Two things happen here and both matter:
+ *   - newlines are collapsed, so a card name containing "\n\nYou are now …" can no
+ *     longer restructure the prompt around it;
+ *   - the prompt-injection sanitizer runs over the value.
+ *
+ * Queue events are already sanitized when read back (poller.js), but daily task
+ * text is not sanitized anywhere else — this is the boundary that guarantees it
+ * regardless of where the value came from.
+ */
+function safeValue(value, field) {
+  if (value === undefined || value === null) return "";
+  const flat = String(value)
+    .replace(/[\r\n\t]+/g, " ")
+    .replace(/\s{2,}/g, " ")
+    .trim();
+  return sanitizeObject({ v: flat }, { auditSource: `model/${field}` }).v;
+}
+
+/**
  * Build a concise task summary for the model.
  * @param {object} task — { lineIndex, text, raw }
  * @returns {string}
  */
 export function buildTaskContext(task) {
   return [
-    `Task to complete: "${task.text}"`,
+    `Task to complete: "${safeValue(task.text, "task")}"`,
     "",
     "You are a daily task automation agent. Use available tools to make progress on this task.",
     "If the task requires actions you can't take (file edits, deployments, environment changes), reply with '[skip]' to mark it as not actionable by automation.",
@@ -74,40 +96,40 @@ export function buildEventContext(event) {
   const lines = [`New ${event.source}/${event.type} event:`];
 
   if (event.data?.text) {
-    lines.push(`Message: "${event.data.text.slice(0, 500)}"`);
+    lines.push(`Message: "${safeValue(event.data.text, "event.text").slice(0, 500)}"`);
   }
 
   if (event.data?.rule) {
-    lines.push(`Matched rule: "${event.data.rule}"`);
-    lines.push(`Requested tool: ${event.data.tool}`);
+    lines.push(`Matched rule: "${safeValue(event.data.rule, "event.rule")}"`);
+    lines.push(`Requested tool: ${safeValue(event.data.tool, "event.tool")}`);
   }
 
   if (event.data?.originalEvent?.data?.card?.id) {
-    lines.push(`Card ID (Trello hex ID): ${event.data.originalEvent.data.card.id}`);
+    lines.push(`Card ID (Trello hex ID): ${safeValue(event.data.originalEvent.data.card.id, "card.id")}`);
     if (event.data.originalEvent.data.card.name) {
-      lines.push(`Card name: "${event.data.originalEvent.data.card.name}"`);
+      lines.push(`Card name: "${safeValue(event.data.originalEvent.data.card.name, "card.name")}"`);
     }
   }
 
   if (event.data?.originalEvent?.data?.list?.id) {
-    lines.push(`List ID: ${event.data.originalEvent.data.list.id}`);
+    lines.push(`List ID: ${safeValue(event.data.originalEvent.data.list.id, "list.id")}`);
     if (event.data.originalEvent.data.list.name) {
-      lines.push(`List name: "${event.data.originalEvent.data.list.name}"`);
+      lines.push(`List name: "${safeValue(event.data.originalEvent.data.list.name, "list.name")}"`);
     }
   }
   if (event.data?.originalEvent?.data?.board?.id) {
-    lines.push(`Board ID: ${event.data.originalEvent.data.board.id}`);
+    lines.push(`Board ID: ${safeValue(event.data.originalEvent.data.board.id, "board.id")}`);
     if (event.data.originalEvent.data.board.name) {
-      lines.push(`Board name: "${event.data.originalEvent.data.board.name}"`);
+      lines.push(`Board name: "${safeValue(event.data.originalEvent.data.board.name, "board.name")}"`);
     }
   }
 
   if (event.data?.subject) {
-    lines.push(`Subject: "${event.data.subject}"`);
+    lines.push(`Subject: "${safeValue(event.data.subject, "event.subject")}"`);
   }
 
   if (event.data?.direction) {
-    lines.push(`Direction: ${event.data.direction}`);
+    lines.push(`Direction: ${safeValue(event.data.direction, "event.direction")}`);
   }
 
   return lines.join("\n");
@@ -136,12 +158,12 @@ export async function callModel(context, toolDefs) {
     "- Trello: trello_add_comment, trello_get_card, trello_list_cards, trello_get_lists, trello_get_card_actions, trello_get_checklists, trello_create_card, trello_update_card, trello_create_checklist, trello_add_checklist_item",
     "- Gmail: gmail_list_messages, gmail_get_message, gmail_send_message",
     "- Web: web_search (search the web), web_fetch (fetch a URL and read content)",
-    "- Frontdesk: frontdesk_reply (send an encrypted reply to a chat user — pass sub + text)",
+    "- Frontdesk: frontdesk_reply (send an encrypted reply to a chat user — pass text only)",
     "",
     "Rules:",
     "- Choose ONE tool and provide ALL required parameters",
     "- If the event is a frontdesk message, reply helpfully but don't make up information",
-    "- For frontdesk_message events (source: frontdesk), answer the user and reply with frontdesk_reply(sub=<the event's sub>, text=<your answer>)",
+    "- For frontdesk_message events (source: frontdesk), answer the user with frontdesk_reply(text=<your answer>). Do NOT pass a 'sub' — the runner supplies the correct seat from the event; any value you invent will be rejected or overridden.",
     "- If you're unsure, use trello_add_comment to ask for clarification",
     "- Never make up card IDs, list IDs, or other identifiers",
     "- Respond only with a tool call — no explanatory text",

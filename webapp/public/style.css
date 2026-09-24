@@ -585,13 +585,15 @@ header h1 {
   border-bottom: 1px solid var(--border);
 }
 
-#account-view {
+#account-view,
+#help-view {
   flex: 1;
   overflow-y: auto;
   padding: 1rem;
 }
 
-#account-container {
+#account-container,
+#help-container {
   max-width: 620px;
   margin: 0 auto;
 }
@@ -612,6 +614,56 @@ header h1 {
 .btn-link:hover {
   border-color: var(--accent);
   color: var(--accent);
+}
+
+/* ── Connection / tunnel status (login card + logged-in header) ── */
+
+.conn-status {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+  margin: 0.25rem 0 1rem;
+  padding: 0.5rem 0.65rem;
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  color: var(--text-muted);
+  font-size: 0.78rem;
+  line-height: 1.35;
+  text-align: left;
+}
+
+.conn-dot {
+  flex: 0 0 auto;
+  width: 0.55rem;
+  height: 0.55rem;
+  border-radius: 50%;
+  background: var(--text-muted);
+}
+
+.conn-status.ok {
+  color: var(--success);
+  border-color: rgba(46, 204, 113, 0.35);
+}
+
+.conn-status.ok .conn-dot {
+  background: var(--success);
+}
+
+.conn-status.bad {
+  color: var(--warning);
+  border-color: rgba(243, 156, 18, 0.4);
+}
+
+.conn-status.bad .conn-dot {
+  background: var(--warning);
+}
+
+/* Backend host + last-check detail (header, Account tab). */
+.conn-detail {
+  color: var(--text-muted);
+  font-size: 0.7rem;
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
 }
 
 .message.pending {

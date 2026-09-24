@@ -35,6 +35,10 @@ activity appears inline as chips/result bubbles:
   `queue_clear_item`.
 - **Stop** aborts the running loop at any time; pending approvals auto-deny after ~2 minutes.
 - Results from Trello/Gmail/web/queues/files are sanitized before they're fed back to the model.
+  The web tools are the *same implementation* the web-search MCP server uses
+  (`shared/web-tools.mjs`), so the chat and the MCP can't drift: identical DuckDuckGo parsing,
+  identical page extraction, and both refuse loopback/private hosts — a model-chosen URL can't be
+  used to read the local backend.
 
 The loop is bounded — the agent gets `OPERATOR_CHAT_MAX_ROUNDS` tool steps per message (default
 **24**, clamped to 1–100; set it in ⚙️ Config → Chat). When the budget runs out the agent is asked

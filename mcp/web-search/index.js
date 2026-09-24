@@ -4,7 +4,9 @@
  * Web Search MCP Server
  *
  * Provides web search and light web scraping tools.
- * Uses DuckDuckGo HTML search (no API key needed) and cheerio for content extraction.
+ * DuckDuckGo HTML search (no API key needed) + dependency-free page extraction,
+ * both implemented in `shared/web-tools.mjs` — the same module the Electron
+ * operator chat uses, so the two paths behave identically.
  *
  * Environment variables: none required
  */
@@ -12,7 +14,7 @@
 import { Server } from "@modelcontextprotocol/sdk/server/index.js";
 import { StdioServerTransport } from "@modelcontextprotocol/sdk/server/stdio.js";
 import { CallToolRequestSchema, ListToolsRequestSchema } from "@modelcontextprotocol/sdk/types.js";
-import * as cheerio from "cheerio";
+import { searchDuckDuckGo, fetchPage } from "../../shared/web-tools.mjs";
 import config from "../../shared/config-loader.cjs";
 config.loadEnvInto(process.env);
 import { sanitizeObject } from "../../scripts/sanitize.stub.mjs";
@@ -44,146 +46,14 @@ function logToolCall(name, args, response) {
   console.error(`[mcp] web-search/${name} → ${typeof response === "string" ? response.slice(0, 80) : "done"}`);
 }
 
-/* ── DuckDuckGo Search ── */
-
-const DDG_URL = "https://html.duckduckgo.com/html/";
-const USER_AGENT = "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36";
-
-async function searchDuckDuckGo(query, maxResults = 10) {
-  const body = new URLSearchParams({ q: query });
-  const resp = await fetch(DDG_URL, {
-    method: "POST",
-    headers: {
-      "User-Agent": USER_AGENT,
-      "Content-Type": "application/x-www-form-urlencoded",
-      Accept: "text/html",
-    },
-    body: body.toString(),
-  });
-
-  if (!resp.ok) {
-    throw new Error(`DuckDuckGo returned status ${resp.status}`);
-  }
-
-  const html = await resp.text();
-  const $ = cheerio.load(html);
-  const results = [];
-
-  $(".result").each((i, el) => {
-    if (i >= maxResults) return false;
-
-    const titleEl = $(el).find(".result__title a");
-    const snippetEl = $(el).find(".result__snippet");
-    const url = titleEl.attr("href") || "";
-
-    // DDG wraps URLs — extract the actual URL from redirect
-    let actualUrl = url;
-    if (url.startsWith("//") || url.startsWith("/")) {
-      const match = url.match(/uddg=(https?%3A[^&]+)/i);
-      if (match) {
-        actualUrl = decodeURIComponent(match[1]);
-      }
-    }
-
-    results.push({
-      title: titleEl.text().trim() || "",
-      url: actualUrl,
-      snippet: snippetEl.text().trim() || "",
-    });
-  });
-
-  // Fallback: if no results found via class selector, try alternative parsing
-  if (results.length === 0) {
-    $("a.result__a, h2 a").each((i, el) => {
-      if (i >= maxResults) return false;
-      const href = $(el).attr("href") || "";
-      let actualUrl = href;
-      if (href.startsWith("//") || href.startsWith("/")) {
-        const match = href.match(/uddg=(https?%3A[^&]+)/i);
-        if (match) actualUrl = decodeURIComponent(match[1]);
-      }
-      results.push({
-        title: $(el).text().trim(),
-        url: actualUrl,
-        snippet: $(el).closest(".result").find(".result__snippet").text().trim() || "",
-      });
-    });
-  }
-
-  return results;
-}
-
-/* ── Web fetch / scrape ── */
-
-async function fetchPage(url) {
-  const resp = await fetch(url, {
-    headers: {
-      "User-Agent": USER_AGENT,
-      Accept: "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8",
-    },
-    redirect: "follow",
-    timeout: 15000,
-  });
-
-  if (!resp.ok) {
-    throw new Error(`HTTP ${resp.status} ${resp.statusText}`);
-  }
-
-  const html = await resp.text();
-  const contentType = resp.headers.get("content-type") || "";
-  const isHtml = contentType.includes("text/html") || contentType.includes("application/xhtml");
-
-  if (!isHtml) {
-    // Not HTML — return raw text preview
-    const text = html.slice(0, 5000);
-    return {
-      url: resp.url,
-      contentType,
-      title: "",
-      text: text,
-      truncated: html.length > 5000,
-    };
-  }
-
-  const $ = cheerio.load(html);
-
-  // Remove unwanted elements
-  $("script, style, nav, footer, header, iframe, noscript, svg, form, button, [role=navigation]").remove();
-
-  // Extract title
-  const title = $("title").text().trim() || $("h1").first().text().trim() || $('meta[property="og:title"]').attr("content") || "";
-
-  // Extract main content — prefer article, main, or body
-  let mainText = "";
-  const selectors = ["article", "main", '[role="main"]', ".content", "#content", ".post", ".entry", "body"];
-
-  for (const sel of selectors) {
-    const el = $(sel).first();
-    if (el.length) {
-      mainText = el.text().trim();
-      if (mainText.length > 200) break;
-    }
-  }
-
-  if (!mainText || mainText.length < 50) {
-    mainText = $("body").text().trim();
-  }
-
-  // Clean up whitespace
-  mainText = mainText.replace(/\s+/g, " ").trim();
-
-  // Truncate to reasonable length
-  const MAX_LENGTH = 15000;
-  const truncated = mainText.length > MAX_LENGTH;
-
-  return {
-    url: resp.url,
-    contentType,
-    title,
-    text: mainText.slice(0, MAX_LENGTH),
-    truncated,
-  };
-}
+/* ── DuckDuckGo Search + page fetch ──
+ *
+ * Both live in `shared/web-tools.mjs`, which is also what the Electron operator
+ * chat and the agent runner call through `mcp/agent-runner/tool-executor.js`.
+ * One implementation means the MCP server and the chat cannot disagree about
+ * entity decoding, selector fallbacks, main-content extraction, the private-host
+ * guard, or output sanitization. (cheerio is no longer needed here.)
+ */
 
 /* ── MCP Server ── */
 

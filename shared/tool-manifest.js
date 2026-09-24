@@ -780,10 +780,10 @@ export const frontdeskTools = [
     inputSchema: {
       type: "object",
       properties: {
-        sub: { type: "string", description: "The frontdesk user's seat id (the 'sub' from the event, e.g. their email)" },
+        sub: { type: "string", description: "Optional. The frontdesk user's seat id. The runner fills this in from the event automatically — omit it and just send `text`." },
         text: { type: "string", description: "The reply text to send to the user" },
       },
-      required: ["sub", "text"],
+      required: ["text"],
     },
   },
 ];

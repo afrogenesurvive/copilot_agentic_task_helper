@@ -12,11 +12,22 @@
  * Sources: webhook | runner | mcp | tunnel | frontdesk | notifications | electron
  * Levels:  debug | info | warn | error   (filtered by LOG_LEVEL, default info)
  *
+ * PROMPT-INJECTION DEFENCE: data written here can contain text that arrived from
+ * the outside world (Trello cards, email subjects, WhatsApp messages, web pages)
+ * and logs/live/*.jsonl is rendered by the Electron Logs viewer, so every sink
+ * runs its payload through the sanitizer. Callers are expected to sanitize too —
+ * this is the backstop, not a replacement.
+ *
+ * The single exception is `webhookRaw()`, which exists to keep an untouched
+ * forensic copy of a webhook body for debugging. Those files are never replayed
+ * into a model or a UI; see the note on that function.
+ *
  * Env: LOG_DIR (default <repo>/logs), LOG_LEVEL, LOG_CONSOLE (=1 to also echo to stderr)
  */
 import fs from "fs";
 import path from "path";
 import { fileURLToPath } from "url";
+import { sanitizeObject } from "../scripts/sanitize.stub.mjs";
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const REPO = path.resolve(__dirname, "..");
@@ -52,12 +63,31 @@ function clip(v, n = 600) {
   return s.length > n ? s.slice(0, n) + "…" : s;
 }
 
+/**
+ * Backstop sanitizer for log payloads (objects, arrays, or scalars).
+ *
+ * Uses the same skip-id/url semantics as the MCP servers so log correlation IDs
+ * stay intact, and walks arrays explicitly because a list payload (Trello cards,
+ * Gmail messages) is common here.
+ */
+function cleanPayload(value, auditSource) {
+  if (typeof value === "string") return sanitizeObject({ text: value }, { auditSource }).text;
+  if (Array.isArray(value)) return value.map((item) => cleanPayload(item, auditSource));
+  if (value && typeof value === "object") return sanitizeObject(value, { auditSource });
+  return value;
+}
+
 /** Unified structured entry (the canonical live-log format). */
 export function log({ source = "app", subSource, level = "info", message = "", data }) {
   const lvl = LEVELS[level] ?? LEVELS.info;
   if (lvl < MIN_LEVEL) return;
-  const entry = { source, subSource, level, message };
-  if (data !== undefined) entry.data = data;
+  // `message` is sanitized as well as `data`: several callers build it from live
+  // request/envelope values (e.g. `${req.method} ${req.path}`, `incoming from <seat>`),
+  // which is enough for a crafted path or seat id to land in the live log — and
+  // logs/live is what the Electron Logs viewer renders.
+  const safeMessage = typeof message === "string" ? cleanPayload(message, `log/${source}`) : message;
+  const entry = { source, subSource, level, message: safeMessage };
+  if (data !== undefined) entry.data = cleanPayload(data, `log/${source}`);
   appendLine(path.join(LOG_DIR, "live"), `${day()}.jsonl`, JSON.stringify({ ts: new Date().toISOString(), ...entry }));
   if (ECHO_CONSOLE) process.stderr.write(`[${level}] ${source}${subSource ? "/" + subSource : ""}: ${message}\n`);
 }
@@ -70,11 +100,13 @@ export function toolCall(source, subSource, { name, args, response, level = "inf
   const ts = new Date().toISOString();
   const d = ts.slice(0, 10);
   const details = `${source}/${subSource}`;
-  const input = JSON.stringify(args ?? {});
+  // `args` are model-authored, but a value copied out of an email or card can end
+  // up in them (e.g. gmail_send_message body), so they are sanitized on the way in.
+  const input = JSON.stringify(cleanPayload(args ?? {}, `toolCall/${details}`));
   let output;
   if (Array.isArray(response)) output = `${response.length} items`;
   else if (response && typeof response === "object" && response.id != null) output = `id=${response.id}`;
-  else output = JSON.stringify(response ?? "").slice(0, 100);
+  else output = JSON.stringify(cleanPayload(response ?? "", `toolCall/${details}`)).slice(0, 100);
 
   // Plain text (tail format consumed by /tool-logs)
   appendLine(path.join(LOG_DIR, "tool_call"), `${d}.log`, `[${ts}] EVENT name=tool_call details=${details} input=${input}`);
@@ -83,26 +115,28 @@ export function toolCall(source, subSource, { name, args, response, level = "inf
   appendLine(path.join(LOG_DIR, "tool_call"), `${d}_verbose.log`, JSON.stringify({ timestamp: ts, name: "tool_call", details, input }));
   appendLine(path.join(LOG_DIR, "tool_call"), `${d}_verbose.log`, JSON.stringify({ timestamp: ts, name: "tool_response", details, output }));
   // Unified live entry (for the Electron Logs viewer)
-  log({ source, subSource, level, message: `tool_call ${name}`, data: { name, args: clip(args), response: clip(response) } });
+  log({ source, subSource, level, message: `tool_call ${name}`, data: { name, args: clip(cleanPayload(args ?? {}, `toolCall/${details}`)), response: clip(cleanPayload(response, `toolCall/${details}`)) } });
 }
 
 /** Notification metadata — preserves logs/notifications/<source>/YYYY-MM-DD.jsonl. */
 export function notify(source, type, data) {
   const ts = new Date().toISOString();
-  appendLine(path.join(LOG_DIR, "notifications", source), `${ts.slice(0, 10)}.jsonl`, JSON.stringify({ ts, source, type, data }));
-  log({ source: "notifications", subSource: source, level: "info", message: type, data });
+  const safeData = cleanPayload(data, `notify/${source}`);
+  appendLine(path.join(LOG_DIR, "notifications", source), `${ts.slice(0, 10)}.jsonl`, JSON.stringify({ ts, source, type, data: safeData }));
+  log({ source: "notifications", subSource: source, level: "info", message: type, data: safeData });
 }
 
 /** Webhook verbose entry — preserves logs/webhook/YYYY-MM-DD_verbose.log. */
 export function webhookVerbose(subSource, entry) {
   const ts = new Date().toISOString();
-  appendLine(path.join(LOG_DIR, "webhook"), `${ts.slice(0, 10)}_verbose.log`, JSON.stringify({ ts, ...entry }));
+  const safe = cleanPayload(entry, `webhook/${subSource}`);
+  appendLine(path.join(LOG_DIR, "webhook"), `${ts.slice(0, 10)}_verbose.log`, JSON.stringify({ ts, ...safe }));
   log({
     source: "webhook",
     subSource,
     level: entry.level || "info",
     message: entry.message || entry.type || "webhook event",
-    data: entry,
+    data: safe,
   });
 }
 
@@ -113,7 +147,15 @@ export function webhookError(subSource, msg) {
   log({ source: "webhook", subSource, level: "error", message: msg });
 }
 
-/** Forensic raw-body copy — preserves logs/webhook/raw/YYYY-MM-DD.jsonl. */
+/**
+ * Forensic raw-body copy — preserves logs/webhook/raw/YYYY-MM-DD.jsonl.
+ *
+ * THE ONE INTENTIONAL EXCEPTION to the sanitizing sinks above: this keeps the
+ * webhook payload exactly as it arrived, which is the point of a forensic copy.
+ * Nothing may replay these files into a model or a UI — they exist for grep/manual
+ * inspection when a webhook misbehaves. If you ever feed one to an LLM, sanitize
+ * it first.
+ */
 export function webhookRaw(source, body) {
   const ts = new Date().toISOString();
   appendLine(

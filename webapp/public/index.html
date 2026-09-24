@@ -12,6 +12,10 @@
       <div class="login-card">
         <h1>🤝 Frontdesk</h1>
         <p class="subtitle">End-to-end encrypted collaborator chat</p>
+        <div id="conn-status" class="conn-status checking">
+          <span class="conn-dot" aria-hidden="true"></span>
+          <span id="conn-text" aria-live="polite">Checking connection…</span>
+        </div>
         <div class="form-group">
           <label for="license">License key</label>
           <textarea id="license" rows="3" placeholder="Paste your TA1… license key" autocomplete="off" spellcheck="false"></textarea>
@@ -27,7 +31,8 @@
       <header>
         <h1>🤝 Frontdesk</h1>
         <div class="header-right">
-          <span id="mode-badge" class="mode-online">● online</span>
+          <span id="mode-badge" class="mode-online" title="">● online</span>
+          <span id="conn-detail" class="conn-detail"></span>
           <span id="session-timer" class="session-ok"></span>
           <button id="logout-btn">Log Out</button>
         </div>
@@ -38,6 +43,7 @@
       <nav class="tabs">
         <button id="tab-chat" class="active">💬 Chat</button>
         <button id="tab-account">👤 Account</button>
+        <button id="tab-help">📖 How to use</button>
       </nav>
 
       <!-- Chat View -->
@@ -58,6 +64,7 @@
             <h3>Account</h3>
             <p><strong>Seat:</strong> <span id="acct-sub">—</span></p>
             <p><strong>Connection:</strong> <span id="acct-mode">—</span></p>
+            <p><strong>Backend:</strong> <span id="acct-backend" class="conn-detail">—</span></p>
             <p><strong>Session expires:</strong> <span id="acct-expires">—</span></p>
           </div>
 
@@ -75,6 +82,41 @@
               All messages are end-to-end encrypted (ECDH → AES-256-GCM) between this browser and the agent.
               Your license key contains your private keys — the server only sees them once at login to verify possession.
             </p>
+          </div>
+        </div>
+      </div>
+
+      <!-- Help View — static reference only. It must never call an endpoint:
+           the operator status routes return every seat's queue items. -->
+      <div id="help-view" class="hidden">
+        <div id="help-container">
+          <div class="status-section">
+            <h3>Getting started</h3>
+            <p>Paste your license key and click <strong>Log In</strong>. Your key is your password — never share it, and don't paste it anywhere else.</p>
+            <p class="hint">Your session lasts for a limited time; the countdown is in the header. When it expires — or when the backend is restarted — you'll be asked to log in again. Reloading this tab is safe; closing it ends the session.</p>
+          </div>
+
+          <div class="status-section">
+            <h3>Chatting</h3>
+            <p><strong>Enter</strong> sends your message; <strong>Shift+Enter</strong> starts a new line.</p>
+            <p class="hint">Replies are not instant — the agent picks up new messages on a short cycle. Keep this tab open to receive them; the page checks every few seconds.</p>
+          </div>
+
+          <div class="status-section">
+            <h3>What you can ask for</h3>
+            <p>The agent can look things up and answer questions, but it cannot change anything.</p>
+            <p>✅ <strong>It can:</strong> read your Trello cards, lists and comments; read your Gmail; search the web and read pages; answer questions about the task lists and what has been done.</p>
+            <p>❌ <strong>It can't:</strong> create or edit Trello cards and checklists; send email for you; write to Drive or Calendar; change any site, server or account setting; or reveal configuration, keys or how the system is built internally.</p>
+            <p class="hint">If you ask for something outside that range it will say so — ask the team instead.</p>
+          </div>
+
+          <div class="status-section">
+            <h3>If something goes wrong</h3>
+            <p><strong>Sent back to the login screen</strong> — your session ended. Log in again.</p>
+            <p><strong>Badge shows offline</strong> — messages are held and sent when the secure channel returns, but you won't receive replies while offline.</p>
+            <p><strong>Messages send but nothing comes back</strong> — the agent may be stopped, or the request needs a human. Tell the operator.</p>
+            <p><strong>Login rejected</strong> — the key is wrong, expired or revoked. Ask the operator for a new one.</p>
+            <p class="hint">Never paste secrets into the chat — passwords, card numbers, tokens, one-time codes.</p>
           </div>
         </div>
       </div>

@@ -1601,6 +1601,11 @@
     { key: "DSMON_ENCRYPTION_KEY", label: "Encryption Key (AES-256, optional)", section: "Usage tracking", secret: true },
     { key: "DSMON_ENCRYPTION_KEY_ID", label: "Encryption Key ID", section: "Usage tracking", secret: false },
     { key: "CREDIT_POLL_INTERVAL", label: "Credit Poll Interval (ms)", section: "Usage tracking", secret: false },
+    // GitHub backup (scripts/user/safe/github_backup.py) — read by the script from the
+    // environment; config.json is authoritative here, so the .env copy is only a fallback.
+    { key: "GITHUB_TOKEN", label: "GitHub Token (required by the backup script)", section: "GitHub backup", secret: true, placeholder: "ghp_… — scope `repo` (private repos) or `public_repo`" },
+    { key: "GITHUB_USER", label: "GitHub User / Org", section: "GitHub backup", secret: false },
+    { key: "GITHUB_REPOS", label: "Repo Allowlist (blank = the script's JSON list)", section: "GitHub backup", secret: false, placeholder: "repo-a,repo-b — blank = github-backup.repos.json" },
     // Chat (operator agentic loop)
     { key: "OPERATOR_CHAT_TOOLS", label: "Agentic Tools Enabled", section: "Chat", secret: false, options: ["true", "false"] },
     { key: "OPERATOR_CHAT_MAX_ROUNDS", label: "Max Tool Steps per Message", section: "Chat", secret: false },

@@ -13,6 +13,8 @@
 import config from "../../shared/config-loader.cjs";
 config.loadEnvInto(process.env);
 import { getSeatAccounts } from "../../scripts/frontdesk-accounts.mjs";
+import { searchDuckDuckGo, fetchPage } from "../../shared/web-tools.mjs";
+import { sanitizeObject } from "../../scripts/sanitize.stub.mjs";
 import fs from "fs";
 import path from "path";
 import { fileURLToPath } from "url";
@@ -198,81 +200,19 @@ async function gmailSendMessage(to, subject, body) {
 
 // ── Handler registry ──
 
-// ── Web Search helpers ──
-
-const WEB_USER_AGENT = "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36";
-const DDG_URL = "https://html.duckduckgo.com/html/";
+// ── Web Search / Fetch ──
+//
+// Both tools delegate to `shared/web-tools.mjs` — the SAME module the
+// web-search MCP server uses, so the Electron operator chat and the MCP server
+// cannot drift apart (entity decoding, selector fallbacks, main-content
+// extraction, the private-host guard and result sanitization all live there).
 
 async function webSearchDuckDuckGo(query, maxResults) {
-  const body = new URLSearchParams({ q: query });
-  const resp = await fetch(DDG_URL, {
-    method: "POST",
-    headers: { "User-Agent": WEB_USER_AGENT, "Content-Type": "application/x-www-form-urlencoded" },
-    body: body.toString(),
-  });
-  if (!resp.ok) throw new Error(`DuckDuckGo returned ${resp.status}`);
-
-  const html = await resp.text();
-  // Basic regex-based extraction (no cheerio dependency needed in runner)
-  const results = [];
-  const resultRegex = /<a[^>]*class="result__a"[^>]*href="([^"]*)"[^>]*>([\s\S]*?)<\/a>/gi;
-  const snippetRegex = /<a[^>]*class="result__snippet"[^>]*>([\s\S]*?)<\/a>/gi;
-  const snippets = [...html.matchAll(snippetRegex)].map((m) => stripHtml(m[1]));
-
-  let idx = 0;
-  for (const match of html.matchAll(resultRegex)) {
-    if (idx >= (maxResults || 10)) break;
-    let url = match[1];
-    // Extract from DDG redirect
-    const uddg = url.match(/uddg=([^&]+)/);
-    if (uddg) url = decodeURIComponent(uddg[1]);
-    results.push({
-      title: stripHtml(match[2]).trim(),
-      url: url,
-      snippet: snippets[idx] || "",
-    });
-    idx++;
-  }
-
-  return { ok: true, tool: "web_search", result: results };
+  return { ok: true, tool: "web_search", result: await searchDuckDuckGo(query, maxResults) };
 }
 
 async function webFetchPage(url) {
-  const resp = await fetch(url, {
-    headers: { "User-Agent": WEB_USER_AGENT },
-    redirect: "follow",
-    signal: AbortSignal.timeout(15000),
-  });
-  if (!resp.ok) throw new Error(`HTTP ${resp.status}`);
-
-  const text = await resp.text();
-  const contentType = resp.headers.get("content-type") || "";
-  const title = text.match(/<title[^>]*>([\s\S]*?)<\/title>/i)?.[1]?.trim() || "";
-
-  // Strip HTML tags for a clean text preview
-  const clean = text
-    .replace(/<script[^>]*>[\s\S]*?<\/script>/gi, "")
-    .replace(/<style[^>]*>[\s\S]*?<\/style>/gi, "")
-    .replace(/<nav[^>]*>[\s\S]*?<\/nav>/gi, "")
-    .replace(/<footer[^>]*>[\s\S]*?<\/footer>/gi, "")
-    .replace(/<header[^>]*>[\s\S]*?<\/header>/gi, "")
-    .replace(/<[^>]+>/g, " ")
-    .replace(/&[a-z]+;/gi, " ")
-    .replace(/\s+/g, " ")
-    .trim();
-
-  const MAX_LENGTH = 15000;
-  return {
-    ok: true,
-    tool: "web_fetch",
-    result: {
-      url: resp.url,
-      contentType,
-      title,
-      text: clean.slice(0, MAX_LENGTH),
-      truncated: clean.length > MAX_LENGTH,
-    },
-  };
+  return { ok: true, tool: "web_fetch", result: await fetchPage(url) };
 }
 
 // ── WhatsApp Cloud API helpers (Meta Cloud API, official) ──
@@ -467,7 +407,36 @@ async function whatsappMarkRead(args) {
 
 // ── Frontdesk reply (via webhook server — it owns the encryption + session) ──
 
+/**
+ * The reply seat is NEVER taken from the model.
+ *
+ * The event carries the authoritative seat (`event.data.sub`, resolved from the
+ * licence during decryption) and the runner passes it here as `ctx.sub`. The
+ * model used to be told to copy it out of the prompt, which it got wrong — it
+ * hallucinated `sub: "frontdesk"` from the event source name and the API
+ * rejected it with `unknown_seat:frontdesk` (event #1510). Preferring the
+ * event's seat removes that whole failure mode and stops a model-supplied id
+ * from ever choosing which user a reply is encrypted for.
+ */
+function resolveReplySeat(ctx, args) {
+  const fromEvent = ctx?.sub || null;
+  const fromModel = args?.sub || null;
+  if (fromEvent) {
+    if (fromModel && fromModel !== fromEvent) {
+      console.log(`   🔒 [EXECUTOR] frontdesk_reply sub overridden: model sent "${fromModel}", using event seat "${fromEvent}"`);
+    }
+    return fromEvent;
+  }
+  return fromModel;
+}
+
 async function frontdeskReply(sub, text) {
+  if (!sub || !String(sub).trim()) {
+    throw new Error("No frontdesk seat to reply to — the event carried no 'sub' and the model supplied none");
+  }
+  if (!text || !String(text).trim()) {
+    throw new Error("Missing required parameter: text (the reply to send)");
+  }
   const base = `http://localhost:${process.env.WEBHOOK_PORT || "3199"}`;
   const token = process.env.WEBHOOK_API_TOKEN || "";
   const res = await fetch(`${base}/api/frontdesk/reply`, {
@@ -478,13 +447,6 @@ async function frontdeskReply(sub, text) {
   if (!res.ok) throw new Error(`Webhook API ${res.status}: ${await res.text()}`);
   const data = await res.json();
   return { ok: true, tool: "frontdesk_reply", result: data };
-}
-
-function stripHtml(str) {
-  return str
-    .replace(/<[^>]+>/g, "")
-    .replace(/&[a-z]+;/g, " ")
-    .trim();
 }
 
 const HANDLERS = {
@@ -508,7 +470,7 @@ const HANDLERS = {
   whatsapp_send_text: (args) => whatsappSendText(args),
   whatsapp_send_template: (args) => whatsappSendTemplate(args),
   whatsapp_mark_read: (args) => whatsappMarkRead(args),
-  frontdesk_reply: (args) => frontdeskReply(args.sub, args.text),
+  frontdesk_reply: (args, ctx) => frontdeskReply(resolveReplySeat(ctx, args), args.text),
 };
 
 /**
@@ -549,13 +511,36 @@ export async function executeToolCall(toolName, args, options = {}) {
   console.log(`   🔧 [EXECUTOR] Executing ${toolName}...`);
 
   try {
-    const result = await handler(args);
+    const result = await handler(args, { sub: options.sub || null, isFrontdesk });
     console.log(`   ✅ [EXECUTOR] ${toolName} succeeded`);
-    return result;
+    return sanitizeToolResult(toolName, result);
   } catch (err) {
     console.error(`   ❌ [EXECUTOR] ${toolName} failed: ${err.message}`);
     return { ok: false, tool: toolName, error: err.message };
   } finally {
     activeCreds = null;
   }
+}
+
+/**
+ * Sanitize a tool result before it can reach a model or a log.
+ *
+ * These handlers return raw third-party payloads — Trello card descriptions and
+ * comments, Gmail bodies, scraped pages, WhatsApp messages — which are the main
+ * prompt-injection vector in this system. Sanitizing at the executor (instead of
+ * trusting each caller) means every consumer gets clean data: the Electron
+ * operator chat, the agent runner, and the webhook server's inline `execute`.
+ *
+ * Only `result` is touched, never `args` — arguments go straight to an external
+ * API and must be sent exactly as the model wrote them.
+ */
+function sanitizeToolResult(toolName, result) {
+  if (!result || typeof result !== "object" || result.result === undefined || result.result === null) return result;
+  const auditSource = `executor/${toolName}`;
+  // Arrays are walked item by item: sanitizeObject is documented to walk string
+  // fields of an object, so a list result is mapped explicitly rather than assumed.
+  const payload = Array.isArray(result.result)
+    ? result.result.map((item) => (typeof item === "object" && item !== null ? sanitizeObject(item, { auditSource }) : item))
+    : sanitizeObject(result.result, { auditSource });
+  return { ...result, result: payload };
 }

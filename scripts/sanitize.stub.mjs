@@ -27,10 +27,38 @@ try {
     throw err; // Real load error (e.g. syntax) — surface it, don't mask a broken private file
   }
   // Private file not present → fall back to no-op passthrough.
+  //
+  // This is a SECURITY downgrade, not a benign mode: every Trello card body, email
+  // subject, web page and chat message then reaches the model unfiltered. Say so
+  // loudly, once, with the fix in the message.
   console.warn(
-    "[sanitize.stub] ./sanitize.private.mjs not found — using no-op passthrough sanitizer. " +
-      "Restore the private sanitizer file to enable real prompt-injection protection."
+    "\n" +
+      "⚠️  ────────────────────────────────────────────────────────\n" +
+      "⚠️  PROMPT-INJECTION PROTECTION IS OFF\n" +
+      "⚠️  ./sanitize.private.mjs is missing, so the no-op passthrough\n" +
+      "⚠️  sanitizer is in use. External content (Trello/Gmail/Drive/\n" +
+      "⚠️  Calendar/web/WhatsApp/frontdesk) reaches the model UNFILTERED.\n" +
+      "⚠️  Restore scripts/sanitize.private.mjs to enable protection.\n" +
+      "⚠️  /health reports sanitizer.active:false while this is the case.\n" +
+      "⚠️  ────────────────────────────────────────────────────────\n",
   );
+}
+
+/** True when the real sanitizer loaded; false means the no-op passthrough is in use. */
+export const sanitizerActive = impl !== null;
+
+/**
+ * Sanitizer status, for /health and startup banners.
+ * @returns {{active: boolean, impl: string|null, detail: string}}
+ */
+export function sanitizerStatus() {
+  return {
+    active: sanitizerActive,
+    impl: sanitizerActive ? "scripts/sanitize.private.mjs" : null,
+    detail: sanitizerActive
+      ? "prompt-injection sanitizer loaded"
+      : "sanitize.private.mjs missing — no-op passthrough in use, external content is NOT sanitized",
+  };
 }
 
 /* ── Fallback: no-op passthrough (identity) sanitizer ── */

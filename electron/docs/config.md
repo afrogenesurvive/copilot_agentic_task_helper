@@ -28,8 +28,10 @@ Settings are grouped into sections, each field showing its **source tag** (`conf
 - **WhatsApp** — Meta Cloud API: system-user access token, WABA ID, active phone-number ID
   (test or burner), optional test-number ID, API version, app secret + webhook verify token.
   See `whatsapp.md` for how to set up the free test number and a real (burner) number.
-- **Frontdesk** — use-Trello / log-to-Trello toggles, agent public key, session TTL, HMAC
-  secret, auth passphrase.
+- **Frontdesk** — use-Trello / log-to-Trello toggles, agent public key, session TTL. The
+  **HMAC secret** and **auth passphrase** are **legacy Trello-mirror settings**: they are only
+  consulted when `FRONTDESK_USE_TRELLO=true`, and the webapp's current licence + E2E chat path
+  ignores them entirely.
 - **Tunnel** — Cloudflare tunnel token / ID / domain.
 - **AWS** — access key/secret/session token, region, profile (used by helper scripts).
 - **Usage tracking** — DS-mon master toggle, push URL / token / interval / instance ID, optional

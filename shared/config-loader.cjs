@@ -78,6 +78,17 @@ const DEFAULTS = {
   DSMON_INSTANCE_ID: "",
   DSMON_ENCRYPTION_KEY: "",
   DSMON_ENCRYPTION_KEY_ID: "dsmon",
+  // GitHub backup script (scripts/user/safe/github_backup.py) — a token from
+  // https://github.com/settings/tokens needs the `repo` scope for private repos,
+  // `public_repo` for public-only. Leave GITHUB_REPOS EMPTY to drive the repo
+  // list from the script's own github-backup.repos.json: a set GITHUB_REPOS
+  // OVERRIDES that file. The script's other knobs (GITHUB_LFS, SNAPSHOT,
+  // EXCLUDE_DIRS) are deliberately NOT listed here — unset keeps its built-in
+  // safe defaults, and EXCLUDE_DIRS set-but-empty would disable its
+  // node_modules/.venv snapshot exclusions.
+  GITHUB_TOKEN: "",
+  GITHUB_USER: "",
+  GITHUB_REPOS: "",
   // Usage tab — credit-balance poll interval (ms); annotation default only
   CREDIT_POLL_INTERVAL: "60000",
 };
@@ -87,12 +98,23 @@ function hasConfigJson() {
   return fs.existsSync(CONFIG_PATH);
 }
 
-/** Parse .env text (KEY=VALUE lines) into a flat object. */
+/**
+ * Parse .env text (KEY=VALUE lines) into a flat object.
+ *
+ * An unquoted value ends at a whitespace-preceded '#' — dotenv semantics. Without
+ * this, importing .env into config.json copied each trailing comment INTO the value
+ * (`LOG_LEVEL` became "info           # debug|info|...", `OPENAI_API_KEY` picked up
+ * "# for LLM_PROVIDER=openai", …), i.e. a corrupted credential rather than a cosmetic
+ * problem. A value that starts with a quote, or a bare "#56d4dd" colour, is untouched.
+ */
 function parseEnv(text) {
   const out = {};
   for (const line of String(text || "").split("\n")) {
     const m = line.match(/^([A-Za-z0-9_]+)=(.*)$/);
-    if (m) out[m[1]] = m[2].trim();
+    if (!m) continue;
+    const raw = m[2].trim();
+    const cut = /^["']/.test(raw) ? -1 : raw.search(/\s+#/);
+    out[m[1]] = cut === -1 ? raw : raw.slice(0, cut).trim();
   }
   return out;
 }

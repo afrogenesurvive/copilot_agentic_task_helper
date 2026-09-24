@@ -8,7 +8,7 @@ A system that connects GitHub Copilot with external services (Trello, Gmail, Goo
 - **Email access via Gmail** — Search, read, and send emails from Copilot
 - **File access via Google Drive** — List, search, and read Drive files from Copilot
 - **Calendar management via Google Calendar** — List, view, and create calendar events from Copilot
-- **Collaborator Chat** — A static webapp that lets a remote collaborator send messages to Copilot through a Trello-based chat interface
+- **Collaborator Chat** — a static webapp that lets a remote collaborator chat with the agent over license-key login and end-to-end encryption; Trello is only the tunnel-down relay
 - **Notification relay** — A webhook server that receives push notifications from Trello, Gmail, Drive, and Calendar and queues them for the agent to process
 
 ## Components

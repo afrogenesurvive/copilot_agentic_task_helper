@@ -95,6 +95,40 @@ function resolveAccount(args) {
   return (args && args.accountId) || DEFAULT_ACCOUNT;
 }
 
+/** Deploy contexts the env API stores values for. "all" is NOT one of them: a
+ *  variable holds one value PER context, and omitting a context leaves whatever
+ *  that context already had untouched. */
+const DEPLOY_CONTEXTS = ["production", "deploy-preview", "branch-deploy", "dev", "dev-server"];
+
+/**
+ * Resolve the ACCOUNT (team) that owns a site.
+ *
+ * Site-scoped environment variables do NOT live under `/sites/{id}/env` — that
+ * path 404s on the real API (which is why the site-scoped env tools used to fail).
+ * They live under the ACCOUNT path with a `site_id` query parameter, so a caller
+ * only needs NETLIFY_SITE_ID set; the account is discovered from the site itself.
+ */
+async function resolveAccountForSite(siteId) {
+  if (!siteId) return DEFAULT_ACCOUNT || "";
+  if (DEFAULT_ACCOUNT) return DEFAULT_ACCOUNT;
+  const site = await netlifyFetch(`/sites/${encodeURIComponent(siteId)}`);
+  return (site && (site.account_slug || site.account_id)) || "";
+}
+
+/** Account-scoped env path, with the key appended when one is given. */
+function envPath(accountId, key) {
+  const base = `/accounts/${encodeURIComponent(accountId)}/env`;
+  return key ? `${base}/${encodeURIComponent(key)}` : base;
+}
+
+/** "production", "production,dev" or ["production","dev"] → ["production","dev"].
+ *  Empty / "all" / undefined → [] meaning "every deploy context". */
+function normalizeContexts(context) {
+  if (context === undefined || context === null || context === "" || context === "all") return [];
+  const list = Array.isArray(context) ? context : String(context).split(",");
+  return list.map((c) => String(c).trim()).filter(Boolean);
+}
+
 function siteRequired(args) {
   return resolveSite(args)
     ? null
@@ -148,70 +182,104 @@ async function handleGetAccount(args) {
 }
 
 /* Environment variables.
- * Site scope → /sites/{site_id}/env (mirrors "Site configuration → Env vars").
- * Team scope → /accounts/{account_id}/env (modern API; contexts + scopes). */
+ * Site scope → GET/PUT/POST/DELETE /accounts/{account}/env[/{key}]?site_id={site}
+ * Team scope → the same paths without site_id
+ * (`/sites/{id}/env` does not exist on the API — it 404s.)
+ *
+ * A variable stores one entry per deploy CONTEXT, so the body is
+ * `{key, scopes, is_secret, values:[{context, value}]}`. Verified against the live
+ * API: a flat `{value, context}` body is rejected with "Invalid request structure",
+ * and a JSON OBJECT body with `param is missing or the value is empty: _json`
+ * (the create endpoint wants a top-level ARRAY). */
 async function handleListEnv(args) {
   const siteId = resolveSite(args);
-  const accountId = resolveAccount(args);
-  if (siteId) {
-    const data = await netlifyFetch(`/sites/${encodeURIComponent(siteId)}/env`);
-    return { content: [safeJson(data)] };
-  }
+  const accountId = siteId ? await resolveAccountForSite(siteId) : resolveAccount(args);
   if (!accountId) {
     return { content: [safeText("Pass siteId (site env) or accountId (team env) — none configured")], isError: true };
   }
-  const data = await netlifyFetch(`/accounts/${encodeURIComponent(accountId)}/env`);
-  return { content: [safeJson(data)] };
+  const data = await netlifyFetch(envPath(accountId), { params: siteId ? { site_id: siteId } : {} });
+  const trimmed = (Array.isArray(data) ? data : []).map((v) => ({
+    key: v.key,
+    scopes: v.scopes || [],
+    is_secret: !!v.is_secret,
+    updated_at: v.updated_at || null,
+    // Secret values are masked by the API; report the per-context entries as-is
+    // rather than pretending a masked value is the real one.
+    values: (v.values || []).map((x) => ({ context: x.context, value: x.value })),
+  }));
+  return { content: [safeJson(trimmed)] };
 }
 
 async function handleGetEnv(args) {
   const { key } = args || {};
   if (!key) return { content: [safeText("Missing required parameter: key")], isError: true };
   const siteId = resolveSite(args);
-  if (siteId) {
-    const data = await netlifyFetch(`/sites/${encodeURIComponent(siteId)}/env`);
-    const entry = data && data[key] !== undefined ? data[key] : { notFound: true };
-    return { content: [safeJson(entry)] };
-  }
-  const accountId = resolveAccount(args);
+  const accountId = siteId ? await resolveAccountForSite(siteId) : resolveAccount(args);
   if (!accountId) return { content: [safeText("No site or account target for env lookup")], isError: true };
-  const data = await netlifyFetch(`/accounts/${encodeURIComponent(accountId)}/env/${encodeURIComponent(key)}`);
+  const data = await netlifyFetch(envPath(accountId, key), { params: siteId ? { site_id: siteId } : {} });
   return { content: [safeJson(data)] };
 }
 
 async function handleSetEnv(args) {
-  const { key, value, context = "all", scopes = ["builds", "functions", "runtime"] } = args || {};
+  const { key, value, context, scopes = ["builds", "functions", "runtime"], is_secret } = args || {};
   if (!key || value === undefined) {
     return { content: [safeText("Missing required parameters: key, value")], isError: true };
   }
   const siteId = resolveSite(args);
-  if (siteId) {
-    await netlifyFetch(`/sites/${encodeURIComponent(siteId)}/env`, { method: "PUT", body: { [key]: value } });
-    return { content: [safeJson({ ok: true, scope: "site", key })] };
-  }
-  const accountId = resolveAccount(args);
+  const accountId = siteId ? await resolveAccountForSite(siteId) : resolveAccount(args);
   if (!accountId) {
     return { content: [safeText("Pass siteId (site env) or accountId (team env) — none configured")], isError: true };
   }
-  const data = await netlifyFetch(`/accounts/${encodeURIComponent(accountId)}/env/${encodeURIComponent(key)}`, {
-    method: "PUT",
-    body: { key, scopes, values: [{ context, value }] },
-  });
-  return { content: [safeJson({ ok: true, scope: "account", key, id: data.id })] };
+  const params = siteId ? { site_id: siteId } : {};
+
+  // Read before writing: the update endpoint takes the whole object, and reading
+  // lets us preserve is_secret, the scopes, and every context the caller did not
+  // name (a blind PUT would wipe the others).
+  let existing = null;
+  try {
+    existing = await netlifyFetch(envPath(accountId, key), { params });
+  } catch {
+    existing = null;
+  }
+
+  const merge = new Map(((existing && existing.values) || []).map((v) => [v.context, v.value]));
+  const requested = normalizeContexts(context);
+  for (const ctx of requested.length ? requested : DEPLOY_CONTEXTS) merge.set(ctx, value);
+
+  const body = {
+    key,
+    scopes: (existing && existing.scopes) || scopes,
+    is_secret: is_secret === undefined ? !!(existing && existing.is_secret) : !!is_secret,
+    values: [...merge].map(([ctx, val]) => ({ context: ctx, value: val })),
+  };
+
+  if (existing) {
+    await netlifyFetch(envPath(accountId, key), { method: "PUT", params, body });
+  } else {
+    // Create takes a top-level ARRAY of variable objects.
+    await netlifyFetch(envPath(accountId), { method: "POST", params, body: [body] });
+  }
+  return {
+    content: [
+      safeJson({
+        ok: true,
+        scope: siteId ? "site" : "account",
+        key,
+        contexts: body.values.map((v) => v.context),
+        redeployRequired: true,
+      }),
+    ],
+  };
 }
 
 async function handleDeleteEnv(args) {
   const { key } = args || {};
   if (!key) return { content: [safeText("Missing required parameter: key")], isError: true };
   const siteId = resolveSite(args);
-  if (siteId) {
-    await netlifyFetch(`/sites/${encodeURIComponent(siteId)}/env/${encodeURIComponent(key)}`, { method: "DELETE" });
-    return { content: [safeJson({ ok: true, scope: "site", key, deleted: true })] };
-  }
-  const accountId = resolveAccount(args);
+  const accountId = siteId ? await resolveAccountForSite(siteId) : resolveAccount(args);
   if (!accountId) return { content: [safeText("No site or account target for env delete")], isError: true };
-  await netlifyFetch(`/accounts/${encodeURIComponent(accountId)}/env/${encodeURIComponent(key)}`, { method: "DELETE" });
-  return { content: [safeJson({ ok: true, scope: "account", key, deleted: true })] };
+  await netlifyFetch(envPath(accountId, key), { method: "DELETE", params: siteId ? { site_id: siteId } : {} });
+  return { content: [safeJson({ ok: true, scope: siteId ? "site" : "account", key, deleted: true })] };
 }
 
 /* Deploys / builds */
@@ -311,7 +379,7 @@ const netlifyTools = [
   {
     name: "netlify_list_env",
     description:
-      "List environment variables. If siteId is given, returns that site's env vars (mirrors Site configuration → Env vars). Otherwise lists the team/account env vars (needs accountId).",
+      "List environment variables. With siteId (or NETLIFY_SITE_ID) returns that site's variables; with accountId only, the team's. Values are returned per deploy context, and secret values come back masked by the API.",
     inputSchema: {
       type: "object",
       properties: {
@@ -322,7 +390,8 @@ const netlifyTools = [
   },
   {
     name: "netlify_get_env",
-    description: "Get a single environment variable for a site (siteId) or team (accountId).",
+    description:
+      "Get a single environment variable, with its per-context values, for a site (siteId or NETLIFY_SITE_ID) or the team (accountId). Secret values are masked by the API.",
     inputSchema: {
       type: "object",
       properties: {
@@ -336,19 +405,24 @@ const netlifyTools = [
   {
     name: "netlify_set_env",
     description:
-      "Create or update an environment variable. With siteId: sets it on that site. With accountId only: sets a team/shared variable for the given context (all/production/etc.) and scopes. IMPORTANT: env changes require a new deploy to take effect.",
+      "Create or update an environment variable. With siteId (or NETLIFY_SITE_ID) it sets it on that site; with accountId only, on the team. Reads the variable first, so is_secret, the scopes and any context you did not name are preserved. IMPORTANT: env changes only take effect after a new deploy.",
     inputSchema: {
       type: "object",
       properties: {
         key: { type: "string", description: "Variable name, e.g. TRELLO_API_KEY" },
-        value: { type: "string", description: "Secret value" },
+        value: { type: "string", description: "Value to set (an empty string is a valid value)" },
         siteId: { type: "string", description: "Target site (recommended for the frontdesk site)" },
         accountId: { type: "string", description: "Team id/slug (team-scoped var)" },
-        context: { type: "string", description: "Deploy context for team vars: all, production, deploy-preview, branch-deploy (default all)" },
+        context: {
+          type: "string",
+          description:
+            "Deploy context(s) to set: production, deploy-preview, branch-deploy, dev, dev-server. Omit (or pass \"all\") to set every context; comma-separate to set several.",
+        },
+        is_secret: { type: "boolean", description: "Mark the variable secret (default: keep the current setting)" },
         scopes: {
           type: "array",
           items: { type: "string" },
-          description: "Scopes for team vars: builds, functions, runtime (default all three)",
+          description: "Scopes: builds, functions, runtime (default all three on create; existing scopes are preserved on update)",
         },
       },
       required: ["key", "value"],
@@ -356,7 +430,7 @@ const netlifyTools = [
   },
   {
     name: "netlify_delete_env",
-    description: "Delete an environment variable from a site (siteId) or team (accountId).",
+    description: "Delete an environment variable from a site (siteId or NETLIFY_SITE_ID) or from the team (accountId).",
     inputSchema: {
       type: "object",
       properties: {

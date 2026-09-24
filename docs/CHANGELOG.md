@@ -1,5 +1,139 @@
 # Changelog
 
+## [0.3.1-1] — 2026-09-23
+
+### A frontdesk reply could be addressed to a seat that does not exist
+
+The agent runner's reply tool took the recipient's seat from the model's own output — but the model
+was never shown that id, so it had to invent one. It invented the name of the event's *source*
+(`frontdesk`) rather than a real seat, the backend correctly refused it, and the reply was lost. The
+failure surfaced as an API error, which made it look like a backend fault rather than a bad argument.
+
+The seat now comes from the event itself, where the licence-verified identity already lives, and the
+model is no longer asked for it at all. A model-supplied id can no longer choose which collaborator a
+reply is encrypted for; when the two disagree the event wins, and the override is logged.
+
+## [0.2.10-4] — 2026-09-23
+
+### Config tab gains a GitHub backup section, and imported values stop being polluted
+
+`config.json` and `.env` are separate files with a per-key precedence rule, and values imported
+from `.env` had arrived with their trailing comments glued on — so the OpenAI and Anthropic API
+keys were stored as `sk-… # for LLM_PROVIDER=…`, which cannot authenticate, and the log level read
+`info           # debug|info|warn|error`. The `.env` parser now ends an unquoted value at a
+whitespace-preceded `#`, the five affected values in `config.json` were cleaned, and the keys
+missing from it (the GitHub backup trio) were added.
+
+The ⚙️ Config tab also gains a **GitHub backup** section — token (masked, with the reveal toggle),
+user/org, and repo allowlist — so the repository backup script can be configured from the UI
+together with everything else, instead of only by hand-editing `.env`.
+
+## [0.2.10-3] — 2026-09-23
+
+### The web chat now explains itself
+
+The frontdesk webapp explained exactly one thing — how to log in — so a collaborator had no in-app
+answer to "what am I allowed to ask this for?". It now carries a third tab, **📖 How to use**, which
+states in plain terms how to send and receive messages, that replies are not instant, what the agent
+can look up versus what it will not change, what the Account tab's Google/Trello rows mean, and what
+to do when a session ends or the connection drops. It is static markup and issues no requests, so it
+cannot expose one seat's activity to another.
+
+Tab switching was hard-wired for exactly two tabs, so a third could not be expressed at all; it is
+now a table plus a single handler, and a fourth tab is a one-line change.
+
+### Docs
+
+- New `docs/safe/web-frontdesk-use.md` — the collaborator-facing guide the new tab mirrors: logging in,
+  the session countdown, sending/receiving, what the agent can and cannot be asked to do, the Account
+  tab, and a symptom → action troubleshooting table. It deliberately carries no file paths, environment
+  variables, ports or internal names, so it can be handed to a seat as-is.
+- `docs/safe/frontdesk-quickstart.md` and `docs/safe/frontdesk-v2-operator.md` link it, and the operator
+  runbook's "no Status tab in the webapp" note now records that the new tab is static.
+
+## [0.2.10-2] — 2026-09-23
+
+### Frontdesk: two reachable routes closed, and a silent failure made loud
+
+The web frontdesk chat is licence-authenticated with end-to-end encryption, but two of its routes
+were trusting the wrong thing:
+
+- **The internal reply route was publicly reachable.** `/api/frontdesk/reply` — where the agent posts
+  an encrypted answer back to a seat — was covered by a broad public-path prefix, so its only guard
+  was a check that was skipped entirely when `WEBHOOK_API_TOKEN` was unset. Anyone able to reach the
+  hostname could then inject text into a seat's outbox. It now goes through the standard token guard,
+  which fails closed (503) when no token is configured.
+- **The session-log route accepted unauthenticated writes.** It took a bare `user` field as a
+  fallback, so login/logout rows could be appended without a session. It now requires one, and the
+  identity always comes from the session rather than the request body.
+- **An expired session no longer hides.** Sessions live in memory, so a backend restart logs everyone
+  out. The webapp used to keep reporting "online" while quietly diverting every message into the
+  offline outbox, where a dead token meant it could never be delivered. It now explains the expiry and
+  returns the user to the login screen.
+- `GET /health` reports whether the prompt-injection sanitizer is actually active, so a deployment
+  missing its private sanitizer file is visible instead of silently unfiltered.
+
+### Web search: one implementation instead of two
+
+The Electron chat's `web_search`/`web_fetch` and the web-search MCP server now share a single
+implementation, so they cannot disagree: snippets decode HTML entities properly (`&#x27;` used to
+appear literally), a change in the search page's markup can no longer silently return zero results,
+and both paths refuse loopback/private hosts so a model-chosen URL cannot read the local backend.
+
+### Netlify env tooling fixed, and the chat now reports its connection status
+
+- **The Netlify MCP's environment-variable tools were broken** — they called `/sites/{id}/env`, which
+  does not exist, so listing or setting a site variable failed with a 404. They now use the real
+  contract (account-scoped path with `site_id`, one value per deploy context), discover the account
+  from the site so only `NETLIFY_SITE_ID` is needed, and read a variable before writing it so
+  `is_secret`, the scopes and any context you did not name are preserved.
+- **The web chat now shows whether it can actually reach the backend.** The login card carries a live
+  status line naming the host it will call, and it tells "backend unreachable" apart from "no backend
+  configured on this host" — the misconfiguration that previously surfaced only as a generic "Cannot
+  reach the server". After login the same probe drives the online/offline badge, the backend host in
+  the header, and a Backend row on the Account tab; it also warns when the injection sanitizer is off.
+
+### Sanitization hardening
+
+Prompt-injection filtering now happens at the *sources* as well as the callers: tool results are
+sanitized where they are produced, prompt construction flattens and sanitizes each value it
+interpolates, and the log sinks sanitize on the way to disk (the live log is rendered by the desktop
+app, and one of its fields was built from request data). The deliberately-raw webhook forensic dumps
+are unchanged and now documented as never-replay.
+
+### Docs
+
+- New `docs/safe/frontdesk-quickstart.md` — issue a seat, run the backend, host the webapp, and verify
+  the encrypted round trip end to end.
+- Frontdesk documentation brought up to date with the licence + E2E flow; the older HMAC and passphrase
+  flow is now labelled as the legacy Trello mirror it is.
+
+### Every user script now has a UI form, plus Trello/GitHub backup and disk cleanup
+
+The 📜 Scripts tab is the app's manual script runner. Every script under `scripts/user/` now has a
+generated form, and three tools that previously lived only in other repos were brought in.
+
+- **New cards.** `trello-backup.mjs` — a complete JSON snapshot of every board (one file per board
+  plus a manifest index), using the Trello credentials already configured. `github_backup.py` —
+  mirrors each repo, exports a readable code snapshot and writes issues/pulls/releases metadata;
+  Python standard library only. Plus the eight disk-cleanup scripts behind `master_cleanup.sh`,
+  each with its own card.
+- **Forms for the last two hold-outs.** `gmail-clear-labelled-updates.mjs` exposes its dry-run,
+  label, account, rollback-manifest and restore options; `convert-xlsx-to-sheet.mjs` gained `--name`
+  and `--dry-run` so it can target a file without editing the source. The daily rollover card gained
+  the board-id / list-id overrides.
+- **Bug fix.** `convert-xlsx-to-sheet.mjs` crashed on launch with
+  `ENOENT … scripts/user/.env` — it read a hard-coded `../.env` that had been wrong since the script
+  moved into `scripts/user/safe/`. It now loads configuration the same way every other script does.
+- **Safety.** Every destructive card ships with `--dry-run` pre-checked, so a real delete is two
+  deliberate actions. The cleanup master no longer skips a subscript just because a copy lost its
+  executable bit — it falls back to `bash <script>`.
+- **Docs.** `electron/docs/scripts.md` now covers the two scanned folders (flat, no subfolders), the
+  dry-run defaults, the no-stdin caveat, and the rollover script's output contract.
+
+The new scripts live in `scripts/user/safe/`, which is gitignored — the same folder as the existing
+personal tools — so nothing here adds third-party or credentialed code to the repo.
+
 ## [0.2.10-1] — 2026-09-22
 
 ### Gmail setup can now manage filters, and credential backups can't be committed

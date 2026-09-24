@@ -70,6 +70,7 @@ import {
 import { startGoogleOAuth, handleGoogleOAuthCallback } from "./lib/oauth.js";
 import { getSeatAccounts } from "../../scripts/frontdesk-accounts.mjs";
 import { log as logEvent } from "../../shared/logger.mjs";
+import { sanitizerStatus } from "../../scripts/sanitize.stub.mjs";
 import { ensureWatch as ensureGmailWatch } from "./lib/gmail-watch.js";
 import { startCalendarWatch as renewCalendarWatch, getCalendarWatchStatus } from "./scripts/setup-calendar-watch.js";
 import { startDriveWatch as renewDriveWatch, getDriveWatchStatus } from "./scripts/setup-drive-watch.js";
@@ -154,9 +155,34 @@ if (!API_TOKEN) {
       "Set it in config.json/.env to re-enable /events, /api/queue-status, /api/tasks and /api/rules.",
   );
 }
-// Paths exempt from the static API-token auth. Frontdesk endpoints use their own
-// session tokens; OAuth + config + static webapp are public.
-const PUBLIC_PREFIXES = ["/api/license/verify", "/api/frontdesk/", "/api/session-log", "/api/config", "/oauth/"];
+
+// Prompt-injection sanitizer state. The stub prints its own banner when it falls
+// back to the no-op passthrough; this line records it in the server log and the
+// fact is exposed on /health ("sanitizer": {active:false}) so it is visible to the
+// Electron dashboard and to any monitoring, not just to whoever read the console.
+const SANITIZER = sanitizerStatus();
+if (!SANITIZER.active) {
+  console.warn(`⚠️  [SANITIZE] ${SANITIZER.detail}`);
+}
+// Paths exempt from the static API-token auth. The frontdesk routes below use
+// their OWN session tokens (checked inside the handler); OAuth + config + static
+// webapp are public.
+//
+// Deliberately NOT public:
+//   /api/frontdesk/reply — the agent-runner's internal route. It used to be covered
+//     by the broad "/api/frontdesk/" prefix, which meant its only guard was the
+//     handler's own `if (API_TOKEN)` check — skipped entirely when the token was
+//     unset, leaving an unauthenticated route that injects text into a seat's
+//     encrypted outbox. It now goes through requireAuth, which fails closed (503).
+const PUBLIC_PREFIXES = [
+  "/api/license/verify",
+  "/api/frontdesk/send",
+  "/api/frontdesk/poll",
+  "/api/frontdesk/account",
+  "/api/session-log",
+  "/api/config",
+  "/oauth/",
+];
 function requireAuth(req, res, next) {
   // Skip auth for webhook callbacks, health check, and public frontdesk paths
   if (req.path === "/health" || req.path.startsWith("/webhooks/") || PUBLIC_PREFIXES.some((p) => req.path.startsWith(p))) {
@@ -218,7 +244,9 @@ const asyncRoute = (fn) => (req, res, next) => Promise.resolve(fn(req, res, next
 /* ── Health check ── */
 
 app.get("/health", (_req, res) => {
-  res.json({ status: "ok", port: PORT, uptime: process.uptime() });
+  // `sanitizer.active:false` means scripts/sanitize.private.mjs is missing and the
+  // no-op passthrough is in use — external content is not being filtered.
+  res.json({ status: "ok", port: PORT, uptime: process.uptime(), sanitizer: sanitizerStatus() });
 });
 
 /* ── Trello webhooks ── */
@@ -301,10 +329,15 @@ app.delete("/events", (req, res) => {
   res.json({ status: "cleared_all", queue: queueName, cleared: pending });
 });
 
-/* ── Status API endpoints (for the frontdesk webapp) ──
+/* ── Operator status endpoints ──
  *
- * These endpoints serve queue status, task lists, and tool dispatch
- * rules so the webapp can display them in the Status tab.
+ * Queue summary, today's task list, and the enabled tool-dispatch rules.
+ *
+ * These are OPERATOR endpoints (the Electron dashboard's Queue/Tools tabs call
+ * them), not webapp endpoints. They are token-gated by requireAuth and are
+ * deliberately NOT consumed by the public webapp: /api/queue-status returns the
+ * most recent queue items, which include other seats' frontdesk messages, so
+ * exposing it to a collaborator's browser would leak their conversations.
  * All support CORS via the existing app.use(cors()) middleware.
  */
 
@@ -379,9 +412,10 @@ app.get("/tool-logs", (req, res) => {
 
 /* ── Frontdesk v2 API (license auth + E2E encryption) ──
  *
- * Public routes (exempt from requireAuth above); session tokens are validated
- * inside the handlers. /api/frontdesk/reply is internal (agent runner) and
- * requires the WEBHOOK_API_TOKEN bearer header.
+ * The send/poll/account routes are exempt from requireAuth and validate their own
+ * frontdesk session token inside the handler; /api/license/verify is fully public.
+ * /api/frontdesk/reply is the agent RUNNER's internal route: it is NOT public, so
+ * requireAuth applies (503 when WEBHOOK_API_TOKEN is unset, 401 otherwise).
  */
 
 // POST /api/license/verify — license key login → session token
@@ -406,7 +440,10 @@ app.get("/api/frontdesk/poll", (req, res) => {
   res.status(out.ok ? 200 : 401).json(out);
 });
 
-// POST /api/frontdesk/reply — internal; the agent runner posts a reply for a seat
+// POST /api/frontdesk/reply — internal; the agent runner posts a reply for a seat.
+// Primary guard is requireAuth (it is NOT in PUBLIC_PREFIXES and answers 503 when
+// WEBHOOK_API_TOKEN is unset). The check below is defence in depth for the case
+// where a future change re-adds this path to the public list.
 app.post("/api/frontdesk/reply", (req, res) => {
   if (API_TOKEN) {
     const header = req.headers["authorization"] || "";
@@ -423,12 +460,17 @@ app.post("/api/frontdesk/reply", (req, res) => {
 });
 
 // POST /api/session-log — frontdesk login/logout events (direct local write)
+//
+// Requires a valid session token. It used to accept a bare `user` field as a
+// fallback, which made it an unauthenticated write endpoint on a public hostname
+// (anyone could append spoofed login/logout rows). The identity now always comes
+// from the session, never from the request body.
 app.post("/api/session-log", (req, res) => {
   const session = getSession(req.body?.token);
-  if (!session && !req.body?.user) return res.status(401).json({ ok: false, error: "invalid_session" });
-  const { user, action, userAgent, timezone, language } = req.body || {};
+  if (!session) return res.status(401).json({ ok: false, error: "invalid_session" });
+  const { action, userAgent, timezone, language } = req.body || {};
   const ip = req.headers["x-forwarded-for"]?.split(",")[0]?.trim() || req.ip || "unknown";
-  const out = logSession({ user: user || session.sub, action: action || "login", ip, userAgent, timezone, language });
+  const out = logSession({ user: session.sub, action: action || "login", ip, userAgent, timezone, language });
   res.status(200).json(out);
 });
 
