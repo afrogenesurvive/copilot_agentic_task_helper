@@ -2,42 +2,118 @@
 <html lang="en">
   <head>
     <meta charset="UTF-8" />
+    <!--
+      Locked down: the renderer has no node integration and talks to the main
+      process only through contextBridge. Note `style-src 'self'` has no
+      'unsafe-inline', so inline `style="…"` attributes and <style> blocks do NOT
+      apply. Theme tokens are written with `style.setProperty()` (CSSOM, which CSP
+      does not govern) and every visual rule lives in the stylesheets below.
+      Do not add inline styles — they will be silently dropped.
+    -->
     <meta http-equiv="Content-Security-Policy" content="default-src 'self'; style-src 'self'; script-src 'self'; img-src 'self' data:;" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
     <title>Frontdesk Operator</title>
-    <link rel="stylesheet" href="style.css" />
+
+    <!-- Stylesheets load in cascade order: later files override earlier ones.
+         Feature files (components/*) always win over the shared primitives. -->
+    <link rel="stylesheet" href="styles/_reset.css" />
+    <link rel="stylesheet" href="styles/_layout.css" />
+    <link rel="stylesheet" href="styles/_form-fields.css" />
+    <link rel="stylesheet" href="styles/_scrollbar-tooltips.css" />
+    <link rel="stylesheet" href="styles/components/_panel.css" />
+    <link rel="stylesheet" href="styles/components/_status-bar.css" />
+    <link rel="stylesheet" href="styles/components/_tooltip.css" />
+    <link rel="stylesheet" href="styles/components/_dialog.css" />
+    <link rel="stylesheet" href="styles/components/_notifications.css" />
+    <link rel="stylesheet" href="styles/components/_dashboard.css" />
+    <link rel="stylesheet" href="styles/components/_queue.css" />
+    <link rel="stylesheet" href="styles/components/_logs.css" />
+    <link rel="stylesheet" href="styles/components/_keys.css" />
+    <link rel="stylesheet" href="styles/components/_config.css" />
+    <link rel="stylesheet" href="styles/components/_tools.css" />
+    <link rel="stylesheet" href="styles/components/_scripts.css" />
+    <link rel="stylesheet" href="styles/components/_chat.css" />
+    <link rel="stylesheet" href="styles/components/_usage.css" />
+    <link rel="stylesheet" href="styles/components/_appearance-panel.css" />
+    <link rel="stylesheet" href="styles/components/_guide.css" />
+    <!-- Print last, so it wins over every panel without `!important`. -->
+    <link rel="stylesheet" href="styles/_print.css" />
   </head>
   <body>
-    <div class="app-layout">
-      <aside class="sidebar">
-        <div class="sidebar-title">🖥️ Frontdesk<br/>Operator</div>
-        <nav class="sidebar-nav">
-          <button data-tab="dashboard" class="active">📊 Dashboard</button>
-          <button data-tab="queue">🔴 Queue</button>
-          <button data-tab="logs">📄 Logs</button>
-          <button data-tab="sessions">👥 Sessions</button>
-          <button data-tab="usage">📈 Usage</button>
-          <button data-tab="licenses">🔑 Key Manager</button>
-          <button data-tab="accounts">🔐 Accounts &amp; Keys</button>
-          <button data-tab="config">⚙️ Config</button>
-          <button data-tab="tools">🧰 Tools</button>
-          <button data-tab="scripts">📜 Scripts</button>
-          <button data-tab="chat">💬 Chat</button>
-          <button data-tab="appearance">🎨 Appearance</button>
-          <button data-tab="about">ℹ️ About</button>
-        </nav>
-        <div class="sidebar-footer">
-          <button id="quit-btn" class="quit">⏻ Quit</button>
-        </div>
-      </aside>
-      <div class="content">
-        <header>
-          <h1>Frontdesk Operator</h1>
-          <div class="header-right">
-            <span id="health-badge" class="badge">checking…</span>
+    <div class="app">
+      <div class="app-body">
+        <aside class="sidebar">
+          <div class="sidebar-brand">
+            <span class="sidebar-brand__mark" data-icon="console" data-icon-size="22"></span>
+            <span class="sidebar-brand__text">
+              <span class="sidebar-brand__name">Frontdesk Operator</span>
+              <span class="sidebar-brand__sub">operator console</span>
+            </span>
           </div>
-        </header>
-        <main>
+
+          <nav class="sidebar-scroll" id="sidebar-nav">
+            <button data-tab="dashboard" class="sidebar-btn sidebar-btn--active">
+              <span data-icon="dashboard"></span><span class="sidebar-btn__label">Dashboard</span>
+            </button>
+            <button data-tab="queue" class="sidebar-btn">
+              <span data-icon="queue"></span><span class="sidebar-btn__label">Queue</span>
+            </button>
+            <button data-tab="logs" class="sidebar-btn">
+              <span data-icon="logs"></span><span class="sidebar-btn__label">Logs</span>
+            </button>
+            <button data-tab="sessions" class="sidebar-btn">
+              <span data-icon="sessions"></span><span class="sidebar-btn__label">Sessions</span>
+            </button>
+
+            <div class="sidebar-divider"></div>
+
+            <button data-tab="usage" class="sidebar-btn">
+              <span data-icon="analytics"></span><span class="sidebar-btn__label">Usage</span>
+            </button>
+            <button data-tab="licenses" class="sidebar-btn">
+              <span data-icon="key"></span><span class="sidebar-btn__label">Key Manager</span>
+            </button>
+            <button data-tab="accounts" class="sidebar-btn">
+              <span data-icon="lock"></span><span class="sidebar-btn__label">Accounts &amp; Keys</span>
+            </button>
+
+            <div class="sidebar-divider"></div>
+
+            <button data-tab="config" class="sidebar-btn">
+              <span data-icon="settings"></span><span class="sidebar-btn__label">Config</span>
+            </button>
+            <button data-tab="tools" class="sidebar-btn">
+              <span data-icon="tools"></span><span class="sidebar-btn__label">Tools</span>
+            </button>
+            <button data-tab="scripts" class="sidebar-btn">
+              <span data-icon="terminal"></span><span class="sidebar-btn__label">Scripts</span>
+            </button>
+            <button data-tab="chat" class="sidebar-btn">
+              <span data-icon="chat"></span><span class="sidebar-btn__label">Chat</span>
+            </button>
+
+            <div class="sidebar-divider"></div>
+
+            <button data-tab="appearance" class="sidebar-btn">
+              <span data-icon="appearance"></span><span class="sidebar-btn__label">Appearance</span>
+            </button>
+            <button data-tab="about" class="sidebar-btn">
+              <span data-icon="info"></span><span class="sidebar-btn__label">About</span>
+            </button>
+          </nav>
+
+          <div class="sidebar-footer">
+            <button id="quit-btn" class="sidebar-btn sidebar-btn--danger">
+              <span data-icon="power"></span><span class="sidebar-btn__label">Quit</span>
+            </button>
+          </div>
+
+          <!-- Drag to resize. The width is written to `--sidebar-width` live and
+               only persisted (localStorage) on release. -->
+          <div class="sidebar-resize-handle" id="sidebar-resize" role="separator" aria-orientation="vertical" aria-label="Resize sidebar"></div>
+        </aside>
+
+        <main class="app-main">
       <!-- Dashboard -->
       <section id="tab-dashboard" class="tab active">
         <div class="svc-layout" id="svc-layout">
@@ -45,7 +121,7 @@
           <div class="svc-main">
             <div class="svc-note">
               <b>Operator-only.</b> This app is the operator's single console — it shows every local
-              service, seat (🔑 Licenses), and per-seat account binding (🔐 Accounts &amp; Keys) at
+              service, seat (Key Manager), and per-seat account binding (Accounts &amp; Keys) at
               once. Seat licenses &amp; bindings gate the <b>public chat webapp</b>, not this app;
               collaborators (seats) never see this dashboard — each only uses their own webapp chat.
             </div>
@@ -59,16 +135,20 @@
       <!-- Queue -->
       <section id="tab-queue" class="tab">
         <div class="panel">
-          <div class="panel-head">
-            <h3>🔴 Priority queue</h3>
-            <button id="queue-clear-priority" class="clear-all">Clear all</button>
+          <div class="panel__header">
+            <h3 class="panel__title"><span data-icon="queue"></span>Priority queue</h3>
+            <div class="panel__actions">
+              <button id="queue-clear-priority" class="clear-all">Clear all</button>
+            </div>
           </div>
           <div id="queue-priority"></div>
         </div>
         <div class="panel">
-          <div class="panel-head">
-            <h3>📥 Misc notifications</h3>
-            <button id="queue-clear-misc" class="clear-all">Clear all</button>
+          <div class="panel__header">
+            <h3 class="panel__title"><span data-icon="file"></span>Misc notifications</h3>
+            <div class="panel__actions">
+              <button id="queue-clear-misc" class="clear-all">Clear all</button>
+            </div>
           </div>
           <div id="queue-misc"></div>
         </div>
@@ -76,12 +156,14 @@
 
       <!-- Logs -->
       <section id="tab-logs" class="tab">
-        <div class="panel">
-          <div class="panel-head">
-            <h3>📄 Logs</h3>
-            <div class="logs-subtabs">
-              <button id="logs-sub-live" class="logs-subtab active">Live</button>
-              <button id="logs-sub-files" class="logs-subtab">Files</button>
+        <div class="panel panel--fill">
+          <div class="panel__header">
+            <h3 class="panel__title"><span data-icon="logs"></span>Logs</h3>
+            <div class="panel__actions">
+              <div class="logs-subtabs">
+                <button id="logs-sub-live" class="logs-subtab active">Live</button>
+                <button id="logs-sub-files" class="logs-subtab">Files</button>
+              </div>
             </div>
           </div>
 
@@ -104,13 +186,13 @@
               </select>
               <input id="log-f-search" type="text" placeholder="search…" />
               <label class="log-check"><input type="checkbox" id="log-f-autoscroll" checked /> auto-scroll</label>
-              <button id="log-pause">⏸ Pause</button>
+              <button id="log-pause">Pause</button>
               <button id="log-clear">Clear</button>
-              <button id="log-refresh" title="Reload / refresh the log view">↻ Refresh</button>
+              <button id="log-refresh" title="Reload / refresh the log view">Refresh</button>
             </div>
             <div class="log-filters">
               <select id="log-day" title="Browse a specific day's unified live log (or leave on Live/auto)">
-                <option value="__live__">🔴 Live (auto)</option>
+                <option value="__live__">Live (auto)</option>
               </select>
               <span id="log-day-status" class="log-check"></span>
             </div>
@@ -119,9 +201,11 @@
 
           <!-- Files -->
           <div id="logs-files" class="hidden">
-            <div class="panel-head">
+            <div class="panel__header">
               <span id="log-file-title" class="log-file-title">Select a log file to view</span>
-              <button id="log-file-refresh">Refresh</button>
+              <div class="panel__actions">
+                <button id="log-file-refresh">Refresh</button>
+              </div>
             </div>
             <div id="log-file-list"><div class="loading-block"><span class="spin"></span><span>Loading…</span></div></div>
             <div id="log-file-view" class="hidden">
@@ -130,7 +214,7 @@
                 <button id="log-file-full">Full</button>
                 <button id="log-file-search-toggle">Search</button>
               </div>
-              <input id="log-file-search" type="text" placeholder="filter lines…" style="display:none" />
+              <input id="log-file-search" type="text" class="hidden" placeholder="filter lines…" />
               <pre id="log-file-box">…</pre>
             </div>
           </div>
@@ -140,9 +224,11 @@
       <!-- Sessions -->
       <section id="tab-sessions" class="tab">
         <div class="panel">
-          <h3>👥 Frontdesk sessions</h3>
+          <div class="panel__header">
+            <h3 class="panel__title"><span data-icon="sessions"></span>Frontdesk sessions</h3>
+          </div>
           <div id="sessions-box"><div class="loading-block"><span class="spin"></span><span>Loading…</span></div></div>
-          <p style="color:var(--muted);font-size:0.72rem;margin-top:0.6rem;line-height:1.4">
+          <p class="hint">
             Webapp visitor sessions, seen from the operator's side. The visitors (seats) never
             see this view — they only use their own webapp chat.
           </p>
@@ -152,13 +238,16 @@
       <!-- Key Manager (licensing — all data + logic live in personal_key_manager) -->
       <section id="tab-licenses" class="tab">
         <div class="panel">
-          <div class="panel-head">
-            <h3>🔑 Key Manager <span id="pkm-badge" class="badge">checking…</span></h3>
-            <div>
+          <div class="panel__header">
+            <h3 class="panel__title">
+              <span data-icon="key"></span>Key Manager
+              <span id="pkm-badge" class="badge">checking…</span>
+            </h3>
+            <div class="panel__actions">
               <button id="pkm-refresh">Refresh</button>
               <button id="pkm-validate-open" title="Check a licence string against the live ring + revocation blocklist">Validate…</button>
               <button id="pkm-archive" title="Move expired seat records into the expired/ ledger">Archive expired</button>
-              <button id="pkm-issue-open" class="primary">＋ Issue license</button>
+              <button id="pkm-issue-open" class="primary">Issue license</button>
             </div>
           </div>
 
@@ -181,21 +270,21 @@
           </p>
 
           <!-- Rings (master keypairs) — sign new seats, retire old ones -->
-          <div class="panel-head" style="margin-top:1rem">
-            <h3>💠 Rings (master keys)</h3>
-            <div>
-              <button id="pkm-ring-create" title="Generate a new master Ed25519 keypair">＋ New ring</button>
-              <button id="pkm-agent-key" title="Regenerate the X25519 peer keypair (ed25519+x25519 registries only)">🔑 Agent key</button>
-              <button id="pkm-sync-revocation" title="Rewrite the blocklist embedded in this registry's consumer-app source files">🔄 Sync blocklist</button>
+          <div class="panel__header">
+            <h3 class="panel__title"><span data-icon="refresh"></span>Rings (master keys)</h3>
+            <div class="panel__actions">
+              <button id="pkm-ring-create" title="Generate a new master Ed25519 keypair">New ring</button>
+              <button id="pkm-agent-key" title="Regenerate the X25519 peer keypair (ed25519+x25519 registries only)">Agent key</button>
+              <button id="pkm-sync-revocation" title="Rewrite the blocklist embedded in this registry's consumer-app source files">Sync blocklist</button>
             </div>
           </div>
           <div id="pkm-rings-box"><div class="loading-block"><span class="spin"></span><span>Loading…</span></div></div>
           <p class="hint" id="pkm-rings-hint"></p>
 
-          <!-- Issue form (hidden until ＋ Issue license) -->
+          <!-- Issue form (hidden until "Issue license") -->
           <div id="pkm-issue-form" class="hidden">
-            <div class="panel" style="margin:0.6rem 0">
-              <div class="panel-head"><h3>Issue a seat licence</h3></div>
+            <div class="panel">
+              <div class="panel__header"><h3 class="panel__title">Issue a seat licence</h3></div>
               <div class="config-field">
                 <label class="cfg-label" for="pkm-issue-sub">Seat id</label>
                 <div class="cfg-input-row">
@@ -218,9 +307,11 @@
 
           <div id="pkm-seats-box"><div class="loading-block"><span class="spin"></span><span>Loading…</span></div></div>
 
-          <div class="panel-head" style="margin-top:1rem">
-            <h3>Audit log</h3>
-            <button id="pkm-audit-load">Show</button>
+          <div class="panel__header">
+            <h3 class="panel__title">Audit log</h3>
+            <div class="panel__actions">
+              <button id="pkm-audit-load">Show</button>
+            </div>
           </div>
           <div id="pkm-audit-box"></div>
 
@@ -229,45 +320,24 @@
             sees it — each only logs into their own webapp chat with their own licence key.
           </p>
         </div>
-
-        <!-- Copy-once licence modal. pkm prints the licence a single time and it
-             embeds the seat's private seeds, so it is never stored or logged here. -->
-        <div
-          id="pkm-modal"
-          class="hidden"
-          style="position:fixed;inset:0;background:rgba(0,0,0,0.6);display:flex;align-items:center;justify-content:center;z-index:1250"
-        >
-          <div class="panel" style="max-width:680px;width:92%">
-            <div class="panel-head"><h3>🔑 Licence issued</h3></div>
-            <p class="hint">
-              <b>Copy this now — it will not be shown again.</b> The licence embeds the seat's private
-              keys, so hand it to the seat owner over a secure channel. It is not stored or logged
-              anywhere in this app.
-            </p>
-            <textarea id="pkm-modal-key" readonly spellcheck="false" style="width:100%;height:6rem;font-family:var(--mono,monospace);font-size:0.68rem;white-space:pre-wrap;word-break:break-all"></textarea>
-            <div class="config-actions">
-              <button id="pkm-modal-copy" class="primary">📋 Copy</button>
-              <button id="pkm-modal-close">Done</button>
-            </div>
-            <div id="pkm-modal-msg" class="config-msg"></div>
-          </div>
-        </div>
       </section>
 
       <!-- Accounts & Keys -->
       <section id="tab-accounts" class="tab">
         <div class="panel">
-          <div class="panel-head">
-            <h3>🔐 Seat → account bindings</h3>
-            <button id="accounts-refresh">Refresh</button>
+          <div class="panel__header">
+            <h3 class="panel__title"><span data-icon="lock"></span>Seat → account bindings</h3>
+            <div class="panel__actions">
+              <button id="accounts-refresh">Refresh</button>
+            </div>
           </div>
           <div id="accounts-box"><div class="loading-block"><span class="spin"></span><span>Loading…</span></div></div>
-          <p style="color:var(--muted);font-size:0.72rem;margin-top:0.6rem;line-height:1.4">
+          <p class="hint">
             Connect a Google account or set a Trello key/token per seat. The agent uses these when acting
-            on behalf of that seat. <b>▶ Spawn MCP</b> launches dedicated MCP instances bound to the seat's
+            on behalf of that seat. <b>Spawn MCP</b> launches dedicated MCP instances bound to the seat's
             accounts (instead of the shared VS Code ones).
           </p>
-          <p style="color:var(--muted);font-size:0.72rem;margin-top:0.6rem;line-height:1.4">
+          <p class="hint">
             <b>Operator-only:</b> this view shows <em>all</em> seats at once. Seats &amp; bindings gate the
             <b>public chat webapp</b> (login + which accounts the agent uses for that seat); collaborators
             never see this app — each only uses their own webapp chat.
@@ -278,9 +348,9 @@
       <!-- Usage (LLM token usage + DS-mon push status) -->
       <section id="tab-usage" class="tab">
         <div class="panel">
-          <div class="panel-head">
-            <h3>📈 Usage</h3>
-            <div>
+          <div class="panel__header">
+            <h3 class="panel__title"><span data-icon="analytics"></span>Usage</h3>
+            <div class="panel__actions">
               <select id="usage-interval" title="Credit balance poll interval">
                 <option value="30000">Every 30s</option>
                 <option value="60000">Every 1 min</option>
@@ -294,7 +364,7 @@
           <p class="hint">
             Per-LLM-call token usage recorded by the backend (<code>shared/usage-tracker.mjs</code>).
             Usage is buffered to <code>logs/dsmon_buffer.jsonl</code> and pushed to DS-mon when
-            <b>Usage Tracking</b> is enabled in ⚙️ Config. Ollama (local) calls are never tracked.
+            <b>Usage Tracking</b> is enabled in Config. Ollama (local) calls are never tracked.
           </p>
           <div id="usage-status" class="usage-status"></div>
           <div id="usage-cards" class="usage-cards"></div>
@@ -305,9 +375,9 @@
       <!-- Config -->
       <section id="tab-config" class="tab">
         <div class="panel">
-          <div class="panel-head">
-            <h3>⚙️ Config (config.json)</h3>
-            <div>
+          <div class="panel__header">
+            <h3 class="panel__title"><span data-icon="settings"></span>Config (config.json)</h3>
+            <div class="panel__actions">
               <button id="config-refresh">Refresh</button>
               <button id="config-raw">Raw JSON</button>
             </div>
@@ -322,9 +392,9 @@
           <div id="config-fields" class="config-fields"></div>
           <textarea id="config-editor" class="hidden" spellcheck="false" placeholder="{ }"></textarea>
           <div class="config-actions">
-            <button id="config-save" class="primary">💾 Save</button>
-            <button id="config-export">📤 Export</button>
-            <button id="config-import">📥 Import</button>
+            <button id="config-save" class="primary">Save</button>
+            <button id="config-export">Export</button>
+            <button id="config-import">Import</button>
             <input type="file" id="config-import-input" class="hidden" accept=".json,application/json" />
           </div>
           <div id="config-msg"></div>
@@ -334,7 +404,9 @@
       <!-- Tools -->
       <section id="tab-tools" class="tab">
         <div class="panel">
-          <h3>⚡ Quick actions</h3>
+          <div class="panel__header">
+            <h3 class="panel__title"><span data-icon="tools"></span>Quick actions</h3>
+          </div>
           <div id="quick-tools">
             <div class="qtool">
               <strong>Trello</strong>
@@ -357,7 +429,9 @@
           </div>
         </div>
         <div class="panel">
-          <h3>📋 Shared tool manifest</h3>
+          <div class="panel__header">
+            <h3 class="panel__title"><span data-icon="file"></span>Shared tool manifest</h3>
+          </div>
           <div id="manifest-box"><div class="loading-block"><span class="spin"></span><span>Loading…</span></div></div>
         </div>
       </section>
@@ -365,9 +439,11 @@
       <!-- Scripts (scripts/user runner) -->
       <section id="tab-scripts" class="tab">
         <div class="panel">
-          <div class="panel-head">
-            <h3>📜 Scripts (scripts/user)</h3>
-            <button id="scripts-refresh">Refresh</button>
+          <div class="panel__header">
+            <h3 class="panel__title"><span data-icon="terminal"></span>Scripts (scripts/user)</h3>
+            <div class="panel__actions">
+              <button id="scripts-refresh">Refresh</button>
+            </div>
           </div>
           <div id="scripts-preflight"></div>
           <p class="hint">
@@ -384,30 +460,35 @@
       <!-- Appearance -->
       <section id="tab-appearance" class="tab">
         <div class="panel">
-          <h3>🎨 Appearance</h3>
+          <div class="panel__header">
+            <h3 class="panel__title"><span data-icon="appearance"></span>Appearance</h3>
+          </div>
 
           <h4 class="appearance-subtitle">Theme</h4>
           <div class="theme-row">
-            <button class="theme-option" data-theme="light">☀️ Light</button>
-            <button class="theme-option" data-theme="dark">🌙 Dark</button>
-            <button class="theme-option" data-theme="system">🖥️ System</button>
+            <button class="theme-option" data-theme="light">Light</button>
+            <button class="theme-option" data-theme="dark">Dark</button>
+            <button class="theme-option" data-theme="system">System</button>
           </div>
 
           <h4 class="appearance-subtitle">Accent color</h4>
+          <!-- Swatch fills come from `data-accent` attribute selectors in
+               components/_appearance-panel.css — an inline background is CSP-blocked
+               and would silently render the swatch colourless. -->
           <div class="accent-grid" id="accent-grid">
-            <button class="accent-swatch" data-accent="" title="Theme default"
-              style="background:linear-gradient(135deg,#e94560 50%,#c0392b 50%)"></button>
-            <button class="accent-swatch" data-accent="#58a6ff" title="Blue" style="background:#58a6ff"></button>
-            <button class="accent-swatch" data-accent="#3fb950" title="Green" style="background:#3fb950"></button>
-            <button class="accent-swatch" data-accent="#bc8cff" title="Purple" style="background:#bc8cff"></button>
-            <button class="accent-swatch" data-accent="#f778ba" title="Pink" style="background:#f778ba"></button>
-            <button class="accent-swatch" data-accent="#d29922" title="Orange" style="background:#d29922"></button>
-            <button class="accent-swatch" data-accent="#f85149" title="Red" style="background:#f85149"></button>
-            <button class="accent-swatch" data-accent="#56d4dd" title="Teal" style="background:#56d4dd"></button>
-            <button class="accent-swatch" data-accent="#e3b341" title="Yellow" style="background:#e3b341"></button>
+            <button class="accent-swatch" data-accent="" title="Theme default"></button>
+            <button class="accent-swatch" data-accent="#2f81f7" title="Blue"></button>
+            <button class="accent-swatch" data-accent="#3fb950" title="Green"></button>
+            <button class="accent-swatch" data-accent="#bc8cff" title="Purple"></button>
+            <button class="accent-swatch" data-accent="#f778ba" title="Pink"></button>
+            <button class="accent-swatch" data-accent="#d29922" title="Orange"></button>
+            <button class="accent-swatch" data-accent="#f85149" title="Red"></button>
+            <button class="accent-swatch" data-accent="#56d4dd" title="Teal"></button>
+            <button class="accent-swatch" data-accent="#e3b341" title="Yellow"></button>
+            <button class="accent-swatch" data-accent="#8b949e" title="Grey"></button>
           </div>
           <div class="accent-custom">
-            <label>Custom <input type="color" id="accent-picker" value="#e94560" /></label>
+            <label>Custom <input type="color" id="accent-picker" value="#2f81f7" /></label>
             <code id="accent-hex">theme default</code>
           </div>
 
@@ -416,13 +497,20 @@
             <button class="font-preset" data-font="small"><span>Small</span><small>Compact view</small></button>
             <button class="font-preset" data-font="medium"><span>Medium</span><small>Default size</small></button>
             <button class="font-preset" data-font="large"><span>Large</span><small>Easier reading</small></button>
-            <button class="font-preset" data-font="x-large"><span>X-L</span><small>Extra large</small></button>
-            <button class="font-preset" data-font="xx-large"><span>XX-L</span><small>Double extra large</small></button>
+            <button class="font-preset" data-font="x-large"><span>X-Large</span><small>Extra large</small></button>
+            <button class="font-preset" data-font="xx-large"><span>XX-Large</span><small>Double extra large</small></button>
+          </div>
+
+          <h4 class="appearance-subtitle">Sidebar width</h4>
+          <div class="field">
+            <input type="range" id="sidebar-width-range" class="range" min="200" max="420" step="4" value="260" aria-label="Sidebar width in pixels" />
+            <span class="field__hint" id="sidebar-width-value">260 px</span>
           </div>
 
           <p class="hint">
             Saved to <code>APPEARANCE_THEME</code>, <code>APPEARANCE_ACCENT_COLOR</code> and
             <code>APPEARANCE_FONT_SIZE</code> in config — applied immediately, no restart.
+            The sidebar width is a per-machine preference and is stored locally.
             “System” follows macOS — the native window chrome and this dashboard both update when
             the OS theme changes.
           </p>
@@ -431,12 +519,12 @@
 
       <!-- Chat -->
       <section id="tab-chat" class="tab">
-        <div class="panel chat-panel">
-          <div class="panel-head">
-            <h3>💬 Agent chat</h3>
-            <span id="chat-provider" class="tag chip-llm" title="Active LLM provider/model (set in ⚙️ Config)">…</span>
-            <div>
-              <button id="chat-new">+ New chat</button>
+        <div class="panel panel--fill">
+          <div class="panel__header">
+            <h3 class="panel__title"><span data-icon="chat"></span>Agent chat</h3>
+            <div class="panel__actions">
+              <span id="chat-provider" class="tag chip-llm" title="Active LLM provider/model (set in Config)">…</span>
+              <button id="chat-new">New chat</button>
               <button id="chat-refresh">Refresh</button>
             </div>
           </div>
@@ -457,11 +545,13 @@
       <!-- About -->
       <section id="tab-about" class="tab">
         <div class="panel">
-          <div class="panel-head">
-            <h3>ℹ️ About</h3>
-            <div class="logs-subtabs">
-              <button id="about-sub-info" class="logs-subtab active">About</button>
-              <button id="about-sub-guide" class="logs-subtab">Guide</button>
+          <div class="panel__header">
+            <h3 class="panel__title"><span data-icon="info"></span>About</h3>
+            <div class="panel__actions">
+              <div class="logs-subtabs">
+                <button id="about-sub-info" class="logs-subtab active">About</button>
+                <button id="about-sub-guide" class="logs-subtab">Guide</button>
+              </div>
             </div>
           </div>
           <div id="about-info">
@@ -475,7 +565,7 @@
               <div class="guide-main">
                 <div class="guide-toolbar">
                   <span id="guide-status" class="guide-status"></span>
-                  <button id="guide-refresh" title="Reload the guide list from disk">↻ Refresh</button>
+                  <button id="guide-refresh" title="Reload the guide list from disk">Refresh</button>
                 </div>
                 <article id="guide-body" class="guide-doc markdown">
                   <p class="hint">Pick a guide from the list.</p>
@@ -487,50 +577,88 @@
       </section>
         </main>
       </div>
+
+      <!-- Bottom status bar. The health pill used to be the header badge; it keeps
+           its id because app.js writes to it. -->
+      <footer class="status-bar">
+        <div class="status-bar__group">
+          <button id="health-badge" class="status-pill" type="button" title="Backend health">
+            <span class="status-dot"></span><span id="health-text">checking…</span>
+          </button>
+          <span id="status-services" class="status-pill status-pill--plain" title="Local services running">services —</span>
+          <span id="status-queue" class="status-pill status-pill--plain" title="Unactioned priority queue items">queue —</span>
+        </div>
+        <div class="status-bar__group status-bar__group--right">
+          <span id="status-app" class="status-pill status-pill--plain"></span>
+        </div>
+      </footer>
     </div>
 
     <!-- Global loading overlay — one blocking indicator for every long-running
          action (service restarts, pkm CLI calls, config save/import, MCP spawn).
          Panel refreshes use the lighter inline .loading-block skeleton instead.
-         z-index sits under the prompt/licence modals so those stay readable. -->
-    <div id="loading-overlay" class="hidden" role="status" aria-live="polite" aria-busy="true">
-      <div class="lo-card">
-        <div class="lo-spinner"></div>
-        <p id="loading-msg" class="lo-msg">Working…</p>
-        <div id="loading-progress" class="lo-track hidden"><div id="loading-bar" class="lo-fill"></div></div>
-        <p id="loading-hint" class="lo-hint hidden"></p>
+         z-index sits under the dialogs so those stay readable. -->
+    <div id="loading-overlay" class="loading-overlay hidden" role="status" aria-live="polite" aria-busy="true">
+      <div class="loading-card">
+        <div class="spinner"></div>
+        <p id="loading-msg" class="loading-card__msg">Working…</p>
+        <div id="loading-progress" class="loading-card__track hidden"><div id="loading-bar" class="loading-card__fill"></div></div>
+        <p id="loading-hint" class="loading-card__hint hidden"></p>
         <button id="loading-cancel" class="hidden">Cancel</button>
       </div>
     </div>
 
-    <!-- Transient inline notice (errors/success) that does not steal focus -->
-    <div id="toast" class="hidden"></div>
+    <!-- Transient notices. A stack rather than a single element, so a second
+         message cannot silently replace one the user has not read yet. -->
+    <div id="toast-stack" class="toast-stack" aria-live="polite"></div>
 
-    <!-- Generic single-value input modal.
+    <!-- Generic single-value input dialog.
          Electron's renderer does NOT implement window.prompt() — it throws
          "prompt() is not supported" — so every text prompt goes through this.
          Lives outside the tab sections so it can open from any tab. -->
-    <div
-      id="prompt-modal"
-      class="hidden"
-      style="position:fixed;inset:0;background:rgba(0,0,0,0.6);display:flex;align-items:center;justify-content:center;z-index:1200"
-    >
-      <div class="panel" style="max-width:560px;width:92%">
-        <div class="panel-head"><h3 id="prompt-title">Input</h3></div>
-        <p class="hint" id="prompt-desc"></p>
-        <div class="config-field">
-          <label class="cfg-label" id="prompt-label" for="prompt-input">Value</label>
-          <div class="cfg-input-row">
-            <input id="prompt-input" type="text" spellcheck="false" />
-          </div>
+    <div id="prompt-modal" class="dialog-overlay hidden">
+      <div class="dialog">
+        <div class="dialog__head">
+          <h3 class="dialog__title" id="prompt-title">Input</h3>
         </div>
-        <div class="config-actions">
+        <p class="hint" id="prompt-desc"></p>
+        <div class="field">
+          <label class="field__label" id="prompt-label" for="prompt-input">Value</label>
+          <input id="prompt-input" type="text" spellcheck="false" />
+        </div>
+        <div class="dialog__actions">
           <button id="prompt-ok" class="primary">OK</button>
           <button id="prompt-cancel">Cancel</button>
         </div>
       </div>
     </div>
 
+    <!-- Copy-once licence dialog. pkm prints the licence a single time and it
+         embeds the seat's private seeds, so it is never stored or logged here.
+         Hoisted out of the Licenses tab so it is not nested inside a section. -->
+    <div id="pkm-modal" class="dialog-overlay hidden">
+      <div class="dialog dialog--wide">
+        <div class="dialog__head">
+          <h3 class="dialog__title">Licence issued</h3>
+        </div>
+        <div class="dialog__body">
+          <p>
+            <b>Copy this now — it will not be shown again.</b> The licence embeds the seat's private
+            keys, so hand it to the seat owner over a secure channel. It is not stored or logged
+            anywhere in this app.
+          </p>
+        </div>
+        <textarea id="pkm-modal-key" readonly spellcheck="false"></textarea>
+        <div class="dialog__actions">
+          <button id="pkm-modal-copy" class="primary">Copy</button>
+          <button id="pkm-modal-close">Done</button>
+        </div>
+        <div id="pkm-modal-msg" class="config-msg"></div>
+      </div>
+    </div>
+
+    <script src="icons.js"></script>
+    <script src="tokens.js"></script>
     <script src="markdown.js"></script>
     <script src="app.js"></script>
   </body>

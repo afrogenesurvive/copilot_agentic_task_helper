@@ -7,6 +7,8 @@
   "scripts": {
     "start": "electron .",
     "dev": "electron .",
+    "make:icon": "electron ../scripts/make-icon.mjs",
+    "postinstall": "node ../scripts/patch-electron-app-name.mjs",
     "dist:mac": "electron-builder --mac",
     "dist:mac-dir": "electron-builder --mac dir"
   },
@@ -17,8 +19,10 @@
   "build": {
     "appId": "com.frontdesk.operator",
     "productName": "Frontdesk Operator",
+    "icon": "assets/icon.png",
     "mac": {
       "category": "public.app-category.productivity",
+      "icon": "assets/icon.icns",
       "target": [
         "dmg",
         "zip"
@@ -26,7 +30,8 @@
       "hardenedRuntime": false
     },
     "files": [
-      "src/**/*"
+      "src/**/*",
+      "assets/**/*"
     ],
     "extraResources": [
       {

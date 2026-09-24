@@ -15,12 +15,58 @@
   const fmt = (iso) => (iso ? new Date(iso).toLocaleString() : "");
   const pad = (n) => String(n).padStart(2, "0");
 
+  // ── Icons ──
+  // Static markup carries `<span data-icon="name">`; the SVG itself comes from
+  // icons.js, so the glyph set has exactly one source of truth. Idempotent, so it
+  // is safe to call again after a panel renders.
+  function hydrateIcons(root) {
+    (root || document).querySelectorAll("[data-icon]").forEach((el) => {
+      if (el.dataset.iconDone === "1") return;
+      el.innerHTML = window.Icons.svg(el.dataset.icon, Number(el.dataset.iconSize) || 18);
+      el.dataset.iconDone = "1";
+    });
+  }
+
+  // Static markup only, so hydrate it before anything else runs: a later throw must
+  // never be able to leave the sidebar iconless.
+  hydrateIcons();
+
+  /**
+   * Subscribe to a main-process push channel.
+   *
+   * Guarded on purpose. A single missing bridge method used to throw out of this
+   * IIFE and silently kill every binding declared after it — which is exactly how
+   * the icons went missing the first time round.
+   */
+  function subscribe(method, handler) {
+    if (!api || typeof api[method] !== "function") {
+      console.warn(`[subscribe] api.${method} is unavailable — skipping`);
+      return;
+    }
+    try {
+      api[method](handler);
+    } catch (err) {
+      console.warn(`[subscribe] api.${method} failed:`, err && err.message);
+    }
+  }
+
+  /**
+   * Icon + label for a button whose text changes at runtime.
+   *
+   * The label is wrapped in a `<span>` on purpose: `button` is `display:inline-flex`,
+   * and a bare text node is not a flex item, so the icon/label gap would not apply.
+   */
+  function iconLabel(name, size, text) {
+    return `${window.Icons.svg(name, size || 13)}<span>${esc(text)}</span>`;
+  }
+
   // ── Tabs ──
-  document.querySelectorAll(".sidebar-nav button").forEach((btn) => {
+  const NAV_SELECTOR = "#sidebar-nav .sidebar-btn";
+  document.querySelectorAll(NAV_SELECTOR).forEach((btn) => {
     btn.addEventListener("click", () => {
-      document.querySelectorAll(".sidebar-nav button").forEach((b) => b.classList.remove("active"));
+      document.querySelectorAll(NAV_SELECTOR).forEach((b) => b.classList.remove("sidebar-btn--active"));
       document.querySelectorAll(".tab").forEach((t) => t.classList.remove("active"));
-      btn.classList.add("active");
+      btn.classList.add("sidebar-btn--active");
       const tab = btn.dataset.tab;
       $(`tab-${tab}`).classList.add("active");
       // Each loader is guarded: a rejected IPC renders an error + Retry in the
@@ -41,6 +87,7 @@
         chat: refreshChatSessions,
       };
       if (loaders[tab]) guarded(`tab:${tab}`, loaders[tab]);
+      hydrateIcons();
     });
   });
 
@@ -184,21 +231,36 @@
     });
   }
 
-  let toastTimer = null;
+  // Toasts STACK rather than replacing each other. A second message arriving while
+  // the first was still on screen used to silently overwrite it, which is how a
+  // failure could disappear before it was read.
+  const TOAST_ICON = { ok: "check", error: "warning", warn: "warning", info: "info" };
+
+  function dismissToast(el) {
+    if (el && el.parentNode) el.parentNode.removeChild(el);
+  }
+
   function toast(msg, kind) {
-    const el = $("toast");
-    if (!el) return;
-    el.textContent = msg;
-    el.className = kind === "err" ? "err" : kind === "ok" ? "ok" : "";
-    el.classList.remove("hidden");
-    clearTimeout(toastTimer);
-    toastTimer = setTimeout(() => el.classList.add("hidden"), kind === "err" ? 9000 : 4000);
+    const stack = $("toast-stack");
+    if (!stack) return;
+    const level = kind === "err" ? "error" : kind === "ok" ? "ok" : kind === "warn" ? "warn" : "info";
+    const el = document.createElement("div");
+    el.className = `toast toast--${level}`;
+    el.innerHTML =
+      `<span class="toast__icon">${window.Icons.svg(TOAST_ICON[level] || "info", 14)}</span>` +
+      `<span>${esc(msg)}</span>` +
+      `<button type="button" class="toast__close" aria-label="Dismiss">${window.Icons.svg("close", 12)}</button>`;
+    el.querySelector(".toast__close").addEventListener("click", () => dismissToast(el));
+    stack.appendChild(el);
+    // Cap the stack so a burst of failures cannot bury the window.
+    while (stack.children.length > 4) dismissToast(stack.firstElementChild);
+    setTimeout(() => dismissToast(el), level === "error" ? 9000 : 4000);
   }
 
   function reportError(err, context) {
     const msg = (err && err.message) || String(err || "unknown error");
     console.error(context ? `[${context}] ${msg}` : msg, err);
-    toast(`⚠️ ${msg}`, "err");
+    toast(msg, "err");
   }
 
   /**
@@ -241,6 +303,26 @@
     if (fn) fn();
   });
 
+  // ── Status bar ──
+  // The health badge that used to live in the app header is now a pill in the
+  // bottom status bar. These three helpers are the only writers of that area, so
+  // a pill's colour can never drift from the state it reports.
+  function setHealthPill(ok, text) {
+    const el = $("health-badge");
+    if (!el) return;
+    el.className = `status-pill ${ok ? "status-pill--ok" : "status-pill--bad"}`;
+    const label = $("health-text");
+    if (label) label.textContent = text;
+    el.title = text;
+  }
+
+  function setStatusText(id, text, kind) {
+    const el = $(id);
+    if (!el) return;
+    el.className = `status-pill ${kind ? `status-pill--${kind}` : "status-pill--plain"}`;
+    el.textContent = text;
+  }
+
   // ── Dashboard (collapsible service sidebar + large detail view) ──
   const SVC_COLLAPSE_KEY = "frontdesk.svcSidebarCollapsed";
   const dash = {
@@ -265,17 +347,16 @@
 
   async function refreshDashboard() {
     const health = await api.health();
-    const badge = $("health-badge");
-    if (health.ok) {
-      badge.textContent = `webhook ${health.json.port} ok`;
-      badge.className = "badge ok";
-    } else {
-      badge.textContent = "webhook down";
-      badge.className = "badge down";
-    }
+    setHealthPill(health.ok, health.ok ? `webhook :${health.json.port}` : "webhook down");
 
     const svcs = await api.svcList();
     const names = svcs.map((s) => s.name);
+    const running = svcs.filter((s) => s.running).length;
+    setStatusText(
+      "status-services",
+      `services ${running}/${svcs.length}`,
+      svcs.length === 0 ? "" : running === svcs.length ? "ok" : running > 0 ? "warn" : "bad",
+    );
     if (!dash.selected || !names.includes(dash.selected)) dash.selected = names[0] || null;
 
     const strip = $("svc-tabs");
@@ -283,7 +364,7 @@
     strip.innerHTML =
       `<div class="svc-tabs-head">` +
       `<span class="svc-tabs-title">Services</span>` +
-      `<button id="svc-collapse" class="svc-collapse" title="${dash.collapsed ? "Expand the service list" : "Collapse the service list"}">${dash.collapsed ? "⟩" : "⟨"}</button>` +
+      `<button id="svc-collapse" class="svc-collapse" title="${dash.collapsed ? "Expand the service list" : "Collapse the service list"}">${window.Icons.svg(dash.collapsed ? "chevron-right" : "chevron-left", 14)}</button>` +
       `</div>` +
       svcs
         .map((s) => {
@@ -339,21 +420,23 @@
     if (!s) return;
     const canControl = s.running && !s.external;
     const statusClass = s.running ? "running" : s.configured ? "stopped" : "error";
+    // No bullet character in the text: the dot is a `.status-dot` element that
+    // inherits the status colour, so it tracks the theme and the font preset.
     const statusText = s.running
-      ? `● running${s.external ? " (external — started outside the dashboard)" : s.pid ? ` (pid ${s.pid})` : ""}`
+      ? `running${s.external ? " (external — started outside the dashboard)" : s.pid ? ` (pid ${s.pid})` : ""}`
       : s.configured
-        ? "○ stopped"
+        ? "stopped"
         : "not configured";
     detail.innerHTML = `
       <div class="svc-head">
         <div>
           <h3>${esc(s.label)}</h3>
-          <div class="svc-status ${statusClass}">${statusText}</div>
+          <div class="svc-status ${statusClass}"><span class="status-dot"></span>${esc(statusText)}</div>
         </div>
         <div class="svc-actions">
-          <button data-start="${esc(s.name)}" ${s.running ? "disabled" : ""} title="${s.external ? "Already running outside the dashboard" : "Start this service"}">▶ Start</button>
-          <button data-restart="${esc(s.name)}" ${!canControl ? "disabled" : ""} title="Restart this service (stop + start)">↻ Restart</button>
-          <button data-stop="${esc(s.name)}" ${!canControl ? "disabled" : ""}>⏹ Stop</button>
+          <button data-start="${esc(s.name)}" ${s.running ? "disabled" : ""} title="${s.external ? "Already running outside the dashboard" : "Start this service"}">${window.Icons.svg("play", 13)} Start</button>
+          <button data-restart="${esc(s.name)}" ${!canControl ? "disabled" : ""} title="Restart this service (stop + start)">${window.Icons.svg("refresh", 13)} Restart</button>
+          <button data-stop="${esc(s.name)}" ${!canControl ? "disabled" : ""}>${window.Icons.svg("stop", 13)} Stop</button>
           <button id="svc-refresh">Refresh</button>
         </div>
       </div>
@@ -640,7 +723,9 @@
     });
     $("log-pause").addEventListener("click", () => {
       logState.paused = !logState.paused;
-      $("log-pause").textContent = logState.paused ? "▶ Resume" : "⏸ Pause";
+      $("log-pause").innerHTML = logState.paused
+        ? iconLabel("play", 13, "Resume")
+        : iconLabel("stop", 13, "Pause");
     });
     $("log-clear").addEventListener("click", async () => {
       await api.logsClear();
@@ -671,7 +756,7 @@
   }
 
   function bindLogStream() {
-    api.onLogEntry((entry) => {
+    subscribe("onLogEntry", (entry) => {
       if (logState.paused || logState.day) return; // pause streaming while browsing a day snapshot
       logState.entries.push(entry);
       if (logState.entries.length > 2000) logState.entries.splice(0, logState.entries.length - 2000);
@@ -1312,8 +1397,8 @@
           <button data-gconnect="${esc(r.sub)}">Connect Google</button>
           <button data-tset="${esc(r.sub)}">Set Trello</button>
           <button data-tclear="${esc(r.sub)}">Clear</button>
-          <button data-spawn="${esc(r.sub)}">▶ Spawn MCP</button>
-          <button data-stopspawn="${esc(r.sub)}">■ Stop MCP</button>
+          <button data-spawn="${esc(r.sub)}">${iconLabel("play", 12, "Spawn MCP")}</button>
+          <button data-stopspawn="${esc(r.sub)}">${iconLabel("stop", 12, "Stop MCP")}</button>
         </span>
       </div>`,
       )
@@ -2005,53 +2090,96 @@
     await refreshUsage();
   });
 
-  // ── Appearance (theme + accent color + font size) ──
-  const FONT_SCALES = { small: 0.85, medium: 1, large: 1.15, "x-large": 1.35, "xx-large": 1.6 };
-  const DEFAULT_ACCENT = "#e94560";
-  let sysMedia = null;
-  let sysHandler = null;
-  let appearanceInfo = { theme: "system", effective: "dark", accentColor: "", fontSize: "medium" };
+  // ── Appearance (theme + accent color + font size + sidebar width) ──
+  // Every token write lives in tokens.js (`window.Appearance`), so this renderer and
+  // the main process's window background colour cannot disagree on the palette.
+  const Appearance = window.Appearance;
 
-  function applyAppearance(info) {
-    appearanceInfo = { ...appearanceInfo, ...info };
-    const effective = appearanceInfo.effective || "dark";
-    const root = document.documentElement;
-    root.dataset.theme = effective;
+  let appearanceInfo = { ...Appearance.DEFAULT_APPEARANCE };
 
-    // Accent: the inline custom property wins over the theme's --accent.
-    // Blank → remove the override so the theme default applies.
-    if (appearanceInfo.accentColor) root.style.setProperty("--accent", appearanceInfo.accentColor);
-    else root.style.removeProperty("--accent");
-
-    // Font size: scale the root font-size — the whole stylesheet is rem-based.
-    root.style.setProperty("--fs-scale", String(FONT_SCALES[appearanceInfo.fontSize] ?? 1));
-
-    document.querySelectorAll(".theme-option").forEach((b) => b.classList.toggle("active", b.dataset.theme === appearanceInfo.theme));
-    document.querySelectorAll(".accent-swatch").forEach((b) => b.classList.toggle("active", (b.dataset.accent || "") === (appearanceInfo.accentColor || "")));
-    document.querySelectorAll(".font-preset").forEach((b) => b.classList.toggle("active", b.dataset.font === appearanceInfo.fontSize));
+  /** Reflect the current settings in the panel's own controls. */
+  function syncAppearanceControls() {
+    document.querySelectorAll(".theme-option").forEach((b) =>
+      b.classList.toggle("active", b.dataset.theme === appearanceInfo.theme),
+    );
+    // "" is a meaningful value here: it means "the theme's built-in accent".
+    document.querySelectorAll(".accent-swatch").forEach((b) =>
+      b.classList.toggle("active", (b.dataset.accent || "") === (appearanceInfo.accentColor || "")),
+    );
+    document.querySelectorAll(".font-preset").forEach((b) =>
+      b.classList.toggle("active", b.dataset.font === appearanceInfo.fontSize),
+    );
     const hex = $("accent-hex");
     if (hex) hex.textContent = appearanceInfo.accentColor || "theme default";
     const picker = $("accent-picker");
-    if (picker && appearanceInfo.accentColor) picker.value = appearanceInfo.accentColor;
+    if (picker) picker.value = appearanceInfo.accentColor || Appearance.DEFAULT_APPEARANCE.accentColor;
+
+    const range = $("sidebar-width-range");
+    if (range) range.value = String(appearanceInfo.sidebarWidth);
+    const label = $("sidebar-width-value");
+    if (label) label.textContent = `${appearanceInfo.sidebarWidth} px`;
+  }
+
+  /** Apply tokens, then re-arm OS theme tracking if we are following the system. */
+  function paintAppearance() {
+    Appearance.applyAppearance(appearanceInfo);
+    syncAppearanceControls();
+    Appearance.unwatchSystemTheme();
+    if (appearanceInfo.theme === "system") {
+      // `applyAppearance` re-resolves "system" through matchMedia, so this fires
+      // once per real OS change and needs no `effective` round-trip from main.
+      Appearance.watchSystemTheme(() => paintAppearance());
+    }
   }
 
   async function refreshAppearance() {
     const t = await api.getTheme();
     if (!t || !t.theme) return;
-    applyAppearance(t);
-    if (sysMedia && sysHandler) sysMedia.removeEventListener("change", sysHandler);
-    sysMedia = null;
-    sysHandler = null;
-    if (t.theme === "system") {
-      sysMedia = window.matchMedia("(prefers-color-scheme: dark)");
-      sysHandler = () => applyAppearance({ theme: "system", effective: sysMedia.matches ? "dark" : "light" });
-      sysMedia.addEventListener("change", sysHandler);
-    }
+    appearanceInfo = Appearance.appearanceFromInfo(t);
+    paintAppearance();
   }
 
   async function saveAppearance(patch) {
     const t = await api.setAppearance(patch);
-    if (t) applyAppearance(t);
+    if (t) {
+      appearanceInfo = Appearance.appearanceFromInfo(t);
+      paintAppearance();
+    }
+  }
+
+  /** Sidebar width is a per-machine preference, so it lives in localStorage. */
+  function setSidebarWidth(px, persist) {
+    appearanceInfo.sidebarWidth = Appearance.clampSidebarWidth(px);
+    Appearance.applyAppearance(appearanceInfo);
+    syncAppearanceControls();
+    if (persist) Appearance.saveSidebarWidth(appearanceInfo.sidebarWidth);
+  }
+
+  function bindSidebarResize() {
+    const handle = $("sidebar-resize");
+    if (handle) {
+      handle.addEventListener("pointerdown", (e) => {
+        e.preventDefault();
+        handle.setPointerCapture(e.pointerId);
+        const startX = e.clientX;
+        const startWidth = appearanceInfo.sidebarWidth;
+        const onMove = (ev) => setSidebarWidth(startWidth + (ev.clientX - startX), false);
+        const onUp = () => {
+          handle.removeEventListener("pointermove", onMove);
+          handle.removeEventListener("pointerup", onUp);
+          setSidebarWidth(appearanceInfo.sidebarWidth, true);
+        };
+        handle.addEventListener("pointermove", onMove);
+        handle.addEventListener("pointerup", onUp);
+      });
+    }
+
+    const range = $("sidebar-width-range");
+    if (range) {
+      range.addEventListener("input", (e) => setSidebarWidth(e.target.value, false));
+      // Persist on release rather than on every input event.
+      range.addEventListener("change", (e) => setSidebarWidth(e.target.value, true));
+    }
   }
 
   document.querySelectorAll(".theme-option").forEach((b) =>
@@ -2064,12 +2192,16 @@
   document.querySelectorAll(".font-preset").forEach((b) =>
     b.addEventListener("click", () => saveAppearance({ fontSize: b.dataset.font })),
   );
+  bindSidebarResize();
 
   // ── About (About / Guide tabs; Guide is the electron/docs markdown browser) ──
   async function refreshAbout() {
     const r = await api.appVersion();
     const el = $("about-version");
     el.textContent = r && r.ok ? `${r.name} — v${r.version}` : "Frontdesk Operator";
+    // Mirror the identity into the status bar. `r.name` is `app.getName()`, which
+    // in a packaged build is the same string the OS shows in the dock.
+    if (r && r.ok) setStatusText("status-app", `${r.name} v${r.version}`, "");
   }
 
   // Guide = rendered markdown docs from electron/docs/*.md (served via main IPC).
@@ -2220,7 +2352,7 @@
       }
       if (role === "tool") {
         const prefix = e.error && !e.ok ? "⚠️ " : "";
-        rows.push(`<div class="chat-msg tool"><div class="chat-role">🛠 ${esc(e.name || "tool")}</div><div class="chat-body">${esc(prefix + String(e.content || ""))}</div></div>`);
+        rows.push(`<div class="chat-msg tool"><div class="chat-role">${window.Icons.svg("tools", 12)}${esc(e.name || "tool")}</div><div class="chat-body">${esc(prefix + String(e.content || ""))}</div></div>`);
         continue;
       }
       const who = role === "user" ? "You" : "Agent";
@@ -2261,7 +2393,7 @@
       rows.push(
         `<div class="chat-continue">` +
           `<span>Tool-step limit reached for that message.</span>` +
-          `<button id="chat-continue" class="primary">▶ Continue</button>` +
+          `<button id="chat-continue" class="primary">${iconLabel("play", 13, "Continue")}</button>` +
         `</div>`,
       );
     }
@@ -2419,7 +2551,7 @@
     else refreshChatSessions();
   });
   // Subscribe to live agent steps (tool chips, results, approval requests).
-  api.onChatStep(appendChatStep);
+  subscribe("onChatStep", appendChatStep);
 
   // ── Scripts (scripts/user runner — manual run only) ──
   const scriptState = { list: [], runs: [], outputs: {}, preflight: null, form: {}, open: new Set() };
@@ -2515,8 +2647,8 @@
     const controls = `
         <div class="script-controls">
           ${argsBox}
-          <button class="run-btn" data-run="${escAttr(s.name)}" ${run ? "disabled" : ""}>▶ Run</button>
-          <button class="stop-btn" data-stop="${escAttr(s.name)}" ${run ? "" : "disabled"}>■ Stop</button>
+          <button class="run-btn" data-run="${escAttr(s.name)}" ${run ? "disabled" : ""}>${iconLabel("play", 13, "Run")}</button>
+          <button class="stop-btn" data-stop="${escAttr(s.name)}" ${run ? "" : "disabled"}>${iconLabel("stop", 13, "Stop")}</button>
         </div>`;
     const form = hasForm
       ? `<div class="script-form">${[...(s.manifest.positionals || []), ...(s.manifest.params || [])].map((p) => scriptFieldHTML(s, p)).join("")}</div>`
@@ -2531,7 +2663,7 @@
             <span class="caret">${isOpen ? "▾" : "▸"}</span>
             <strong class="script-name">${esc(s.name)}</strong>
             <span class="tag">${esc(s.runner || "no runner")}</span>
-            <span class="script-status ${run ? "running" : ""}">${run ? "● running (pid " + run.pid + ")" : "idle"}</span>
+            <span class="script-status ${run ? "running" : ""}">${run ? `<span class="status-dot"></span>running (pid ${run.pid})` : "idle"}</span>
             ${hasForm ? '<span class="tag valid" title="Fields from ' + escAttr(s.name) + '.params.json">form</span>' : ""}
           </div>
           ${body}
@@ -2670,10 +2802,10 @@
     renderScriptsPreflight();
     renderScriptsList();
   }
-  api.onScriptOutput((d) => {
+  subscribe("onScriptOutput", (d) => {
     if (d && d.script) appendScriptOutput(d.script, d.text || "");
   });
-  api.onScriptsUpdate((d) => {
+  subscribe("onScriptsUpdate", (d) => {
     scriptState.runs = (d && d.runs) || [];
     renderScriptsList();
   });
@@ -2698,13 +2830,24 @@
   });
 
   // ── Init ──
-  refreshDashboard();
-  refreshConfig();
-  refreshAppearance();
-  bindLogFilters();
-  bindLogStream();
-  bindLogFiles();
-  bindQueueClearAll();
+  // Each step is isolated: a failure in one must not skip the others (the legacy
+  // version ran them bare, so one bad binding silently disabled everything after).
+  const safeInit = (label, fn) => {
+    try {
+      fn();
+    } catch (err) {
+      reportError(err, label);
+    }
+  };
+
+  safeInit("dashboard", refreshDashboard);
+  safeInit("config", refreshConfig);
+  safeInit("appearance", refreshAppearance);
+  safeInit("about", refreshAbout);
+  safeInit("logs", bindLogFilters);
+  safeInit("logs", bindLogStream);
+  safeInit("logs", bindLogFiles);
+  safeInit("queue", bindQueueClearAll);
   setInterval(() => {
     // Light background refresh of health + dashboard while visible (guarded, so
     // a transient failure can't wedge the visible panel).

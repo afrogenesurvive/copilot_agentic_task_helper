@@ -1,0 +1,523 @@
+/* Shared form controls: inputs, selects, buttons, fieldsets, tables, notices,
+ * badges, status pills and the empty/loading primitives.
+ *
+ * This file loads BEFORE styles/components/*, so a feature file can override any
+ * primitive just by re-declaring it — see `.cfg-input-row input` and
+ * `.script-field input` for the pattern.
+ *
+ * IMPORTANT: bare `button`/`input`/`select`/`textarea` get the real control look
+ * here, not a stripped reset. `app.js` emits hundreds of unclassed controls from
+ * template strings, so the element default IS the design system default.
+ * `.btn` and `.input` are the canonical classes to reach for in new markup.
+ */
+
+/* ── Buttons ──────────────────────────────────────────────────────────────── */
+
+button,
+.btn {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 6px 12px;
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  color: var(--text);
+  white-space: nowrap;
+  font-size: 0.92em;
+  transition:
+    background 0.12s ease,
+    border-color 0.12s ease;
+}
+
+button:hover:not(:disabled),
+.btn:hover:not(:disabled) {
+  background: var(--surface-hover);
+  border-color: var(--accent-border);
+}
+
+button:disabled,
+.btn:disabled {
+  opacity: 0.45;
+  cursor: not-allowed;
+}
+
+.btn--primary,
+button.primary {
+  background: var(--accent);
+  border-color: var(--accent);
+  color: #ffffff;
+}
+
+.btn--primary:hover:not(:disabled),
+button.primary:hover:not(:disabled) {
+  background: var(--accent-hover);
+}
+
+.btn--small {
+  padding: 4px 8px;
+  font-size: 0.85em;
+}
+
+/* ── Inputs ───────────────────────────────────────────────────────────────── */
+
+.input,
+input:not([type="checkbox"]):not([type="radio"]):not([type="range"]):not([type="color"]),
+select,
+textarea {
+  width: 100%;
+  padding: 7px 10px;
+  background: var(--bg);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  color: var(--text);
+  outline: none;
+  transition:
+    border-color 0.12s ease,
+    box-shadow 0.12s ease;
+}
+
+.input:focus,
+input:not([type="checkbox"]):not([type="radio"]):not([type="range"]):not([type="color"]):focus,
+select:focus,
+textarea:focus {
+  border-color: var(--accent);
+  box-shadow: 0 0 0 2px var(--accent-border);
+}
+
+.input:disabled,
+input:disabled,
+select:disabled,
+textarea:disabled {
+  opacity: 0.55;
+  cursor: not-allowed;
+}
+
+.input--compact {
+  width: auto;
+  min-width: 120px;
+  padding: 5px 8px;
+}
+
+.input--search {
+  width: 200px;
+}
+
+.input--cell {
+  padding: 4px 6px;
+  border-color: transparent;
+  background: transparent;
+}
+
+.input--cell:hover {
+  border-color: var(--border);
+}
+
+.input--code {
+  font-family: ui-monospace, SFMono-Regular, "SF Mono", Menlo, monospace;
+  font-size: 0.85em;
+  line-height: 1.45;
+  resize: vertical;
+  white-space: pre;
+}
+
+.input--color {
+  width: 38px;
+  height: 32px;
+  padding: 2px;
+  cursor: pointer;
+}
+
+.range {
+  width: 100%;
+  accent-color: var(--accent);
+}
+
+.check,
+.script-check {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 0.9em;
+  color: var(--text);
+  cursor: pointer;
+}
+
+/* ── Fields ───────────────────────────────────────────────────────────────── */
+
+.field {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  min-width: 0;
+}
+
+.field__label {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  font-size: 0.85em;
+  color: var(--text-muted);
+}
+
+.field__hint,
+.hint {
+  font-size: 0.8em;
+  color: var(--text-muted);
+  line-height: 1.5;
+}
+
+.field-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(240px, 1fr));
+  gap: 12px;
+}
+
+.fieldset {
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  padding: 14px;
+  margin: 0 0 16px;
+}
+
+.fieldset legend {
+  padding: 0 6px;
+  font-size: 0.85em;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  color: var(--text-muted);
+}
+
+/* ── Tables ───────────────────────────────────────────────────────────────── */
+
+.table,
+table {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: 0.9em;
+}
+
+.table th,
+th {
+  text-align: left;
+  font-weight: 500;
+  color: var(--text-muted);
+  padding: 6px 8px;
+  border-bottom: 1px solid var(--border);
+}
+
+.table td,
+td {
+  padding: 5px 8px;
+  border-bottom: 1px solid var(--border);
+  vertical-align: middle;
+}
+
+.table tbody tr:hover,
+tbody tr:hover {
+  background: var(--surface-hover);
+}
+
+.table__number {
+  text-align: right;
+  font-variant-numeric: tabular-nums;
+}
+
+/* ── Code / log blocks ────────────────────────────────────────────────────── */
+
+pre {
+  font-family: ui-monospace, SFMono-Regular, "SF Mono", Menlo, monospace;
+  font-size: 0.85em;
+  line-height: 1.45;
+  color: var(--text-muted);
+  white-space: pre-wrap;
+  word-break: break-word;
+  max-height: 420px;
+  overflow: auto;
+  background: var(--bg);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  padding: 8px;
+}
+
+pre code {
+  font-family: inherit;
+}
+
+code {
+  font-family: ui-monospace, SFMono-Regular, "SF Mono", Menlo, monospace;
+  font-size: 0.88em;
+}
+
+/* ── Badges / tags ────────────────────────────────────────────────────────── */
+
+.badge,
+.tag {
+  display: inline-block;
+  padding: 1px 7px;
+  border-radius: 999px;
+  font-size: 0.75em;
+  border: 1px solid var(--border);
+  color: var(--text-muted);
+  white-space: nowrap;
+}
+
+.badge--ok,
+.badge.ok,
+.tag.valid {
+  border-color: color-mix(in srgb, var(--color-green) 45%, transparent);
+  color: var(--color-green);
+}
+
+.badge--warn,
+.tag.expiring {
+  border-color: color-mix(in srgb, var(--color-yellow) 45%, transparent);
+  color: var(--color-yellow);
+}
+
+.badge--bad,
+.badge.down,
+.tag.expired,
+.tag.revoked {
+  border-color: color-mix(in srgb, var(--color-red) 45%, transparent);
+  color: var(--color-red);
+}
+
+.badge--muted {
+  opacity: 0.75;
+}
+
+.chip {
+  padding: 2px 8px;
+  border-radius: 999px;
+  border: 1px solid var(--border);
+  font-size: 0.78em;
+}
+
+.chip-row {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+}
+
+.source-badge {
+  padding: 0 6px;
+  border-radius: 999px;
+  font-size: 0.78em;
+  border: 1px solid var(--border);
+  opacity: 0.8;
+}
+
+.source-badge--user_config {
+  color: var(--accent);
+  border-color: var(--accent-border);
+}
+
+.source-badge--environment {
+  color: var(--color-yellow);
+}
+
+/* ── Notices ──────────────────────────────────────────────────────────────── */
+
+.notice {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  padding: 10px 12px;
+  border: 1px solid var(--border);
+  border-left-width: 3px;
+  border-radius: var(--radius-sm);
+  margin-bottom: 12px;
+  font-size: 0.88em;
+}
+
+.notice--ok {
+  border-left-color: var(--color-green);
+}
+
+.notice--warn {
+  border-left-color: var(--color-yellow);
+}
+
+.notice--error {
+  border-left-color: var(--color-red);
+}
+
+.error-list {
+  margin: 6px 0 0;
+  padding-left: 18px;
+  list-style: disc;
+  font-size: 0.85em;
+  color: var(--text-muted);
+}
+
+/* ── Stats ────────────────────────────────────────────────────────────────── */
+
+.stat-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(140px, 1fr));
+  gap: 10px;
+  margin-bottom: 16px;
+}
+
+.stat {
+  display: flex;
+  flex-direction: column;
+  padding: 12px;
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+}
+
+.stat__value {
+  font-size: 1.35em;
+  font-variant-numeric: tabular-nums;
+}
+
+.stat__label {
+  font-size: 0.8em;
+  color: var(--text-muted);
+}
+
+/* ── Toolbar / sub-tabs / swatches ────────────────────────────────────────────
+ * NOTE: `.tab` is NOT reused here. In this app `.tab` is a whole *panel section*
+ * (`<section id="tab-logs" class="tab">`, see _layout.css). Sub-tab buttons are
+ * `.subtab`; `.logs-subtab` in the Logs file is the same primitive under a
+ * feature-specific name.
+ */
+
+.toolbar {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-wrap: wrap;
+  margin-bottom: 12px;
+}
+
+.subtab-row {
+  display: flex;
+  gap: 4px;
+}
+
+.subtab {
+  padding: 6px 12px;
+  border-radius: var(--radius-sm) var(--radius-sm) 0 0;
+  border: 1px solid transparent;
+  background: transparent;
+  color: var(--text-muted);
+  font-size: 0.9em;
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.subtab:hover {
+  color: var(--text);
+}
+
+.subtab--active {
+  color: var(--text);
+  background: var(--surface);
+  box-shadow: inset 0 -2px 0 var(--accent);
+}
+
+.subtab__count {
+  font-size: 0.8em;
+  padding: 0 6px;
+  border-radius: 999px;
+  background: var(--surface-hover);
+}
+
+.swatch-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-wrap: wrap;
+}
+
+.swatch {
+  width: 26px;
+  height: 26px;
+  padding: 0;
+  border-radius: 999px;
+  border: 2px solid transparent;
+  transition:
+    transform 0.1s ease,
+    border-color 0.1s ease;
+}
+
+.swatch:hover {
+  transform: scale(1.1);
+}
+
+.swatch--active {
+  border-color: var(--text);
+}
+
+/* ── Empty / loading ──────────────────────────────────────────────────────── */
+
+.empty {
+  color: var(--text-muted);
+  font-style: italic;
+  padding: 8px 0;
+  font-size: 0.85em;
+}
+
+.empty-state {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 10px;
+  padding: 56px 24px;
+  text-align: center;
+  color: var(--text-muted);
+}
+
+.empty-state h3 {
+  color: var(--text);
+}
+
+.spinner,
+.spin {
+  border: 2px solid var(--border);
+  border-top-color: var(--accent);
+  border-radius: 999px;
+  animation: spin 0.7s linear infinite;
+}
+
+.spinner {
+  width: 22px;
+  height: 22px;
+}
+
+.spin {
+  width: 14px;
+  height: 14px;
+  flex: 0 0 14px;
+}
+
+@keyframes spin {
+  to {
+    transform: rotate(360deg);
+  }
+}
+
+.loading-block {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 8px 0;
+  color: var(--text-muted);
+  font-size: 0.9em;
+}
+
+/* ── Collapsible sections ─────────────────────────────────────────────────── */
+
+.caret {
+  display: inline-flex;
+  align-items: center;
+  flex: none;
+  width: 1em;
+  color: var(--text-muted);
+  font-size: 0.8em;
+}

@@ -1,0 +1,67 @@
+/* Queue: priority + misc notification lists.
+ *
+ * `.qitem` is also reused by the Accounts tab (one row per seat), so it is
+ * defined here as the shared list-row primitive rather than queue-specific.
+ */
+
+.qitem {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 7px 10px;
+  background: var(--bg);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  margin-bottom: 6px;
+  font-size: 0.88rem;
+}
+
+.qitem:last-child {
+  margin-bottom: 0;
+}
+
+.qitem:hover {
+  border-color: var(--accent-border);
+}
+
+.qitem .qn {
+  color: var(--text-muted);
+  font-weight: 600;
+  font-variant-numeric: tabular-nums;
+  min-width: 2.4rem;
+  flex: 0 0 auto;
+}
+
+.qitem .qdesc {
+  flex: 1;
+  min-width: 0;
+  word-break: break-word;
+}
+
+.qitem .qmeta {
+  color: var(--text-muted);
+  font-size: 0.8rem;
+  white-space: nowrap;
+  flex: 0 0 auto;
+}
+
+.qitem.cleared {
+  opacity: 0.45;
+}
+
+.qitem button {
+  font-size: 0.8rem;
+  padding: 3px 8px;
+}
+
+/* Destructive "Clear all" affordance — red on hover, neutral at rest so it does
+   not read as the primary action on the tab. */
+.clear-all {
+  color: var(--color-red);
+  border-color: color-mix(in srgb, var(--color-red) 55%, transparent);
+}
+
+.clear-all:hover:not(:disabled) {
+  background: color-mix(in srgb, var(--color-red) 14%, transparent);
+  border-color: var(--color-red);
+}

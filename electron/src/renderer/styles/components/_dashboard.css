@@ -1,0 +1,242 @@
+/* Dashboard: collapsible service rail + large detail view. */
+
+.svc-layout {
+  display: flex;
+  align-items: stretch;
+  gap: var(--gap);
+  flex: 1;
+  min-height: 0;
+}
+
+.svc-note {
+  flex: 0 0 auto;
+  margin-bottom: 10px;
+  padding: 11px 14px;
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-left-width: 3px;
+  border-left-color: var(--accent);
+  border-radius: var(--radius-sm);
+  font-size: 0.82rem;
+  color: var(--text-muted);
+  line-height: 1.45;
+}
+
+.svc-note b {
+  color: var(--text);
+}
+
+/* ── The service rail ── */
+
+.svc-tabs {
+  display: flex;
+  flex-direction: column;
+  flex: 0 0 210px;
+  max-width: 210px;
+  overflow-y: auto;
+  gap: 2px;
+  padding: 8px;
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+}
+
+/* Collapsed → a narrow rail showing only the status dots. */
+.svc-tabs.collapsed {
+  flex-basis: 46px;
+  max-width: 46px;
+}
+
+.svc-tabs-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 4px;
+  padding: 0 2px 8px;
+  margin-bottom: 4px;
+  border-bottom: 1px solid var(--border);
+}
+
+.svc-tabs-title {
+  font-size: 0.72rem;
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+  color: var(--text-muted);
+}
+
+.svc-collapse {
+  padding: 2px 6px;
+  font-size: 0.75rem;
+  line-height: 1;
+}
+
+.svc-tabs.collapsed .svc-tabs-title,
+.svc-tabs.collapsed .svc-tab-label {
+  display: none;
+}
+
+.svc-tab {
+  width: 100%;
+  text-align: left;
+  display: flex;
+  align-items: center;
+  gap: 7px;
+  border-color: transparent;
+  background: transparent;
+}
+
+.svc-tab:hover:not(:disabled) {
+  border-color: transparent;
+}
+
+.svc-dot {
+  flex: 0 0 auto;
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  background: var(--text-muted);
+}
+
+.svc-dot.running {
+  background: var(--color-green);
+}
+
+.svc-dot.stopped {
+  background: var(--text-muted);
+}
+
+.svc-dot.error {
+  background: var(--color-red);
+}
+
+.svc-tab.running:not(.active) {
+  color: var(--color-green);
+}
+
+.svc-tab.stopped:not(.active) {
+  color: var(--text-muted);
+}
+
+.svc-tab.error:not(.active) {
+  color: var(--color-red);
+}
+
+.svc-tab.active {
+  background: var(--accent);
+  border-color: var(--accent);
+  color: #ffffff;
+}
+
+.svc-tab.active .svc-dot {
+  background: #ffffff;
+}
+
+/* ── Detail pane ── */
+
+.svc-main {
+  flex: 1;
+  min-width: 0;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+}
+
+/* The detail view is a `.panel` nested inside the laid-out column rather than a
+   direct child of `.app-main`, so it drops the card's bottom margin. */
+.svc-detail {
+  display: flex;
+  flex-direction: column;
+  flex: 1;
+  min-height: 0;
+  margin-bottom: 0;
+}
+
+.svc-head {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 10px;
+  flex-wrap: wrap;
+  margin-bottom: 8px;
+}
+
+.svc-head h3 {
+  font-size: 1rem;
+  font-weight: 600;
+  margin-bottom: 3px;
+}
+
+.svc-status {
+  font-size: 0.85rem;
+  /* The leading dot is a `.status-dot` element that inherits the status colour,
+     so it is a flex row rather than a text node with a bullet glyph. */
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.svc-status.running {
+  color: var(--color-green);
+}
+
+.svc-status.stopped {
+  color: var(--text-muted);
+}
+
+.svc-status.error {
+  color: var(--color-red);
+}
+
+.svc-health {
+  font-size: 0.82rem;
+  color: var(--text-muted);
+  margin-bottom: 8px;
+  word-break: break-word;
+}
+
+.svc-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+}
+
+.svc-detail-log {
+  height: auto;
+  flex: 1;
+  min-height: 140px;
+  max-height: none;
+  overflow-y: auto;
+  font-size: 0.82rem;
+  color: var(--text-muted);
+  background: var(--bg);
+}
+
+/* ── Webhook re-register action ── */
+
+.svc-reregister {
+  margin: 0 0 8px;
+  flex-wrap: wrap;
+}
+
+.svc-rereg-status {
+  font-size: 0.82rem;
+  color: var(--text-muted);
+  line-height: 1.45;
+}
+
+/* ── WhatsApp service card (Cloud API credentials summary) ── */
+
+.svc-wa {
+  padding: 9px 11px;
+  margin-bottom: 8px;
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  font-size: 0.82rem;
+  color: var(--text-muted);
+  line-height: 1.5;
+}
+
+.svc-wa b {
+  color: var(--text);
+}

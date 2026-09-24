@@ -1,0 +1,80 @@
+/* Usage: DS-mon push status, stat cards and the token-breakdown tables. */
+
+.usage-status {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 6px 13px;
+  margin: 8px 0 13px;
+  font-size: 0.82rem;
+}
+
+.usage-status .config-src {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+}
+
+.usage-cards {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 10px;
+  margin-bottom: 14px;
+}
+
+/* Same visual language as `.stat` from _form-fields.css, laid out as a wrapping
+   row rather than a grid so a single card still fills the width reasonably. */
+.usage-card {
+  flex: 1 1 150px;
+  min-width: 130px;
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  padding: 10px 12px;
+}
+
+.usage-card-value {
+  font-size: 1.15rem;
+  font-weight: 600;
+  color: var(--text);
+  font-variant-numeric: tabular-nums;
+  word-break: break-word;
+}
+
+.usage-card-label {
+  font-size: 0.76rem;
+  color: var(--text-muted);
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  margin-top: 3px;
+}
+
+.usage-table-wrap {
+  margin-bottom: 16px;
+}
+
+.usage-table-wrap h4 {
+  font-size: 0.88rem;
+  font-weight: 600;
+  color: var(--text-muted);
+  margin-bottom: 6px;
+}
+
+.usage-table-wrap table {
+  font-size: 0.85rem;
+}
+
+.usage-table-wrap th {
+  padding: 5px 8px;
+}
+
+.usage-table-wrap td {
+  padding: 5px 8px;
+  font-variant-numeric: tabular-nums;
+}
+
+/* The right-hand numeric columns line up because every value is tabular. */
+.usage-table-wrap th:not(:first-child),
+.usage-table-wrap td:not(:first-child) {
+  text-align: right;
+}

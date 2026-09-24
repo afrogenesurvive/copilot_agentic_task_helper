@@ -31,7 +31,7 @@ npm run electron:dev       # launch dashboard + autostart the whole backend
 | 💬 Chat | Chat with the configured LLM (the agent) directly from the dashboard — each conversation is saved as its own log file |
 | ⚙️ Config | Sectioned field editor with per-key source badges, secret show/hide, Save (edited keys only), Export / Import, Raw JSON toggle |
 | 🧰 Tools | Shared tool manifest + Trello/Gmail quick actions |
-| 🎨 Appearance | Light / Dark / System theme, accent color (presets + custom) and font-size preset (`APPEARANCE_THEME`, `APPEARANCE_ACCENT_COLOR`, `APPEARANCE_FONT_SIZE` — native chrome + dashboard) |
+| 🎨 Appearance | Light / Dark / System theme, accent color (ten presets + custom), font-size preset and sidebar width (`APPEARANCE_THEME`, `APPEARANCE_ACCENT_COLOR`, `APPEARANCE_FONT_SIZE` — native chrome + dashboard; width is a local preference) |
 | ℹ️ About | App name + version (About) + a Guide sub-tab |
 | ⏻ Quit (bottom) | Quits the app — main `before-quit` stops all backend services |
 
@@ -40,20 +40,24 @@ npm run electron:dev       # launch dashboard + autostart the whole backend
 ```
 electron/
   package.json          (electron ^33, electron-builder)
+  assets/               app icon + tray template (generated — see make:icon)
   src/main.js           main process: service manager, IPC, tray, notifications, tools
   src/main/oauth.js     loopback Google OAuth (bind account → seat)
   src/preload.js        contextBridge → window.api
-  src/renderer/         index.html, style.css, app.js (vanilla, no build step)
+  src/renderer/         index.html, tokens.js, icons.js, app.js (vanilla, no build step)
+  src/renderer/styles/  the design system — 21 stylesheets, linked in cascade order
   README.md
 ```
 
-- [`electron/package.json`](../electron/package.json#L1) — scripts (`start`, `dev`, `dist:mac`) + Electron deps
+- [`electron/package.json`](../electron/package.json#L1) — scripts (`start`, `dev`, `make:icon`, `dist:mac`) + Electron deps
 - [`electron/src/main.js`](../electron/src/main.js#L1) — service manager, IPC, tray, notifications, tools
 - [`electron/src/main/oauth.js`](../electron/src/main/oauth.js#L1) — loopback Google OAuth (bind account → seat)
 - [`electron/src/main/chat-agent.mjs`](../electron/src/main/chat-agent.mjs#L1) — operator chat agentic loop (tools + approvals)
 - [`electron/src/main/local-tools.mjs`](../electron/src/main/local-tools.mjs#L1) — operator local tools (fs/tasks/queues)
 - [`electron/src/preload.js`](../electron/src/preload.js#L7) — `contextBridge` → `window.api`
-- [`electron/src/renderer/`](../electron/src/renderer/index.html#L1) — `index.html`, `style.css`, `app.js` (vanilla, no build step)
+- [`electron/src/renderer/`](../electron/src/renderer/index.html#L1) — `index.html`, `app.js` (vanilla, no build step), plus `tokens.js` (theme tokens) and `icons.js` (inline SVG set)
+- [`scripts/make-icon.mjs`](../scripts/make-icon.mjs#L1) — generates the dock/tray icons from a glyph in `icons.js`
+- [`scripts/check-renderer-wiring.mjs`](../scripts/check-renderer-wiring.mjs#L1) — dev check: every id, glyph, asset and class the renderer (and the webapp) references must actually exist
 
 ## Build (dmg/zip)
 
@@ -65,6 +69,32 @@ npm run electron:build   # = electron-builder --mac
 
 Packaged apps read the repo pieces (scripts, shared, mcp, webapp) from `extraResources`, but
 `.env`/`config.json`/`safe`/`logs/` are read from the live repo — the primary flow is dev (`npm start`).
+
+## App identity (dock icon + name)
+
+The dock icon and the name in the application menu come from the app **bundle**, not from JS:
+`app.setName()` only changes the name Electron uses internally and does not affect what macOS shows.
+So there are two halves:
+
+- **Packaged** — `build.productName` / `build.appId` in [`electron/package.json`](../electron/package.json#L1),
+  plus `mac.icon` pointing at [`electron/assets/icon.icns`](../electron/assets/icon.icns).
+- **Dev (`npm start`)** — the process runs out of `electron/node_modules/electron/dist/Electron.app`,
+  so [`scripts/patch-electron-app-name.mjs`](../scripts/patch-electron-app-name.mjs#L1) rewrites that
+  bundle's `Info.plist`. It is wired to `postinstall`, so it survives a reinstall, and it is idempotent.
+  (Safe because the npm Electron bundle is ad-hoc, linker-signed with `Info.plist=not bound` — editing
+  the plist does not invalidate it. The script re-signs ad-hoc if a future version *is* sealed.)
+
+The icons are generated, not drawn. [`scripts/make-icon.mjs`](../scripts/make-icon.mjs#L1) rasterises the
+`console` glyph from [`electron/src/renderer/icons.js`](../electron/src/renderer/icons.js#L1) onto a
+macOS squircle plate, so the app icon can never drift from the UI's own icon set:
+
+```bash
+npm --prefix electron run make:icon     # -> electron/assets/{icon.png,icon.icns,trayTemplate*.png}
+```
+
+Icons live in `electron/assets/`, **not** `electron/build/` — the repo `.gitignore` has an unanchored
+`build/` rule that would silently swallow them. `assets/**/*` is in `build.files` because the main
+process loads the dock and tray images at runtime.
 
 A repo-root `config.json` (plain JSON) is the primary config source; `.env` is used when it's absent.
 Manage it from the **⚙️ Config** tab — a sectioned field editor with per-key source badges

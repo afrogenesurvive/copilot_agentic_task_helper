@@ -1,0 +1,168 @@
+/* Appearance panel: theme options, accent swatches, font-size presets.
+ *
+ * The swatch colours used to live in inline `style="background:#…"` attributes,
+ * which the CSP (`style-src 'self'`, no `'unsafe-inline'`) silently dropped — so
+ * every swatch rendered colourless. They are `data-accent` attribute selectors
+ * now, which keeps the "no inline styles" rule intact.
+ */
+
+.appearance-subtitle {
+  font-size: 0.82rem;
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+  color: var(--text-muted);
+  margin: 16px 0 4px;
+}
+
+/* ── Theme ── */
+
+.theme-row {
+  display: flex;
+  gap: 8px;
+  margin-top: 8px;
+  flex-wrap: wrap;
+}
+
+.theme-option {
+  flex: 1 1 120px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 7px;
+  padding: 10px 13px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  background: var(--bg);
+  color: var(--text);
+  font-size: 0.9rem;
+}
+
+.theme-option:hover:not(:disabled) {
+  border-color: var(--accent-border);
+}
+
+.theme-option.active {
+  border-color: var(--accent);
+  color: var(--accent);
+  box-shadow: inset 0 0 0 1px var(--accent);
+}
+
+/* ── Accent ── */
+
+.accent-grid {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px;
+  margin: 8px 0;
+}
+
+.accent-swatch {
+  width: 30px;
+  height: 30px;
+  padding: 0;
+  border: 2px solid var(--border);
+  border-radius: 999px;
+  transition:
+    transform 0.1s ease,
+    border-color 0.1s ease;
+}
+
+.accent-swatch:hover {
+  transform: scale(1.1);
+}
+
+.accent-swatch.active {
+  border-color: var(--text);
+  box-shadow: 0 0 0 2px var(--accent);
+}
+
+/* Swatch fills. `data-accent` mirrors `data-accent` on the button, so the JS only
+   has to carry one attribute — see `refreshAppearance()` in app.js. */
+.accent-swatch[data-accent="#2f81f7"] {
+  background: #2f81f7;
+}
+.accent-swatch[data-accent="#3fb950"] {
+  background: #3fb950;
+}
+.accent-swatch[data-accent="#bc8cff"] {
+  background: #bc8cff;
+}
+.accent-swatch[data-accent="#f778ba"] {
+  background: #f778ba;
+}
+.accent-swatch[data-accent="#d29922"] {
+  background: #d29922;
+}
+.accent-swatch[data-accent="#f85149"] {
+  background: #f85149;
+}
+.accent-swatch[data-accent="#56d4dd"] {
+  background: #56d4dd;
+}
+.accent-swatch[data-accent="#e3b341"] {
+  background: #e3b341;
+}
+.accent-swatch[data-accent="#8b949e"] {
+  background: #8b949e;
+}
+
+/* "Theme default" — a split disc, so it reads as "not a single colour". */
+.accent-swatch[data-accent=""] {
+  background: linear-gradient(135deg, var(--accent) 50%, var(--border) 50%);
+}
+
+.accent-custom {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  font-size: 0.84rem;
+  color: var(--text-muted);
+}
+
+.accent-custom input[type="color"] {
+  width: 38px;
+  height: 30px;
+  padding: 2px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  background: var(--bg);
+  cursor: pointer;
+}
+
+/* ── Font size ── */
+
+.font-grid {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  margin-top: 8px;
+}
+
+.font-preset {
+  flex: 1 1 120px;
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 2px;
+  padding: 9px 11px;
+  text-align: left;
+  background: var(--bg);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+}
+
+.font-preset:hover:not(:disabled) {
+  border-color: var(--accent-border);
+}
+
+.font-preset small {
+  color: var(--text-muted);
+  font-size: 0.74rem;
+}
+
+.font-preset.active {
+  border-color: var(--accent);
+  color: var(--accent);
+  box-shadow: inset 0 0 0 1px var(--accent);
+}

@@ -1,0 +1,94 @@
+/* Tools: the shared tool manifest (collapsible groups) + Trello/Gmail/WhatsApp
+ * quick actions.
+ */
+
+/* ── Manifest ── */
+
+.manifest-group {
+  border-bottom: 1px solid var(--border);
+}
+
+.manifest-group:last-child {
+  border-bottom: none;
+}
+
+.manifest-group .manifest-head {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 7px 7px;
+  cursor: pointer;
+  user-select: none;
+  font-weight: 600;
+  font-size: 0.88rem;
+  color: var(--accent);
+}
+
+.manifest-group .manifest-head:hover {
+  background: var(--surface-hover);
+}
+
+.manifest-group .manifest-head .count {
+  color: var(--text-muted);
+  font-weight: 400;
+  font-size: 0.76rem;
+  background: var(--surface-hover);
+  border: 1px solid var(--border);
+  border-radius: 999px;
+  padding: 1px 7px;
+}
+
+.manifest-group.collapsed .manifest-body {
+  display: none;
+}
+
+.manifest-body {
+  padding: 2px 8px 8px;
+}
+
+.manifest-tool {
+  padding: 7px 8px;
+  border-bottom: 1px solid var(--border);
+  font-size: 0.86rem;
+}
+
+.manifest-tool:last-child {
+  border-bottom: none;
+}
+
+.manifest-tool .tname {
+  color: var(--accent);
+  font-weight: 600;
+  font-family: ui-monospace, SFMono-Regular, "SF Mono", Menlo, monospace;
+}
+
+.manifest-tool .tdesc {
+  color: var(--text-muted);
+  margin-top: 3px;
+  line-height: 1.45;
+}
+
+/* ── Quick actions ── */
+
+.qtool {
+  margin-bottom: 13px;
+}
+
+.qtool strong {
+  display: block;
+  margin-bottom: 7px;
+  font-size: 0.92rem;
+}
+
+.qtool button {
+  margin-right: 6px;
+  margin-bottom: 5px;
+}
+
+.qresult {
+  margin-top: 8px;
+  font-size: 0.85rem;
+  color: var(--text-muted);
+  max-height: 220px;
+  overflow-y: auto;
+}

@@ -1,0 +1,240 @@
+/*
+ * App shell layout.
+ *
+ * Fallback token values live here so the window renders correctly during the
+ * first paint, before `Appearance.applyAppearance()` sets the real ones from
+ * config. Keep them byte-identical to tokens.js's DARK palette — a mismatch
+ * shows up as a one-frame colour flicker on launch.
+ */
+
+:root {
+  --bg: #0d1117;
+  --surface: #161b22;
+  --surface-hover: #1c2333;
+  --border: #30363d;
+  --text: #e6edf3;
+  --text-muted: #8b949e;
+  --accent: #2f81f7;
+  --accent-hover: #2f81f7cc;
+  --accent-border: #2f81f744;
+  --sidebar-width: 260px;
+  --radius: 8px;
+  --radius-sm: 6px;
+  --gap: 16px;
+  --color-red: #f85149;
+  --color-yellow: #d29922;
+  --color-green: #3fb950;
+  color-scheme: dark;
+}
+
+:root[data-theme="light"] {
+  color-scheme: light;
+}
+
+/* Root font size drives every rem-based text size in the stylesheets, which is
+ * what makes the Appearance tab's font-size presets work. Spacing, radii and
+ * borders stay in px on purpose — a larger preset should read as bigger type,
+ * not a zoomed-in window. */
+html {
+  font-size: calc(16px * var(--fs-scale, 1));
+}
+
+.app {
+  display: flex;
+  flex-direction: column;
+  height: 100vh;
+  overflow: hidden;
+}
+
+.app-body {
+  display: flex;
+  flex: 1;
+  min-height: 0;
+}
+
+.sidebar {
+  position: relative;
+  width: var(--sidebar-width);
+  flex-shrink: 0;
+  background: var(--surface);
+  border-right: 1px solid var(--border);
+  display: flex;
+  flex-direction: column;
+}
+
+/* The brand row. Not a nav item: no hover state, sits above the scroll area. */
+.sidebar-brand {
+  display: flex;
+  align-items: center;
+  gap: 9px;
+  padding: 12px 12px 10px;
+  border-bottom: 1px solid var(--border);
+  color: var(--text);
+  flex-shrink: 0;
+}
+
+.sidebar-brand__mark {
+  color: var(--accent);
+}
+
+.sidebar-brand__text {
+  display: flex;
+  flex-direction: column;
+  min-width: 0;
+}
+
+.sidebar-brand__name {
+  font-size: 0.88em;
+  font-weight: 600;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.sidebar-brand__sub {
+  font-size: 0.72em;
+  color: var(--text-muted);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.sidebar-scroll {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  padding: 10px 8px;
+  overflow-y: auto;
+  /* Grows to fill the sidebar so the footer below is pinned to the bottom edge
+     even when the nav list is short. */
+  flex: 1;
+  min-height: 0;
+}
+
+.sidebar-footer {
+  flex-shrink: 0;
+  padding: 8px;
+  border-top: 1px solid var(--border);
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+
+.sidebar-btn {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  width: 100%;
+  padding: 8px 10px;
+  border: none;
+  background: transparent;
+  border-radius: var(--radius-sm);
+  color: var(--text-muted);
+  text-align: left;
+  font-size: 1em;
+  transition:
+    background 0.12s ease,
+    color 0.12s ease;
+}
+
+.sidebar-btn:hover {
+  background: var(--surface-hover);
+  color: var(--text);
+}
+
+.sidebar-btn--active {
+  background: var(--accent-border);
+  color: var(--text);
+  box-shadow: inset 2px 0 0 var(--accent);
+}
+
+.sidebar-btn__label {
+  font-size: 0.92em;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+/* The quit affordance is a nav button, but it must not read as one more place to
+ * navigate to: no active state, and red on hover. */
+.sidebar-btn--danger:hover {
+  background: color-mix(in srgb, var(--color-red) 18%, transparent);
+  color: var(--color-red);
+}
+
+.sidebar-divider {
+  height: 1px;
+  background: var(--border);
+  margin: 8px 6px;
+}
+
+.sidebar-resize-handle {
+  position: absolute;
+  top: 0;
+  right: -3px;
+  width: 6px;
+  height: 100%;
+  cursor: col-resize;
+  z-index: 5;
+}
+
+.sidebar-resize-handle:hover {
+  background: var(--accent-border);
+}
+
+.app-main {
+  flex: 1;
+  min-width: 0;
+  overflow-y: auto;
+  padding: var(--gap);
+  display: flex;
+  flex-direction: column;
+}
+
+/* ── Tabs ──
+   One `.active` per sidebar button and one per `section.tab`. Most tabs keep
+   their natural height; the three that own a full-height panel opt into flex. */
+.tab {
+  display: none;
+}
+
+.tab.active {
+  display: block;
+  flex-shrink: 0;
+}
+
+#tab-dashboard.active,
+#tab-logs.active,
+#tab-chat.active {
+  display: flex;
+  flex-direction: column;
+  flex: 1;
+  min-height: 0;
+}
+
+#tab-logs > .panel,
+#tab-chat > .panel {
+  flex: 1;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+}
+
+.muted {
+  color: var(--text-muted);
+}
+
+.mono-note {
+  font-family: ui-monospace, SFMono-Regular, "SF Mono", Menlo, monospace;
+  font-size: 0.85em;
+}
+
+.truncate {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.no-scroll {
+  overflow: hidden;
+}

@@ -1,5 +1,61 @@
 # Changelog
 
+## [0.3.1-2] — 2026-09-24
+
+### The app was called "Electron" in the dock
+
+In development the process runs out of Electron's own bundle, so the dock tooltip, the bold
+application menu and the About panel all read "Electron", under Electron's icon. `productName` in
+`package.json` is only honoured when packaging, and `app.setName()` does not affect the name the OS
+uses, so neither half of the identity was actually applied.
+
+Both are now set for dev *and* packaged builds, and the About panel reports the same name the OS
+shows. The tray icon was a 1×1 transparent placeholder — the menu-bar item was invisible — and is now
+a real macOS template image.
+
+The icon is generated rather than drawn: it rasterises a glyph from the interface's own icon set onto
+the standard macOS rounded plate, so the app icon cannot drift away from the icons inside the app.
+Regenerate it with `npm --prefix electron run make:icon`.
+
+### The accent-colour swatches were invisible, and two modals were unstyled
+
+The renderer's Content-Security-Policy sets `style-src 'self'` with no `'unsafe-inline'`, which
+silently drops inline `style="…"` attributes. Twenty-two of them were load-bearing: every accent
+swatch drew its own colour that way, and both modal overlays got their fixed positioning that way.
+The swatches rendered as identical blank circles and the modals rendered inline in the page flow.
+
+Every inline style is gone. Swatch colours come from `data-*` attribute selectors, and theme tokens
+are written through the CSSOM — which means the stricter policy is kept rather than relaxed to
+`'unsafe-inline'` to accommodate them.
+
+### The dashboard restyle
+
+The single 1,876-line stylesheet is now a design system split across 21 files, with the palette, type
+scale and radii as tokens. Dark is the default and light is a full second palette.
+
+Also in this pass: sidebar navigation uses inline SVG icons instead of emoji; a status bar carries
+health, service-count and queue-count pills; toasts stack, so a second message can no longer silently
+replace one you have not read; the sidebar is resizable; and a failure in one startup step no longer
+skips the steps after it.
+
+### The collaborator webapp matches the operator console
+
+It now uses the same token names and palette as the desktop app, so the two read as one product.
+Roughly 29% of its stylesheet styled elements that do not exist anywhere in the markup; that is
+deleted, and the placeholder colour values and hand-mixed translucent tints became tokens and
+`color-mix()`. The page stays entirely self-contained — no webfont, no images, no third-party
+request.
+
+### The hosted web frontdesk could not reach its backend
+
+The public copy of the collaborator webapp asks its own host for the runtime settings it needs in order
+to find the backend. That request went to a path only the local backend serves, so on the hosted site it
+returned a 404: the app kept an empty backend address and the login card reported "No backend
+configured", even though the site's own settings were present and correct.
+
+The hosted copy now obtains its settings the same way the local one does, and it falls back to the
+function path if that route is ever missing — so the login card reports the backend as connected.
+
 ## [0.3.1-1] — 2026-09-23
 
 ### A frontdesk reply could be addressed to a seat that does not exist

@@ -1,0 +1,227 @@
+/* Scripts: the `scripts/user` runner — preflight, param forms, live output.
+ *
+ * `.script-head` used to be declared twice in the old single stylesheet (once in
+ * the main block, once again 700 lines later to add `cursor: pointer`), which made
+ * it ambiguous which rule won. Consolidated here.
+ */
+
+/* ── Preflight banner ── */
+
+.script-preflight {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  align-items: center;
+  margin-bottom: 10px;
+}
+
+.script-preflight code {
+  color: var(--text-muted);
+  font-size: 0.8rem;
+}
+
+/* ── Script cards ── */
+
+.script-card {
+  background: var(--bg);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  padding: 11px 13px;
+  margin-bottom: 11px;
+}
+
+.script-head {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-wrap: wrap;
+  cursor: pointer;
+  user-select: none;
+}
+
+.script-head:hover .caret {
+  color: var(--accent);
+}
+
+.script-card.collapsed .script-body {
+  display: none;
+}
+
+.script-name {
+  font-size: 0.95rem;
+  font-weight: 600;
+  color: var(--text);
+}
+
+.script-status {
+  font-size: 0.82rem;
+  color: var(--text-muted);
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.script-status.running {
+  color: var(--color-green);
+  font-weight: 600;
+}
+
+.script-status.running .status-dot {
+  background: var(--color-green);
+}
+
+.script-usage {
+  margin: 6px 0 9px;
+  font-size: 0.82rem;
+  color: var(--text-muted);
+  line-height: 1.45;
+}
+
+/* ── Controls ── */
+
+.script-controls {
+  display: flex;
+  gap: 6px;
+  align-items: center;
+  flex-wrap: wrap;
+  margin-bottom: 9px;
+}
+
+.script-controls button {
+  font-size: 0.82rem;
+  padding: 4px 10px;
+}
+
+.run-btn {
+  color: var(--color-green);
+  border-color: color-mix(in srgb, var(--color-green) 45%, transparent);
+}
+
+.run-btn:hover:not(:disabled) {
+  background: color-mix(in srgb, var(--color-green) 14%, transparent);
+  border-color: var(--color-green);
+}
+
+.stop-btn {
+  color: var(--color-red);
+  border-color: color-mix(in srgb, var(--color-red) 45%, transparent);
+}
+
+.stop-btn:hover:not(:disabled) {
+  background: color-mix(in srgb, var(--color-red) 14%, transparent);
+  border-color: var(--color-red);
+}
+
+.script-extra {
+  flex: 1;
+  min-width: 180px;
+}
+
+/* Free-form extra args, shared by the simple and manifest-driven forms. */
+.script-args {
+  flex: 1;
+  min-width: 220px;
+  padding: 5px 7px;
+  font-size: 0.84rem;
+  font-family: ui-monospace, SFMono-Regular, "SF Mono", Menlo, monospace;
+}
+
+/* ── Generated param form (<script>.params.json) ── */
+
+.script-form {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(230px, 1fr));
+  gap: 8px 13px;
+  margin: 0 0 10px;
+}
+
+.script-field {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  min-width: 0;
+}
+
+.script-field.flag {
+  justify-content: center;
+}
+
+.script-label {
+  font-size: 0.82rem;
+  color: var(--text);
+  word-break: break-word;
+}
+
+.script-field input:not([type="checkbox"]),
+.script-field select {
+  width: 100%;
+  min-width: 0;
+  padding: 5px 7px;
+  font-size: 0.84rem;
+  font-family: ui-monospace, SFMono-Regular, "SF Mono", Menlo, monospace;
+}
+
+.script-check {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 0.84rem;
+  color: var(--text);
+  cursor: pointer;
+  margin: 5px 0 0;
+}
+
+.script-optval {
+  display: flex;
+  gap: 5px;
+  align-items: center;
+}
+
+.script-optval.off {
+  display: none;
+}
+
+.script-optval input {
+  flex: 1;
+  min-width: 0;
+}
+
+.script-label-small {
+  font-size: 0.76rem;
+  color: var(--text-muted);
+  font-family: ui-monospace, SFMono-Regular, "SF Mono", Menlo, monospace;
+  white-space: nowrap;
+}
+
+.script-help {
+  font-size: 0.74rem;
+  color: var(--text-muted);
+  line-height: 1.4;
+}
+
+.script-file-row {
+  display: flex;
+  gap: 5px;
+  align-items: center;
+}
+
+.script-file-row input {
+  flex: 1;
+  min-width: 0;
+}
+
+.browse-btn {
+  font-size: 0.78rem;
+  padding: 4px 9px;
+  white-space: nowrap;
+}
+
+/* ── Output ── */
+
+.script-out {
+  max-height: 260px;
+  margin: 0;
+  white-space: pre-wrap;
+  color: var(--text);
+  font-size: 0.8rem;
+}

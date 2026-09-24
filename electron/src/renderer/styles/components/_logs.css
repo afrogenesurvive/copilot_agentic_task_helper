@@ -1,0 +1,232 @@
+/* Logs: the Live unified stream and the Files browser. */
+
+/* ── Sub-views ── */
+
+#logs-live,
+#logs-files {
+  flex: 1;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+}
+
+/* ── Live / Files sub-tab strip (the `.subtab` primitive) ── */
+
+.logs-subtabs {
+  display: inline-flex;
+  gap: 4px;
+}
+
+.logs-subtab {
+  background: var(--bg);
+  border: 1px solid var(--border);
+  color: var(--text-muted);
+  border-radius: var(--radius-sm);
+  font-size: 0.8rem;
+  padding: 3px 9px;
+}
+
+.logs-subtab:hover:not(.active) {
+  color: var(--text);
+  background: var(--surface-hover);
+}
+
+.logs-subtab.active {
+  color: var(--accent);
+  border-color: var(--accent);
+  box-shadow: none;
+}
+
+/* ── Filters ── */
+
+.log-filters {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 7px;
+  align-items: center;
+  margin-bottom: 8px;
+}
+
+.log-filters select,
+.log-filters input[type="text"] {
+  width: auto;
+  padding: 4px 7px;
+  font-size: 0.82rem;
+}
+
+.log-check {
+  font-size: 0.84rem;
+  color: var(--text-muted);
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+}
+
+#log-day-status {
+  font-size: 0.82rem;
+  color: var(--text-muted);
+}
+
+/* ── The stream ── */
+
+.log-box {
+  flex: 1;
+  min-height: 0;
+  overflow-y: auto;
+  font-family: ui-monospace, SFMono-Regular, "SF Mono", Menlo, monospace;
+  font-size: 0.8rem;
+  background: var(--bg);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  padding: 5px;
+}
+
+.log-row {
+  display: flex;
+  gap: 7px;
+  align-items: baseline;
+  padding: 1px 4px;
+  border-radius: 3px;
+}
+
+.log-row:hover {
+  background: var(--surface-hover);
+}
+
+.log-time {
+  color: var(--text-muted);
+  flex-shrink: 0;
+  font-variant-numeric: tabular-nums;
+}
+
+.log-level {
+  font-weight: 700;
+  flex-shrink: 0;
+  width: 3.6em;
+  text-transform: uppercase;
+}
+
+.log-level.info,
+.log-level.debug {
+  color: var(--text-muted);
+}
+
+.log-level.debug {
+  opacity: 0.7;
+}
+
+.log-level.warn {
+  color: var(--color-yellow);
+}
+
+.log-level.error {
+  color: var(--color-red);
+}
+
+.log-src {
+  color: var(--accent);
+  flex-shrink: 0;
+}
+
+.log-msg {
+  color: var(--text);
+  word-break: break-word;
+  flex: 1;
+}
+
+.log-fold {
+  flex: 0 0 auto;
+  background: none;
+  border: none;
+  color: var(--text-muted);
+  padding: 0 3px;
+  font-size: 0.85rem;
+}
+
+.log-fold:hover:not(:disabled) {
+  background: none;
+  border: none;
+  color: var(--accent);
+}
+
+.log-detail pre {
+  max-height: 240px;
+  margin: 2px 0 4px 22px;
+  color: var(--text-muted);
+}
+
+/* ── Files browser ── */
+
+.logfile-group {
+  margin-bottom: 10px;
+}
+
+.logfile-src {
+  font-weight: 600;
+  font-size: 0.8rem;
+  color: var(--text-muted);
+  margin: 5px 0 3px;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+}
+
+.logfile-row {
+  display: flex;
+  justify-content: space-between;
+  gap: 8px;
+  padding: 4px 7px;
+  border-bottom: 1px solid var(--border);
+  cursor: pointer;
+  font-size: 0.84rem;
+}
+
+.logfile-row:hover {
+  background: var(--surface-hover);
+}
+
+.logfile-row.active {
+  background: var(--accent-border);
+}
+
+.lf-name {
+  color: var(--text);
+  word-break: break-all;
+}
+
+.lf-meta {
+  color: var(--text-muted);
+  font-size: 0.78rem;
+  white-space: nowrap;
+}
+
+.log-file-title {
+  font-size: 0.85rem;
+  color: var(--text);
+  word-break: break-all;
+}
+
+.log-file-view {
+  margin-top: 10px;
+  flex: 1;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+}
+
+.log-file-actions {
+  display: flex;
+  gap: 6px;
+  margin-bottom: 7px;
+}
+
+#log-file-list {
+  flex: 0 1 auto;
+  max-height: 45%;
+  overflow-y: auto;
+}
+
+#log-file-view > pre {
+  flex: 1;
+  min-height: 0;
+  max-height: none;
+}

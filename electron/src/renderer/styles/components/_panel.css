@@ -1,0 +1,100 @@
+/* The panel chrome every screen shares.
+ *
+ * DEVIATION FROM UPSTREAM: upstream's `.panel` bleeds to the window edge with
+ * `margin: calc(var(--gap) * -1)`, which assumes exactly one panel per screen.
+ * This app stacks up to eight panels in a tab, nests one inside the Dashboard's
+ * service column, and puts one inside each modal — all of which a negative
+ * margin would drag out of place. So panels stay cards here, and only the header
+ * rule treatment is carried over.
+ */
+
+.panel {
+  display: flex;
+  flex-direction: column;
+  min-height: 0;
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  padding: var(--gap);
+  margin-bottom: var(--gap);
+}
+
+.panel__header,
+.panel-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  flex-wrap: wrap;
+  padding-bottom: 10px;
+  margin-bottom: 12px;
+  border-bottom: 1px solid var(--border);
+}
+
+/* A second header inside one panel acts as an in-card section divider, so it gets
+   breathing room above it rather than sitting flush against the previous block.
+   (The old markup expressed this with an inline `margin-top`, which CSP blocks.) */
+.panel__header:not(:first-child),
+.panel-head:not(:first-child) {
+  margin-top: var(--gap);
+}
+
+.panel__title,
+.panel__header h3,
+.panel-head h3 {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  font-size: 1.02em;
+  font-weight: 600;
+  color: var(--text);
+}
+
+.panel__actions {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-wrap: wrap;
+}
+
+.panel__body {
+  padding: var(--gap);
+}
+
+.panel__body--flush {
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  min-height: 0;
+}
+
+/* Panels that own a scrolling region (Logs, Chat, Dashboard) opt out of the
+   default block flow so their inner scroll area can shrink correctly. */
+.panel--fill {
+  flex: 1;
+  min-height: 0;
+}
+
+/* ── Blocking error card for a panel whose data fetch failed ── */
+
+.panel-error {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 10px;
+  border: 1px solid var(--color-red);
+  border-left-width: 3px;
+  border-radius: var(--radius-sm);
+  padding: 8px 10px;
+  margin: 6px 0;
+  font-size: 0.9em;
+}
+
+.panel-error .pe-msg {
+  color: var(--color-red);
+  word-break: break-word;
+}
+
+.panel-error button {
+  flex: 0 0 auto;
+}

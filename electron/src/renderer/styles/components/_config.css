@@ -1,0 +1,207 @@
+/* Config: sectioned field editor, per-key source badges, the raw JSON editor and
+ * the LLM provider panel.
+ *
+ * Both vocabularies are styled: `.config-*` (the original markup) and `.cfg-*`
+ * (the field-level helpers). They were declared in two separate places in the old
+ * single stylesheet, which made it hard to tell which rule actually painted a
+ * given element — consolidated here.
+ */
+
+/* ── Raw JSON editor ── */
+
+#config-editor {
+  width: 100%;
+  min-height: 340px;
+  font-family: ui-monospace, SFMono-Regular, "SF Mono", Menlo, Consolas, monospace;
+  font-size: 0.85rem;
+  line-height: 1.45;
+  background: var(--bg);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  padding: 10px;
+  resize: vertical;
+  white-space: pre;
+}
+
+.config-actions {
+  display: flex;
+  gap: 8px;
+  margin-top: 10px;
+  flex-wrap: wrap;
+  align-items: center;
+}
+
+.config-src {
+  font-size: 0.85rem;
+  color: var(--text-muted);
+}
+
+.config-msg {
+  margin-top: 10px;
+  font-size: 0.88rem;
+}
+
+.config-msg.ok {
+  color: var(--color-green);
+}
+
+.config-msg.err {
+  color: var(--color-red);
+}
+
+/* ── Sectioned field editor ── */
+
+.config-fields {
+  display: flex;
+  flex-direction: column;
+  gap: 16px;
+  margin-top: 6px;
+}
+
+.config-section h4,
+.config-sec-head {
+  display: flex;
+  align-items: center;
+  gap: 5px;
+  font-size: 0.8rem;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+  color: var(--accent);
+  margin-bottom: 6px;
+  padding-bottom: 4px;
+  border-bottom: 1px solid var(--border);
+}
+
+.config-sec-head {
+  cursor: pointer;
+  user-select: none;
+}
+
+.config-sec-head:hover .caret {
+  color: var(--accent);
+}
+
+.config-section.collapsed .config-sec-body {
+  display: none;
+}
+
+.config-field {
+  display: grid;
+  grid-template-columns: 220px 1fr auto;
+  gap: 8px;
+  align-items: center;
+  padding: 5px 0;
+  border-bottom: 1px dashed var(--border);
+}
+
+.config-field:last-child {
+  border-bottom: none;
+}
+
+.cfg-label {
+  font-size: 0.85rem;
+  color: var(--text);
+  word-break: break-word;
+}
+
+.cfg-input-row {
+  display: flex;
+  gap: 5px;
+  align-items: center;
+  min-width: 0;
+}
+
+.cfg-input-row input,
+.cfg-input-row select {
+  width: 100%;
+  min-width: 0;
+  padding: 5px 7px;
+  font-size: 0.85rem;
+  font-family: ui-monospace, SFMono-Regular, "SF Mono", Menlo, monospace;
+  background: var(--bg);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+}
+
+.cfg-secret-toggle {
+  flex: 0 0 auto;
+  background: none;
+  border: none;
+  color: var(--text-muted);
+  padding: 0 3px;
+  font-size: 0.9rem;
+}
+
+.cfg-secret-toggle:hover:not(:disabled) {
+  background: none;
+  border: none;
+  color: var(--accent);
+}
+
+.cfg-source {
+  justify-self: end;
+  font-size: 0.72rem;
+  white-space: nowrap;
+}
+
+.cfg-source.env {
+  color: var(--color-yellow);
+  border-color: color-mix(in srgb, var(--color-yellow) 45%, transparent);
+}
+
+.cfg-source.default {
+  color: var(--text-muted);
+}
+
+.cfg-required {
+  display: inline-block;
+  margin-left: 5px;
+  padding: 1px 6px;
+  border-radius: 999px;
+  font-size: 0.68rem;
+  font-weight: 700;
+  color: var(--color-yellow);
+  border: 1px solid color-mix(in srgb, var(--color-yellow) 45%, transparent);
+}
+
+.config-field.cfg-required-field .cfg-input-row input {
+  border-color: color-mix(in srgb, var(--color-yellow) 45%, transparent);
+}
+
+/* ── LLM provider conditional section ── */
+
+.provider-panel {
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+  margin-top: 6px;
+  padding: 9px 11px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  background: var(--bg);
+}
+
+.provider-summary {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding-bottom: 6px;
+  margin-bottom: 4px;
+  border-bottom: 1px solid var(--border);
+}
+
+.provider-badge {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  font-size: 0.8rem;
+  font-weight: 600;
+  color: var(--accent);
+  white-space: nowrap;
+}
+
+.provider-hint {
+  font-size: 0.8rem;
+  color: var(--text-muted);
+}

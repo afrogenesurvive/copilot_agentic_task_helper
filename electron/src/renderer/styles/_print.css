@@ -1,0 +1,33 @@
+/* Print rules load last, so they win over every panel without `!important`.
+ *
+ * A dark theme printed as-is is a black page, so printing forces the light
+ * palette by overriding the tokens.
+ */
+
+@media print {
+  :root {
+    --bg: #ffffff;
+    --surface: #ffffff;
+    --surface-hover: #f6f8fa;
+    --border: #d0d7de;
+    --text: #1f2328;
+    --text-muted: #57606a;
+  }
+
+  .sidebar,
+  .status-bar,
+  .toast-stack,
+  .sidebar-resize-handle,
+  .panel__actions,
+  .toolbar {
+    display: none !important;
+  }
+
+  .app,
+  .app-body,
+  .app-main {
+    display: block;
+    height: auto;
+    overflow: visible;
+  }
+}
