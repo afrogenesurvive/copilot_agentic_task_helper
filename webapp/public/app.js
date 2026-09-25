@@ -26,6 +26,8 @@ const CONFIG = {
   FRONTDESK_AGENT_PUBKEY: "", // agent X25519 public key (encryption peer)
   LIST_ID_INPUT: "", // frontdesk_input (Trello degraded fallback)
   LIST_ID_OUTPUT: "", // frontdesk_output (Trello degraded fallback)
+  BOARD_ID: "", // the Trello board those lists live on
+  BOARD_NAME: "", // its display name (for the Account view)
   SESSION_TTL: 7200, // seconds
   POLL_INTERVAL: 10000,
   HEALTH_TIMEOUT: 4000,
@@ -97,6 +99,10 @@ async function loadConfig() {
     CONFIG.FRONTDESK_AGENT_PUBKEY = cfg.FRONTDESK_AGENT_PUBKEY || "";
     CONFIG.LIST_ID_INPUT = cfg.TRELLO_LIST_FRONTEDESK_INPUT || "";
     CONFIG.LIST_ID_OUTPUT = cfg.TRELLO_LIST_FRONTEDESK_OUTPUT || "";
+    // Board id/name come from safe/trello-boards.json via the backend's /api/config
+    // (the Netlify function serves them from the site env — see scripts/trello-boards-sync.mjs).
+    CONFIG.BOARD_ID = cfg.TRELLO_BOARD_ID || "";
+    CONFIG.BOARD_NAME = cfg.TRELLO_BOARD_NAME || "";
     if (cfg.FRONTDESK_SESSION_TTL) CONFIG.SESSION_TTL = parseInt(cfg.FRONTDESK_SESSION_TTL, 10);
   } catch (e) {
     console.error("Config load failed:", e);
@@ -380,6 +386,12 @@ function renderConnStatus() {
   if (badge) badge.title = conn.checkedAt ? `${msg} (${host})` : "";
   if (acctBackend) {
     acctBackend.textContent = conn.checkedAt ? `${host} · ${conn.ok ? "reachable" : `unreachable (${conn.error})`}` : "—";
+  }
+  // Which Trello board the frontdesk runs on — the webapp used to have no record of it.
+  const acctBoard = document.getElementById("acct-board");
+  if (acctBoard) {
+    if (CONFIG.BOARD_NAME) acctBoard.textContent = CONFIG.BOARD_ID ? `${CONFIG.BOARD_NAME} (${CONFIG.BOARD_ID})` : CONFIG.BOARD_NAME;
+    else acctBoard.textContent = CONFIG.LIST_ID_INPUT ? "not configured (list id present)" : "not configured";
   }
 }
 

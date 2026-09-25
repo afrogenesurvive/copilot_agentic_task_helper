@@ -25,9 +25,9 @@ preload bridge ([`electron/src/preload.js`](../electron/src/preload.js#L7)) as `
 | `logsClear()` | [`logs:clear`](../electron/src/main.js#L1105) | Clears the in-memory live buffer |
 | `onLogEntry(cb)` | `logs:entry` (push) | Live entries pushed from main via `webContents.send`; see [`main/logger.js`](../electron/src/main/logger.js#L1) |
 | `toolLog(lines?)` | [`logs:tool`](../electron/src/main.js#L1096) | `/tool-logs?lines=` result (legacy tool-call tail) |
-| `sessions()` | [`frontdesk:sessions`](../electron/src/main.js#L1109) | Last 200 frontdesk session entries || `notificationsList(opts)` | [`notifications:list`](../electron/src/main.js#L1417) | `{ok, items, counts}` — feed entries newest-first, filtered by `{source, level, search, unreadOnly, limit}`, plus per-source unread counts and the read marks. The store owns the feed (`logs/notifications/feed/*.jsonl`); the renderer only renders and acknowledges |
-| `notificationsRead(target)` | [`notifications:read`](../electron/src/main.js#L1422) | Acknowledge: `{source}` clears that source's dot, `{all: true}` clears every dot. Returns the new counts |
-| `notificationsClear()` | [`notifications:clear`](../electron/src/main.js#L1423) | Deletes every stored notification and resets the in-memory ring |
+| `sessions()` | [`frontdesk:sessions`](../electron/src/main.js#L1109) | Last 200 frontdesk session entries || `notificationsList(opts)` | [`notifications:list`](../electron/src/main.js#L1584) | `{ok, items, counts}` — feed entries newest-first, filtered by `{source, level, search, unreadOnly, limit}`, plus `counts` = `{total, bySource, read, sources, uncleared, clearedAt}`. `total` is the read-based unread count; `uncleared` is the menu-bar badge's counter (recorded since the last clear). The store owns the feed (`logs/notifications/feed/*.jsonl`); the renderer only renders and acknowledges |
+| `notificationsRead(target)` | [`notifications:read`](../electron/src/main.js#L1589) | Acknowledge: `{source}` clears that source's dot, `{all: true}` clears every dot. Returns the new counts. Does **not** touch the menu-bar badge |
+| `notificationsClear()` | [`notifications:clear`](../electron/src/main.js#L1592) | Deletes every stored notification, resets the in-memory ring, and repaints the menu-bar badge — this is the **only** thing that lowers it |
 | `onNotification(cb)` | `notifications:new` (push) | Each new entry as it is recorded — `{id, ts, source, level, title, body}`, `source` ∈ queue \| logs \| chat \| dashboard \| sessions \| scripts || `pkmCapabilities(registry?)` | [`pkm:capabilities`](../electron/src/main.js#L1322) | `{ok, data:{state, writable, reason, cli, doctor, actions, files, paths}}` — re-probes the key store. `state` ∈ `ready` \| `read-only` \| `blocklist-unreadable` \| `blocklist-missing` \| `store-missing` \| `cli-missing` \| `cli-broken`; `actions` holds a per-command verdict. Every disabled control on the Key Manager tab is painted from this |
 | `pkmStatus(registry?)` | [`pkm:status`](../electron/src/main.js#L1323) | `{ok, data:{present, pkmRepo, pkmBin, storeRoot, indexFile, registry, registries:[{id,name,app,engine,defaultKid,rings,seats,revoked,verifierTargets}], entry, loosePermissions, authorityPublicKey, timeoutMs, capabilities}}`. `registry` defaults to `PKM_REGISTRY` (config.json/.env) |
 | `pkmList(registry?, days?)` | [`pkm:list`](../electron/src/main.js#L1325) | `{ok, data:{registry, days, counts, archived, rows:[{sub,kid,exp,expUtc,issuedAt,enc,status,daysLeft}]}}`. Note `check-exp` archives already-expired records as a side effect |
@@ -71,8 +71,8 @@ preload bridge ([`electron/src/preload.js`](../electron/src/preload.js#L7)) as `
 | `setTheme(theme)` | [`app:setTheme`](../electron/src/main.js#L1264) | Persists `APPEARANCE_THEME` to `config.json` (or `.env` fallback), applies it, returns appearance info |
 | `setAppearance(patch)` | [`app:setAppearance`](../electron/src/main.js#L1264) | Applies + persists any subset of `{theme, accentColor, fontSize}` (`APPEARANCE_THEME` / `APPEARANCE_ACCENT_COLOR` / `APPEARANCE_FONT_SIZE`); blank accent clears the override. Returns appearance info |
 | `quit()` | [`app:quit`](../electron/src/main.js#L1265) | Quit the app (main `before-quit` stops all services) |
-| `trayOpenDashboard()` | [`tray:openDashboard`](../electron/src/main.js#L1760) | Show + focus the dashboard (rebuilding or un-minimising it as needed) and dismiss the menu-bar panel. Used by the panel's button and its health pill |
-| `trayHide()` | [`tray:hidePopover`](../electron/src/main.js#L1764) | Dismiss the menu-bar popover (Escape in the panel) |
+| `trayOpenDashboard()` | [`tray:openDashboard`](../electron/src/main.js#L1928) | Show + focus the dashboard (rebuilding or un-minimising it as needed) and dismiss the menu-bar panel. Used by the panel's button and its health pill |
+| `trayHide()` | [`tray:hidePopover`](../electron/src/main.js#L1932) | Dismiss the menu-bar popover (Escape in the panel) |
 | `accountsList()` | [`accounts:list`](../electron/src/main.js#L1162) | `{ok, rows:[{sub, googleConnected, googleUser, trelloConfigured}]}` |
 | `accountsConnectGoogle(sub)` | [`accounts:connectGoogle`](../electron/src/main.js#L1177) | Runs loopback OAuth for the seat → binds Google account |
 | `accountsSetTrello(sub, key, token)` | [`accounts:setTrello`](../electron/src/main.js#L1178) | Stores a seat's Trello credentials |
@@ -94,7 +94,7 @@ preload bridge ([`electron/src/preload.js`](../electron/src/preload.js#L7)) as `
 | `chatDecide(token, approved, editedArgs?)` | [`chat:decide`](../electron/src/main.js#L1229) | Approve/Deny a proposed tool call (optional edited JSON args) |
 | `chatStop(id)` | [`chat:stop`](../electron/src/main.js#L1240) | Stop the running agent loop for a session |
 | `onChatStep(cb)` | `chat:step` (push) | Live chat entries + approval requests (see [`preload.js`](../electron/src/preload.js#L1)) |
-| `onTrayRefresh(cb)` | `tray:refresh` (push) | Sent by main every time the menu-bar popover is shown, so the panel re-reads its four values instead of polling (see [`electron/src/renderer/tray.js`](../electron/src/renderer/tray.js#L1)) |
+| `onTrayRefresh(cb)` | `tray:refresh` (push) | Sent by main every time the menu-bar popover is shown, so the panel re-reads its pills, lists and uncleared count instead of polling (see [`electron/src/renderer/tray.js`](../electron/src/renderer/tray.js#L1)) |
 
 ## Security notes
 

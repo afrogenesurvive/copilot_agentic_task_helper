@@ -2274,6 +2274,7 @@
     { key: "TRELLO_KEY", label: "Trello API Key", section: "Trello", secret: true },
     { key: "TRELLO_TOKEN", label: "Trello Token", section: "Trello", secret: true },
     { key: "TRELLO_BOARD_ID", label: "Board ID", section: "Trello", secret: false },
+    { key: "TRELLO_BOARD_NAME", label: "Board Name (display only)", section: "Trello", secret: false },
     { key: "TRELLO_LIST_FRONTEDESK_INPUT", label: "Frontdesk Input List ID", section: "Trello", secret: false },
     { key: "TRELLO_LIST_FRONTEDESK_OUTPUT", label: "Frontdesk Output List ID", section: "Trello", secret: false },
     { key: "TRELLO_LIST_SESSION_LOGS", label: "Session Logs List ID", section: "Trello", secret: false },
@@ -2388,6 +2389,9 @@
     dirty: new Set(),
     raw: false,
     filter: "",
+    // safe/trello-boards.json as main sees it (boards, resolved frontdesk lists, and
+    // which env keys drift from the file). Rendered at the top of the Trello section.
+    trelloBoards: null,
     // Which Google account the OPERATOR refresh token belongs to (google:status),
     // shown above the Gmail / Google fields next to the remint button.
     google: { connected: false, user: null },
@@ -2533,10 +2537,58 @@
     );
   }
 
+  /**
+   * Inner HTML for the Trello section: the `safe/trello-boards.json` readout, then
+   * the fields themselves.
+   *
+   * The board/list ids used to be maintained by hand here AND in the file AND in the
+   * Netlify UI. The map is the source of truth now (shared/trello-boards.mjs), so the
+   * section shows what it says and offers to adopt it; `scripts/trello-boards-sync.mjs`
+   * does the same headless.
+   */
+  function trelloMapBodyHTML() {
+    const b = configState.trelloBoards || { present: false, boards: {}, lists: {}, drift: [], projected: {}, frontdesk: { other: [] } };
+    const projected = b.projected || {};
+    const rows = Object.entries(b.boards || {})
+      .map(([name, id]) => {
+        const isFrontdesk = b.frontdesk && b.frontdesk.board === name;
+        const listTxt = Object.entries((b.lists && b.lists[name]) || {})
+          .map(([ln, lid]) => `${esc(ln)} → <code>${esc(lid)}</code>`)
+          .join(" · ");
+        return (
+          `<div class="board-row"><strong>${esc(name)}</strong> <code>${esc(id)}</code>${isFrontdesk ? ' <span class="tag valid">frontdesk</span>' : ""}` +
+          (listTxt ? `<div class="board-lists">${listTxt}</div>` : "") +
+          `</div>`
+        );
+      })
+      .join("");
+    const drift = (b.drift || [])
+      .map((d) => `<li><code>${esc(d.key)}</code> — file <code>${esc(d.file)}</code>, currently <code>${esc(d.current || "(empty)")}</code></li>`)
+      .join("");
+    return (
+      `<div class="board-map">` +
+      `<div class="provider-summary"><span class="provider-badge">Board map</span>` +
+      `<span class="provider-hint">${b.present ? `safe/trello-boards.json` : `<b>not found</b> (gitignored — absent on a fresh checkout)`}` +
+      (b.file ? ` — <code>${esc(b.file)}</code>` : "") +
+      (b.error ? ` — <b>${esc(b.error)}</b>` : "") +
+      `</span></div>` +
+      (rows ? `<div class="board-rows">${rows}</div>` : `<div class="provider-hint">No boards listed.</div>`) +
+      (drift
+        ? `<div class="provider-hint">Out of sync with the file:<ul class="board-drift">${drift}</ul></div>`
+        : `<div class="provider-hint">Every id below matches the board map.</div>`) +
+      `<div><button id="trello-map-fill"${Object.keys(projected).length ? "" : " disabled"}>Use board map values</button>` +
+      `<div class="provider-hint" id="trello-map-status">Fills the id fields from the file so you can review, then press Save. ` +
+      `The same reconciliation runs headless: <code>node scripts/trello-boards-sync.mjs --apply</code>.</div></div>` +
+      `</div>` +
+      configSectionFields("Trello").map(configFieldHTML).join("")
+    );
+  }
+
   /** Inner HTML for one section — the fields themselves, with no wrapper. */
   function configBodyHTML(name) {
     if (name === "LLM Provider") return llmProviderBodyHTML();
     if (name === "Gmail / Google") return googleOperatorBodyHTML();
+    if (name === "Trello") return trelloMapBodyHTML();
     return configSectionFields(name).map(configFieldHTML).join("");
   }
 
@@ -2668,6 +2720,28 @@
     );
     const googleBtn = $("google-connect");
     if (googleBtn) googleBtn.addEventListener("click", runGoogleConnect);
+    // Adopt safe/trello-boards.json's ids into the fields (reviewed, then Saved —
+    // this never writes on its own, so a surprising file cannot silently reconfigure
+    // the operator).
+    const mapFill = wrap.querySelector("#trello-map-fill");
+    if (mapFill)
+      mapFill.addEventListener("click", () => {
+        const projected = (configState.trelloBoards && configState.trelloBoards.projected) || {};
+        let filled = 0;
+        for (const [key, value] of Object.entries(projected)) {
+          if (!CONFIG_FIELDS.some((f) => f.key === key)) continue;
+          if (!configState.values[key]) configState.values[key] = { value: "", source: "default" };
+          configState.values[key].value = value;
+          configState.dirty.add(key);
+          filled += 1;
+        }
+        renderConfigForm();
+        const note = $("trello-map-status");
+        if (note) note.textContent = filled
+          ? `${filled} field(s) filled from the board map — review, then press Save.`
+          : "The board map has no values this section can use.";
+        renderConfigMeta();
+      });
     renderConfigMeta();
   }
 
@@ -2712,6 +2786,7 @@
         status.innerHTML = `<span class="tag expired">⚠️ no config.json</span><span class="config-src">falling back to <code>.env</code> — press <b>Save</b> to create config.json from edited values</span>`;
       }
       configState.values = c.values || {};
+      configState.trelloBoards = c.trelloBoards || null;
     } else {
       status.innerHTML = `<span class="tag expired">⚠️ config unavailable</span>`;
     }
@@ -3402,6 +3477,11 @@
       const stick = el.scrollTop + el.clientHeight >= el.scrollHeight - 40;
       el.textContent = arr.join("\n");
       if (stick) el.scrollTop = el.scrollHeight;
+      // This writes the <pre> in place rather than re-rendering the card, so the
+      // Clear button's disabled state (baked in at first paint, when the buffer
+      // was still empty) has to be refreshed by hand or it never un-disables.
+      const clear = el.closest(".script-card")?.querySelector("[data-clearout]");
+      if (clear) clear.disabled = false;
     }
   }
 
@@ -3479,11 +3559,15 @@
     const argsBox = hasForm
       ? `<input class="script-args script-extra" data-sfextra="1" placeholder="extra args: --verbose  |  or [&quot;--verbose&quot;]" spellcheck="false"/>`
       : `<input class="script-args" placeholder="args: --dry-run -i i-0abc123  |  or [&quot;--dry-run&quot;,&quot;-i&quot;,&quot;i-0abc123&quot;]" spellcheck="false"/>`;
+    // Clearing is renderer-only: renderScriptsList() repaints the <pre> from
+    // scriptState.outputs, so dropping the buffer is the whole operation.
+    const hasOut = (scriptState.outputs[s.name] || []).length > 0;
     const controls = `
         <div class="script-controls">
           ${argsBox}
           <button class="run-btn" data-run="${escAttr(s.name)}" ${run ? "disabled" : ""}>${iconLabel("play", 13, "Run")}</button>
           <button class="stop-btn" data-stop="${escAttr(s.name)}" ${run ? "" : "disabled"}>${iconLabel("stop", 13, "Stop")}</button>
+          <button class="script-clear" data-clearout="${escAttr(s.name)}" ${hasOut ? "" : "disabled"} title="Clear this script's output">${iconLabel("trash", 13, "Clear")}</button>
         </div>`;
     const form = hasForm
       ? `<div class="script-form">${[...(s.manifest.positionals || []), ...(s.manifest.params || [])].map((p) => scriptFieldHTML(s, p)).join("")}</div>`
@@ -3591,6 +3675,12 @@
         await api.scriptsStop(name);
         appendScriptOutput(name, "■ stopped by user\n");
         scriptState.runs = scriptState.runs.filter((r) => r.script !== name);
+        renderScriptsList();
+      });
+    const clearBtn = card.querySelector("[data-clearout]");
+    if (clearBtn)
+      clearBtn.addEventListener("click", () => {
+        delete scriptState.outputs[name];
         renderScriptsList();
       });
     card.querySelectorAll("[data-browsetarget]").forEach((btn) =>

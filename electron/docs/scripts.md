@@ -73,7 +73,8 @@ A bar at the top shows which tools are available on this machine and whether AWS
   In form mode the same box is still present as **extra args** — anything you type there is
   appended verbatim after the assembled flags.
 
-- **▶ Run** and **■ Stop** buttons.
+- **▶ Run**, **■ Stop** and **🗑 Clear** buttons. **Clear** empties this card's output pane only
+  (other cards keep theirs) and is disabled while there is nothing buffered.
 - An **output** pane below the controls (buffered, auto-scrolling) showing the script's stdout.
 
 ## UI manifests (`<name>.params.json`)
@@ -145,7 +146,10 @@ root with the current config environment, so scripts should load credentials thr
   because the spawned process has **no stdin** — its `read` confirmation prompt would otherwise
   wait forever.
 - Long runners: `git-gc-all.sh` can take hours across every repo, and the output pane keeps only
-  the **last 1000 lines**. Write a log file (or `--heartbeat-file`) when you need the full record.
+  the **last 2000 lines** in the renderer (the main process keeps the last 1000 per run for the
+  completion notification). Write a log file (or `--heartbeat-file`) when you need the full record.
+  Clearing the pane does not touch those files — the durable record is `logs/live/` plus the
+  notification feed.
 - `master_cleanup.sh` writes its default log to `scripts/user/safe/logs/` (inside the ignored
   folder) unless you set the **Log file** field.
 

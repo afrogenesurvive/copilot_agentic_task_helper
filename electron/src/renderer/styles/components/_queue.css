@@ -136,6 +136,26 @@
   min-width: 104px;
 }
 
+/* A non-auto flex-basis, NOT `width`.
+
+   The shared rule in _form-fields.css is `input:not([type]):not(...):not(...):not(...)`
+   — four attribute selectors inside :not(), so specificity (0,4,1). This class is
+   (0,1,0), and a losing declaration is only neutralised when a competing one sets
+   the SAME property, so the shared `width: 100%` keeps winning and every
+   `.q-search` field claims a whole line of the wrapping `.panel__actions` row.
+
+   flex-basis is not part of that specificity contest: a non-auto basis supplies the
+   initial main size and the `width` property is ignored for flex items. This covers
+   the Queue search boxes, the two Notifications <select>s (which reuse this class),
+   and the Sessions / Config search inputs.
+
+   min-width MUST stay below the basis so the row can absorb shrink: `.panel__actions`
+   is a flex item of `.panel__header`, so on a narrow window the fields give a little
+   width back rather than forcing the last control onto a second line.
+
+   No flex-grow: the actions box now takes the header's slack, and growing on top of
+   that stretched the Queue search box to 616px. */
 .q-search {
-  min-width: 150px;
+  min-width: 120px;
+  flex: 0 1 200px;
 }

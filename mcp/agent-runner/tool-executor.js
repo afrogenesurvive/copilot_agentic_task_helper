@@ -15,6 +15,7 @@ config.loadEnvInto(process.env);
 import { getSeatAccounts } from "../../scripts/frontdesk-accounts.mjs";
 import { searchDuckDuckGo, fetchPage } from "../../shared/web-tools.mjs";
 import { sanitizeObject } from "../../scripts/sanitize.stub.mjs";
+import { normalizeTrelloArgs } from "../../shared/trello-boards.mjs";
 import fs from "fs";
 import path from "path";
 import { fileURLToPath } from "url";
@@ -502,6 +503,15 @@ export async function executeToolCall(toolName, args, options = {}) {
     return { ok: false, tool: toolName, error: `No handler registered for "${toolName}"` };
   }
 
+  // Names → ids. The model can pass `boardName`/`listName` from safe/trello-boards.json
+  // instead of a 24-hex id; an unknown name is refused here rather than sent to Trello
+  // as a bogus id (which came back as an opaque 404). Raw ids pass through untouched.
+  const norm = normalizeTrelloArgs(args, { defaultBoard: toolName === "trello_get_lists" });
+  if (norm.error) {
+    return { ok: false, tool: toolName, error: norm.error };
+  }
+  const callArgs = norm.args;
+
   // Resolve per-seat account credentials (gates which Google/Trello account the
   // agent uses when acting for a frontdesk seat). null → default .env.
   const seat = options.sub ? getSeatAccounts(options.sub) : null;
@@ -513,7 +523,7 @@ export async function executeToolCall(toolName, args, options = {}) {
   console.log(`   🔧 [EXECUTOR] Executing ${toolName}...`);
 
   try {
-    const result = await handler(args, { sub: options.sub || null, isFrontdesk });
+    const result = await handler(callArgs, { sub: options.sub || null, isFrontdesk });
     console.log(`   ✅ [EXECUTOR] ${toolName} succeeded`);
     return sanitizeToolResult(toolName, result);
   } catch (err) {
@@ -534,7 +544,9 @@ export async function executeToolCall(toolName, args, options = {}) {
  * operator chat, the agent runner, and the webhook server's inline `execute`.
  *
  * Only `result` is touched, never `args` — arguments go straight to an external
- * API and must be sent exactly as the model wrote them.
+ * API and must be sent exactly as the model wrote them. (The one transformation that
+ * does happen is in executeToolCall, before the handler: a Trello board/list NAME is
+ * resolved to its id. An id the model supplied is never rewritten.)
  */
 function sanitizeToolResult(toolName, result) {
   if (!result || typeof result !== "object" || result.result === undefined || result.result === null) return result;

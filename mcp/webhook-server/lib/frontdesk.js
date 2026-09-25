@@ -44,6 +44,7 @@ const FRONTDESK_DIR = path.join(ROOT, "logs", "frontdesk");
 const INPUT_DIR = path.join(FRONTDESK_DIR, "input");
 const OUTPUT_DIR = path.join(FRONTDESK_DIR, "output");
 const SESSION_DIR = path.join(FRONTDESK_DIR, "sessions");
+const CRYPTO_DIR = path.join(FRONTDESK_DIR, "crypto");
 const SEATS_FILE = path.join(FRONTDESK_DIR, "seats.json");
 
 const SESSION_TTL_MS = parseInt(process.env.FRONTDESK_SESSION_TTL || "7200", 10) * 1000;
@@ -66,6 +67,49 @@ function appendJsonl(dir, entry) {
   } catch (err) {
     console.error(`   ❌ [FRONTDESK] Failed to append ${dir}: ${err.message}`);
   }
+}
+
+/**
+ * Crypto audit trail — one line per licence verify, envelope decrypt, reply encrypt and
+ * session check.
+ *
+ * Both halves matter, so neither is optional:
+ *   - logs/frontdesk/crypto/YYYY-MM-DD.jsonl is the DURABLE trail. It survives live-log
+ *     rotation and is browsable in the operator's Logs → Files view.
+ *   - the logger call is what puts the event in Logs → Live and lets the notification
+ *     producers raise it (level "error" notifies automatically).
+ *
+ * Before this existed, nothing about crypto was logged: every failure path returned a
+ * reason string to the HTTP caller and dropped it, so a failed login (or the 2026-09-24
+ * class of silently-undeliverable replies) left NO trace in any file. The HTTP
+ * middleware logs at `debug`, which `LOG_LEVEL=info` filters out.
+ *
+ * NEVER put the license key, the seat keys blob, the agent private key or the message
+ * plaintext in here. `sub`, `id`, `reason` and the direction flags are what the operator
+ * needs to see.
+ *
+ * @param {{event:string, ok:boolean, level?:string, sub?:string, reason?:string, direction?:string, id?:string, route?:string}} entry
+ */
+export function cryptoAudit({ event, ok, level, sub, reason, direction, id, route } = {}) {
+  const lvl = level || (ok ? "info" : "warn");
+  const ts = new Date().toISOString();
+  appendJsonl(CRYPTO_DIR, {
+    ts,
+    event,
+    ok: !!ok,
+    ...(sub ? { sub } : {}),
+    ...(reason ? { reason } : {}),
+    ...(direction ? { direction } : {}),
+    ...(id ? { id } : {}),
+    ...(route ? { route } : {}),
+  });
+  logEvent({
+    source: "frontdesk",
+    subSource: "crypto",
+    level: lvl,
+    message: `${event} ${ok ? "ok" : "FAILED"}${sub ? ` — ${sub}` : ""}${reason ? ` (${reason})` : ""}${route ? ` @ ${route}` : ""}`,
+    data: { event, ok: !!ok, sub: sub || null, reason: reason || null, direction: direction || null, id: id || null, route: route || null },
+  });
 }
 
 /* ── Seat registry (persisted so replies can be encrypted after restart) ────── */
@@ -106,16 +150,29 @@ function cleanupExpired() {
 /** Verify a license and issue a session token. Returns { ok, token?, sub?, ... } or { ok:false, reason }. */
 export function verifyLogin(license) {
   cleanupExpired();
-  if (!license || typeof license !== "string") return { ok: false, reason: "license_required" };
+  if (!license || typeof license !== "string") {
+    cryptoAudit({ event: "login_verify", ok: false, reason: "license_required", route: "/api/license/verify" });
+    return { ok: false, reason: "license_required" };
+  }
   const res = verifyLicenseKey(license.trim());
-  if (!res.ok) return { ok: false, reason: res.reason };
-  if (!res.encReady) return { ok: false, reason: "no_enc_key" };
+  if (!res.ok) {
+    // One of: malformed, bad_signature, revoked_seat, expired, unknown_kid,
+    // retired_kid, app_mismatch, key_mismatch. This is the call that used to leave no
+    // trace at all — a bad licence was a silent 401.
+    cryptoAudit({ event: "login_verify", ok: false, reason: res.reason, route: "/api/license/verify" });
+    return { ok: false, reason: res.reason };
+  }
+  if (!res.encReady) {
+    cryptoAudit({ event: "login_verify", ok: false, sub: res.claims.sub, reason: "no_enc_key", route: "/api/license/verify" });
+    return { ok: false, reason: "no_enc_key" };
+  }
 
   const token = crypto.randomBytes(24).toString("hex");
   const now = Date.now();
   sessions.set(token, { sub: res.claims.sub, enc: res.claims.enc, pub: res.claims.pub, createdAt: now, expiresAt: now + SESSION_TTL_MS });
   saveSeat(res.claims.sub, res.claims.enc, res.claims.pub);
 
+  cryptoAudit({ event: "login_verify", ok: true, sub: res.claims.sub, route: "/api/license/verify" });
   console.log(`   🔑 [FRONTDESK] Login: "${res.claims.sub}" — session ${SESSION_TTL_MS / 60000}m`);
   return {
     ok: true,
@@ -134,6 +191,22 @@ export function getSession(token) {
   return sessions.get(token) || null;
 }
 
+/**
+ * Audit a rejected frontdesk session, then answer 401.
+ *
+ * Every frontdesk route except the licence check needs a session token, so a 401 here
+ * is an authentication event (an expired/forged/absent token) rather than a routine
+ * miss — and it used to be recorded nowhere.
+ *
+ * @param {string} route the endpoint that rejected it
+ * @param {import("express").Response} res
+ * @param {{reason?:string}} [opts]
+ */
+export function rejectSession(route, res, { reason = "invalid_session" } = {}) {
+  cryptoAudit({ event: "session_check", ok: false, reason, route });
+  return res.status(401).json({ ok: false, error: reason });
+}
+
 /* ── Send (frontdesk → agent) ──────────────────────────────────────────────── */
 
 /**
@@ -146,13 +219,16 @@ export function getSession(token) {
  * @param {object} flags — extra event data (e.g. _direct / _degraded)
  */
 function processIncoming(sub, enc, envelope, auditSource, flags = {}) {
+  const direction = flags._degraded ? "degraded" : "direct";
   if (!envelope || !envelope.iv || !envelope.tag || !envelope.ct) {
+    cryptoAudit({ event: "inbound_decrypt", ok: false, sub, reason: "missing_or_invalid_envelope", direction });
     return { ok: false, error: "missing_or_invalid_envelope" };
   }
   let agentKeys;
   try {
     agentKeys = loadAgentKeys();
   } catch (err) {
+    cryptoAudit({ event: "agent_key_load", ok: false, sub, reason: err.message, direction });
     return { ok: false, error: err.message };
   }
 
@@ -162,6 +238,9 @@ function processIncoming(sub, enc, envelope, auditSource, flags = {}) {
   try {
     plaintext = decryptAes(envelope, key);
   } catch {
+    // A failure here means the envelope was not encrypted for this seat (or was
+    // tampered with) — worth a notification, not just a log line.
+    cryptoAudit({ event: "inbound_decrypt", ok: false, level: "error", sub, reason: "decrypt_failed", direction });
     return { ok: false, error: "decrypt_failed" };
   }
 
@@ -189,6 +268,7 @@ function processIncoming(sub, enc, envelope, auditSource, flags = {}) {
 
   const id = crypto.randomBytes(8).toString("hex");
   appendJsonl(INPUT_DIR, { id, ts, sub, text: data.text });
+  cryptoAudit({ event: "inbound_decrypt", ok: true, sub, direction, id });
   logEvent({ source: "frontdesk", subSource: "send", level: "info", message: `incoming from ${sub}`, data: { sub, id } });
 
   const event = {
@@ -221,8 +301,15 @@ export function sendMessage(session, envelope) {
  */
 export function ingestDegradedEnvelope(certB64u, sigB64u, envelope) {
   const vc = verifyCert(certB64u, sigB64u);
-  if (!vc.ok) return { ok: false, error: vc.reason };
-  if (!vc.claims.enc) return { ok: false, error: "no_enc_key" };
+  if (!vc.ok) {
+    cryptoAudit({ event: "degraded_verify", ok: false, reason: vc.reason });
+    return { ok: false, error: vc.reason };
+  }
+  if (!vc.claims.enc) {
+    cryptoAudit({ event: "degraded_verify", ok: false, sub: vc.claims.sub, reason: "no_enc_key" });
+    return { ok: false, error: "no_enc_key" };
+  }
+  cryptoAudit({ event: "degraded_verify", ok: true, sub: vc.claims.sub, direction: "degraded" });
   return processIncoming(vc.claims.sub, vc.claims.enc, envelope, "frontdesk/degraded", { _degraded: true });
 }
 
@@ -236,12 +323,19 @@ export function ingestDegradedEnvelope(certB64u, sigB64u, envelope) {
 export function postReply({ sub, text }) {
   if (!sub || typeof text !== "string" || !text.trim()) return { ok: false, error: "sub_and_text_required" };
   const enc = getSeatEnc(sub);
-  if (!enc) return { ok: false, error: `unknown_seat:${sub}` };
+  if (!enc) {
+    // The 2026-09-24 failure mode: the reply was dropped because this seat had no
+    // registered X25519 key (e.g. the server restarted and nobody had logged in), and
+    // nothing anywhere said so.
+    cryptoAudit({ event: "outbound_encrypt", ok: false, sub, reason: "unknown_seat" });
+    return { ok: false, error: `unknown_seat:${sub}` };
+  }
 
   let agentKeys;
   try {
     agentKeys = loadAgentKeys();
   } catch (err) {
+    cryptoAudit({ event: "outbound_encrypt", ok: false, level: "error", sub, reason: err.message });
     return { ok: false, error: err.message };
   }
 
@@ -252,6 +346,7 @@ export function postReply({ sub, text }) {
   const id = crypto.randomBytes(8).toString("hex");
 
   appendJsonl(OUTPUT_DIR, { id, sub, ts, envelope });
+  cryptoAudit({ event: "outbound_encrypt", ok: true, sub, id });
   console.log(`   📨 [FRONTDESK] Reply to "${sub}": "${String(safe).slice(0, 60)}" (encrypted)`);
   logEvent({ source: "frontdesk", subSource: "reply", level: "info", message: `reply to ${sub}`, data: { sub, id } });
   return { ok: true, id, ts };

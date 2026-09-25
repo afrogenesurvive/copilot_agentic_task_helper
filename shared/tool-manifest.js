@@ -15,15 +15,16 @@
 export const trelloTools = [
   {
     name: "trello_create_card",
-    description: "Create a new Trello card in a list",
+    description: "Create a new Trello card in a list. Pass listId, or listName for a list in safe/trello-boards.json (e.g. \"frontdesk_output\").",
     inputSchema: {
       type: "object",
       properties: {
         listId: { type: "string", description: "ID of the list to create the card in" },
+        listName: { type: "string", description: "Alternative to listId: a list name from safe/trello-boards.json (e.g. frontdesk_input, frontdesk_output)" },
         name: { type: "string", description: "Card title" },
         desc: { type: "string", description: "Card description (optional)" },
       },
-      required: ["listId", "name"],
+      required: ["name"],
     },
   },
   {
@@ -39,13 +40,14 @@ export const trelloTools = [
   },
   {
     name: "trello_list_cards",
-    description: "List all cards in a Trello list",
+    description: "List all cards in a Trello list. Pass listId, or listName for a list in safe/trello-boards.json.",
     inputSchema: {
       type: "object",
       properties: {
         listId: { type: "string", description: "List ID" },
+        listName: { type: "string", description: "Alternative to listId: a list name from safe/trello-boards.json (e.g. frontdesk_input)" },
       },
-      required: ["listId"],
+      required: [],
     },
   },
   {
@@ -71,20 +73,21 @@ export const trelloTools = [
         desc: { type: "string", description: "New description (optional)" },
         pos: { type: "string", description: "Position: 'top', 'bottom', or a number (optional)" },
         closed: { type: "boolean", description: "Archive/unarchive card (optional)" },
-        idList: { type: "string", description: "Move card to a different list by providing the target list ID (optional)" },
+        idList: { type: "string", description: "Move card to a different list — the target list ID, or a list name from safe/trello-boards.json (optional)" },
       },
       required: ["cardId"],
     },
   },
   {
     name: "trello_get_lists",
-    description: "Get all lists on a Trello board",
+    description: "Get all lists on a Trello board. Pass boardId, or boardName for a board in safe/trello-boards.json (e.g. \"Two Dew Liszt\") — or neither, for the frontdesk board.",
     inputSchema: {
       type: "object",
       properties: {
         boardId: { type: "string", description: "Board ID" },
+        boardName: { type: "string", description: "Alternative to boardId: a board name from safe/trello-boards.json (e.g. Two Dew Liszt)" },
       },
-      required: ["boardId"],
+      required: [],
     },
   },
   {
@@ -140,14 +143,15 @@ export const trelloTools = [
   },
   {
     name: "trello_create_list",
-    description: "Create a new list on a Trello board",
+    description: "Create a new list on a Trello board. Pass boardId, or boardName for a board in safe/trello-boards.json.",
     inputSchema: {
       type: "object",
       properties: {
         boardId: { type: "string", description: "Board ID to create the list on" },
+        boardName: { type: "string", description: "Alternative to boardId: a board name from safe/trello-boards.json" },
         name: { type: "string", description: "List name" },
       },
-      required: ["boardId", "name"],
+      required: ["name"],
     },
   },
 ];

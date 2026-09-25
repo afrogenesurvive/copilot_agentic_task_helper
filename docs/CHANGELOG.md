@@ -1,5 +1,80 @@
 # Changelog
 
+## [0.4.1-2] — 2026-09-24
+
+### The menu-bar panel is tabbed, resizable, and carries an uncleared count
+
+The panel was four read-only pills and five priority rows in a fixed 340×440 window. It is now a small
+console:
+
+- **Three tabs** — Services, Queues and Notifications. **Queues** has Priority and Misc sub-tabs, and the
+  **Notifications** tab lists the feed with a red count on the tab itself. The four status pills stay
+  above the tabs, so "is the stack alive?" still needs no click.
+- **Resizable**, and the size is remembered. Every list scrolls, so nothing is truncated at the old five
+  rows any more.
+- **A red count on the menu-bar icon** — the notifications recorded since you last pressed **Clear** in
+  the Notifications tab, capped at `9+`. Opening the panel does *not* clear it: a badge that disappears
+  the moment you glance at it cannot tell you there is something to deal with.
+
+Two fixes came out of the restructure: the panel never linked the stylesheets its pills, buttons and
+notification chips are actually defined in (the pills were rendering unstyled), and painting the health
+pill deleted its own status dot on the first frame.
+
+## [0.4.1-1] — 2026-09-24
+
+### Filter rows, one source of truth for Trello ids, a crypto audit trail, a menu-bar endpoint, clearable script output
+
+Five pieces of work, all operator-facing.
+
+**1. The Queue and Notifications filter fields no longer stack in a column.**
+
+Two bugs behind one symptom. The shared input rule is
+`input:not([type="checkbox"]):not([type="radio"]):not([type="range"]):not([type="color"])` — four
+attribute selectors inside `:not()`, so specificity `(0,4,1)`. `.q-search` is `(0,1,0)`, and losing a
+declaration only stops it applying when a competing rule sets the **same property**, so the shared
+`width: 100%` kept winning and every field claimed a whole line of the wrapping `.panel__actions` row.
+`width: auto` therefore cannot fix it; a non-auto `flex-basis` can, because a flex item's basis
+overrides `width` for its main size. The second bug: a wrapping flex row's intrinsic width **does not
+include its gaps**, so a content-sized `.panel__actions` came out exactly one gap-sum too narrow and
+pushed the last control onto a second line — it now grows into the slack the header's `space-between`
+was leaving unused. Fixes Queue, Notifications, Sessions, Config and the Logs filter row.
+
+**2. Trello board and list ids have one source of truth.**
+
+They were hand-maintained in three places: `safe/trello-boards.json` (read by a single user script),
+`TRELLO_*` in `config.json`/`.env`, and the Netlify site env. `shared/trello-boards.mjs` is now the
+reader for everyone, `scripts/trello-boards-sync.mjs` reports drift and can write both the local config
+and the Netlify env, `GET /api/config` resolves the ids from the file (env fallback), the Config tab
+shows what the file says with a **Use board map values** button, and the Trello MCP tools accept
+`boardName`/`listName` — the agent used to guess raw ids because it had no way to look a board up.
+`TRELLO_BOARD_ID` was the one key that had never been populated on any host; the webapp's Account view
+now shows the board it is talking to.
+
+**3. Frontdesk encryption and decryption are audited.**
+
+They were not logged at all: every failure path returned a reason to the caller and dropped it, and the
+HTTP middleware logs at `debug`, which `LOG_LEVEL=info` filters out — so a failed sign-in left no trace
+in any file. Every licence verify, envelope decrypt, reply encrypt, degraded `[fd1]` verify and rejected
+session now writes to `logs/frontdesk/crypto/YYYY-MM-DD.jsonl` and to `logs/live` as a `frontdesk/crypto`
+line (success `info`, auth rejection `warn`, decrypt/encrypt failure `error`), and failures raise a
+notification — throttled, because the licence route is public. Rows never carry keys or message text.
+This is also what makes a reply that could not be encrypted visible instead of silent.
+
+**4. `GET /api/menubar`, and a written answer on a Swift menu-bar app.**
+
+One read-only, operator-token-gated snapshot of what the backend can answer about itself: services
+(webhook / runner / tunnel), queue counts and a sanitized one-line preview per item — never message
+bodies — plus the sanitizer state and both versions. `scripts/pkm-status.mjs` covers the key-store pill,
+which is not backend state. The accompanying study records why the panel is easy in AppKit and the data
+is not; the short version is that Electron also owns the service lifecycle, so a native client is a
+read-only companion for now.
+
+**5. Scripts-tab output can be cleared.**
+
+Each script card has a **Clear** button that empties that card's output pane (other cards keep theirs)
+and is disabled while the pane is empty. It clears the renderer buffer only — the durable record is
+`logs/live/` and the notification feed.
+
 ## [0.3.2-7] — 2026-09-24
 
 ### Documentation catch-up for the tray panel, the MCP client and the Google token
@@ -503,7 +578,7 @@ Ported the `ai_transcription_agent` pattern:
   close); the app never stores or logs them.
 - The in-repo key store and its management scripts were **removed**, along with the matching npm scripts;
   where the store lives is now configured in ⚙️ Config instead of being hardcoded.
-- `electron/docs/licenses.md` → [`electron/docs/keys.md`](electron/docs/keys.md).
+- `electron/docs/licenses.md` → [`electron/docs/keys.md`](../electron/docs/keys.md).
 
 ## [0.2.8-2] — 2026-09-10
 

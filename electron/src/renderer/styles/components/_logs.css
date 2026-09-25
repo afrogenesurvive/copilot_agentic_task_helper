@@ -49,7 +49,10 @@
 
 .log-filters select,
 .log-filters input[type="text"] {
-  width: auto;
+  /* flex-basis, not `width` — see the note above `.q-search` in _queue.css: the
+     shared input rule is `input:not([type]):not(...):not(...):not(...)`, specificity
+     (0,4,1), which beats this selector's (0,2,1) and kept applying `width: 100%`. */
+  flex: 1 1 140px;
   padding: 4px 7px;
   font-size: 0.82rem;
 }

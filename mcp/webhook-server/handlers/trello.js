@@ -13,7 +13,7 @@ import { fileURLToPath } from "url";
 import crypto from "crypto";
 import { enqueueEvent } from "../lib/event-queue.js";
 import { dispatch } from "../lib/tool-dispatch.js";
-import { ingestDegradedEnvelope } from "../lib/frontdesk.js";
+import { ingestDegradedEnvelope, cryptoAudit } from "../lib/frontdesk.js";
 import { sanitizeObject } from "../../../scripts/sanitize.stub.mjs";
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
@@ -141,6 +141,11 @@ export function trelloHandler(req, res) {
     const m = rawText.match(/^\[fd1\]\s+(\S+)\s+(\S+)\s+(\S+)\s+(\S+)\s+(\S+)/);
     if (m) {
       const out = ingestDegradedEnvelope(m[1], m[2], { iv: m[3], tag: m[4], ct: m[5] });
+      // console.log alone was the whole record of this path — invisible in the Logs
+      // view and in the crypto audit file. ingestDegradedEnvelope() writes the
+      // verify/decrypt outcome to logs/frontdesk/crypto; this adds the transport-side
+      // detail (it arrived as a Trello comment) to the webhook verbose log.
+      webhookVerbose("trello", { type: "fd1_degraded_ingest", ok: out.ok, error: out.error || null, id: out.id || null });
       console.log(
         out.ok
           ? `   💬 [FRONTDESK] Degraded [fd1] message ingested (${out.id})`
@@ -148,6 +153,13 @@ export function trelloHandler(req, res) {
       );
       // Skip the legacy Trello frontdesk flow for this message.
       return res.status(200).json({ status: out.ok ? "ingested" : "ignored" });
+    }
+    // Marked as a degraded envelope but unparseable — a client-side bug or a
+    // truncated comment. Worth an audit line: it would otherwise be dropped silently
+    // and treated as an ordinary comment by the legacy flow below.
+    if (/^\[fd1\]/.test(rawText)) {
+      cryptoAudit({ event: "degraded_verify", ok: false, reason: "malformed_envelope", direction: "degraded" });
+      webhookVerbose("trello", { type: "fd1_malformed", chars: rawText.length });
     }
   }
 

@@ -42,14 +42,18 @@ const RENDERER_HTML = path.join(__dirname, "renderer", "index.html");
 // it loads four pills and a short list, not the 27-file renderer (see the CSP
 // note in electron/src/renderer/tray.html for the rules it inherits).
 const TRAY_HTML = path.join(__dirname, "renderer", "tray.html");
-// Panel geometry. Fixed, so the window can be positioned without measuring the
-// content and there is no resize round trip on every open. The height is set from
-// the measured panel: 5 rows of two clamped lines is 232px of list, and the
-// surrounding chrome (title, the two rows of pills, section head, button) is
-// 206px — so every row shows in full and the list only scrolls when descriptions
-// run to their second line.
+// Panel geometry. These are only the FIRST size: the window is resizable and
+// remembers what the operator dragged it to (popoverSizeFile() below), and
+// showPopover() reads getSize() rather than these constants, so a remembered size
+// positions itself for free. The defaults are the measured original — five rows of
+// two clamped lines plus the surrounding chrome (title, pills, tab strip, footer)
+// — so the panel looks the same as it always has until someone resizes it.
 const TRAY_POPOVER_WIDTH = 340;
 const TRAY_POPOVER_HEIGHT = 440;
+const TRAY_POPOVER_MIN_WIDTH = 280;
+const TRAY_POPOVER_MIN_HEIGHT = 320;
+const TRAY_POPOVER_MAX_WIDTH = 720;
+const TRAY_POPOVER_MAX_HEIGHT = 900;
 const TRAY_POPOVER_GAP = 6; // px between the menu bar and the panel
 const TRAY_CLICK_GUARD_MS = 200; // see togglePopover()
 
@@ -135,6 +139,13 @@ let mainWindow = null; // hoisted so applyTheme() can reference it at module loa
 // rect and is also shown/hidden from IPC (the dashboard's "open" path).
 let tray = null;
 let trayPopover = null;
+// Menu-bar badge: the count the icon currently shows, and the appearance its
+// glyph was drawn for. Both are remembered so an unchanged count costs nothing,
+// and so switching light/dark redraws the glyph even at the same number.
+let trayBadgePainted = -1;
+let trayBadgeDark = null;
+// main/tray-badge.mjs — ESM, loaded once, and only when there is a count to draw.
+let trayBadgeMod = null;
 // When the panel was last hidden. Clicking the menu-bar item while the panel is
 // open blurs the panel *before* the click arrives, so the click would reopen what
 // it just closed; this stamp lets togglePopover() see both halves as one gesture.
@@ -561,6 +572,9 @@ function notify(n) {
       /* window gone */
     }
   }
+  // The menu-bar badge counts these, so it is repainted from the same funnel —
+  // no polling, and it updates while the panel is closed.
+  void updateTrayBadge();
   return entry;
 }
 
@@ -586,6 +600,11 @@ const clip = (text, n = 200) => {
  */
 function startNotificationProducers() {
   const startedAt = new Date().toISOString();
+  // Throttle for crypto failures. `/api/license/verify` is a PUBLIC route, so without
+  // this a scripted bad-licence loop would turn into a notification flood. One
+  // notification per (event, reason, seat) per minute is enough to notice.
+  const cryptoNotifyAt = new Map();
+  const CRYPTO_NOTIFY_MS = 60_000;
 
   liveLog.subscribe((entry) => {
     if (!entry || !entry.ts || entry.ts < startedAt) return;
@@ -611,6 +630,28 @@ function startNotificationProducers() {
         body: clip([data.ip, data.timezone].filter(Boolean).join(" · ")),
         data: { user: data.user, ip: data.ip },
       });
+      return;
+    }
+
+    // Frontdesk crypto. Two things the operator must not have to go looking for:
+    // a sign-in or session that was rejected, and a reply that could not be encrypted
+    // (no registered seat key) — the latter means someone is waiting for an answer that
+    // will never arrive. The generic error branch below would catch the `error`-level
+    // ones; these are emitted at `warn` too, so they need their own branch.
+    if (entry.source === "frontdesk" && entry.subSource === "crypto" && data.ok === false) {
+      const key = `${data.event}|${data.reason}|${data.sub || ""}`;
+      const last = cryptoNotifyAt.get(key) || 0;
+      if (Date.now() - last >= CRYPTO_NOTIFY_MS) {
+        cryptoNotifyAt.set(key, Date.now());
+        const isReply = data.event === "outbound_encrypt";
+        notify({
+          source: isReply ? "chat" : "security",
+          level: entry.level === "error" ? "error" : "warn",
+          title: isReply ? "Frontdesk reply not delivered" : `Frontdesk ${String(data.event || "").replace(/_/g, " ")} failed`,
+          body: clip([data.sub, data.reason].filter(Boolean).join(" · ")),
+          data: { ts: entry.ts, event: data.event, reason: data.reason, sub: data.sub },
+        });
+      }
       return;
     }
 
@@ -1546,7 +1587,13 @@ function registerIpc() {
     counts: notifications.unreadCounts(),
   }));
   ipcMain.handle("notifications:read", (_e, target) => notifications.markRead(target || {}));
-  ipcMain.handle("notifications:clear", () => notifications.clearAll());
+  // Clearing is the ONLY thing that lowers the menu-bar badge — reading is not
+  // clearing — so the icon is repainted here rather than from the renderer.
+  ipcMain.handle("notifications:clear", () => {
+    const result = notifications.clearAll();
+    void updateTrayBadge();
+    return result;
+  });
 
   // User-script runner (scripts/user allowlist, manual run only)
   ipcMain.handle("scripts:list", async () => ({
@@ -1662,7 +1709,25 @@ function registerIpc() {
   ipcMain.handle("pkm:exportBundle", async () => (await keyManager()).exportBundle());
   ipcMain.handle("pkm:verifyBundle", async () => (await keyManager()).verifyBundle());
 
-  ipcMain.handle("config:get", () => {
+  // safe/trello-boards.json — the board/list id map the agent-side scripts use, so the
+  // Config tab can show the operator what the file says and which env keys drift from
+  // it (scripts/trello-boards-sync.mjs reconciles them). Imported lazily: this file is
+  // CommonJS and the resolver is ESM. Absent file (gitignored) is not an error.
+  let trelloBoardsMod = null;
+  async function trelloBoardsSnapshot() {
+    const blank = { present: false, file: "", error: null, boards: {}, lists: {}, frontdesk: { other: [] }, projected: {}, drift: [] };
+    try {
+      if (!trelloBoardsMod) {
+        const url = require("url").pathToFileURL(path.join(REPO, "shared", "trello-boards.mjs")).href;
+        trelloBoardsMod = await import(url);
+      }
+      return trelloBoardsMod.snapshot(process.env);
+    } catch (err) {
+      return { ...blank, error: err && err.message ? err.message : String(err) };
+    }
+  }
+
+  ipcMain.handle("config:get", async () => {
     const eff = config.readEffective();
     return {
       present: eff.present,
@@ -1675,12 +1740,13 @@ function registerIpc() {
       tunnelDomain: process.env.CLOUDFLARE_TUNNEL_DOMAIN || "",
       useTrello: process.env.FRONTDESK_USE_TRELLO === "true",
       logToTrello: process.env.FRONTDESK_LOG_TO_TRELLO === "true",
+      trelloBoards: await trelloBoardsSnapshot(),
       ...effectiveLlmLabel(),
     };
   });
-  ipcMain.handle("config:getWithSources", () => {
+  ipcMain.handle("config:getWithSources", async () => {
     const res = config.readWithSources();
-    return { ok: true, present: res.present, source: res.source, configPath: res.configPath, count: res.count, values: res.values, ...(res.error ? { error: res.error } : {}) };
+    return { ok: true, present: res.present, source: res.source, configPath: res.configPath, count: res.count, values: res.values, trelloBoards: await trelloBoardsSnapshot(), ...(res.error ? { error: res.error } : {}) };
   });
   ipcMain.handle("config:save", async (_e, values) => {
     const payload = values || {};
@@ -1934,22 +2000,78 @@ function createWindow() {
 }
 
 /**
- * The popover window. Frameless, non-resizable, and never in the window list
- * the operator cycles through — it is a panel hanging off the menu-bar item, not
- * a second document window.
+ * The panel's remembered size.
+ *
+ * A file rather than a config key: this is window geometry — it changes on every
+ * drag, must never be hand-edited, and has no business appearing in the Config
+ * tab. userData resolves to `~/Library/Application Support/Frontdesk Operator`
+ * because app.setName() runs before anything reads it.
+ */
+function popoverSizeFile() {
+  return path.join(app.getPath("userData"), "popover-size.json");
+}
+
+/**
+ * The remembered size, clamped. A drag made on a large display must still open
+ * on a small one, and a hand-edited file must not be able to open the panel
+ * off-screen, so both bounds are enforced on read rather than trusted.
+ */
+function readPopoverSize() {
+  const size = { width: TRAY_POPOVER_WIDTH, height: TRAY_POPOVER_HEIGHT };
+  try {
+    const raw = JSON.parse(fs.readFileSync(popoverSizeFile(), "utf8"));
+    const w = Math.round(Number(raw && raw.width));
+    const h = Math.round(Number(raw && raw.height));
+    if (Number.isFinite(w)) size.width = Math.min(Math.max(w, TRAY_POPOVER_MIN_WIDTH), TRAY_POPOVER_MAX_WIDTH);
+    if (Number.isFinite(h)) size.height = Math.min(Math.max(h, TRAY_POPOVER_MIN_HEIGHT), TRAY_POPOVER_MAX_HEIGHT);
+  } catch {
+    /* nothing remembered yet — the defaults are the answer */
+  }
+  return size;
+}
+
+function savePopoverSize() {
+  if (!trayPopover || trayPopover.isDestroyed()) return;
+  try {
+    const [width, height] = trayPopover.getSize();
+    fs.mkdirSync(path.dirname(popoverSizeFile()), { recursive: true });
+    fs.writeFileSync(popoverSizeFile(), JSON.stringify({ width, height }, null, 2) + "\n", "utf8");
+  } catch (err) {
+    console.log("[operator] could not remember the panel size:", err.message);
+  }
+}
+
+/**
+ * The popover window. Frameless, resizable, and never in the window list the
+ * operator cycles through — it is a panel hanging off the menu-bar item, not a
+ * second document window.
  *
  * `vibrancy: "popover"` is what makes it read as a native menu-bar panel; the
  * page's body background is transparent so the material shows through (see
  * electron/src/renderer/styles/tray.css — an opaque body would paint over it).
  */
 function createPopover() {
+  // Guard: the window is created eagerly with the tray and again on first open,
+  // and a resize/persist path makes a second call reachable. Without this a new
+  // window would replace `trayPopover` and strand the previous one, which nothing
+  // else holds a reference to.
+  if (trayPopover && !trayPopover.isDestroyed()) return;
   try {
+    const remembered = readPopoverSize();
     trayPopover = new BrowserWindow({
-      width: TRAY_POPOVER_WIDTH,
-      height: TRAY_POPOVER_HEIGHT,
+      width: remembered.width,
+      height: remembered.height,
+      minWidth: TRAY_POPOVER_MIN_WIDTH,
+      minHeight: TRAY_POPOVER_MIN_HEIGHT,
+      maxWidth: TRAY_POPOVER_MAX_WIDTH,
+      maxHeight: TRAY_POPOVER_MAX_HEIGHT,
       show: false,
       frame: false,
-      resizable: false,
+      // Resizable because this is a panel the operator works in, not a fixed
+      // tooltip. A frameless window has no visible grab handle, so the whole
+      // border is the target — and `movable: false` stays: the position is
+      // computed from the menu-bar item, never dragged.
+      resizable: true,
       movable: false,
       minimizable: false,
       maximizable: false,
@@ -1976,6 +2098,14 @@ function createPopover() {
       if (trayPopover.webContents.isDevToolsOpened()) return;
       hidePopover();
     });
+    // Remember the new size, and re-park the panel: one dragged wider while open
+    // would otherwise keep its old origin and hang off the screen edge until it
+    // was closed and reopened. `resized` fires once per drag, not per frame, so
+    // this is one small write per gesture.
+    trayPopover.on("resized", () => {
+      savePopoverSize();
+      positionPopover(null);
+    });
     // The panel is not a normal window: it must not be reachable by Cmd+`, nor
     // keep the app "open" in a way that surprises the dock.
     trayPopover.on("closed", () => {
@@ -1995,28 +2125,38 @@ function hidePopover() {
 }
 
 /**
+ * Park the panel under the menu-bar item: centred on it, 6px below it, and clamped
+ * so both edges stay inside that display's work area.
+ *
+ * Called on every show and again after a resize, and `iconRect` is optional — it
+ * is the rect macOS hands to the tray's `click` event, which is empty on some
+ * configurations, in which case the tray's own bounds are used.
+ */
+function positionPopover(iconRect) {
+  if (!trayPopover || trayPopover.isDestroyed()) return;
+  const icon = iconRect && iconRect.width ? iconRect : tray && tray.getBounds();
+  if (!icon || !icon.width) return;
+  const area = screen.getDisplayMatching(icon).workArea;
+  const [w, h] = trayPopover.getSize();
+  const x = Math.round(icon.x + icon.width / 2 - w / 2);
+  const y = Math.round(icon.y + icon.height + TRAY_POPOVER_GAP);
+  trayPopover.setPosition(
+    Math.max(area.x + 4, Math.min(x, area.x + area.width - w - 4)),
+    Math.max(area.y + 4, Math.min(y, area.y + area.height - h - 4)),
+  );
+}
+
+/**
  * Show the panel under the menu-bar item.
  *
- * `bounds` is the rect macOS hands to the `click` event; it falls back to
- * `tray.getBounds()` because the event rect is empty on some configurations.
- * The panel is centred on the icon and clamped to the display's work area, so a
- * crowded right-hand menu bar cannot push it off-screen.
+ * The size is whatever the operator last dragged it to (getSize(), not the
+ * constants), so a remembered panel needs no special handling here.
  */
 function showPopover(bounds) {
   if (!trayPopover || trayPopover.isDestroyed()) createPopover();
   if (!trayPopover || trayPopover.isDestroyed()) return;
 
-  const icon = bounds && bounds.width ? bounds : tray && tray.getBounds();
-  if (icon && icon.width) {
-    const area = screen.getDisplayMatching(icon).workArea;
-    const [w, h] = trayPopover.getSize();
-    const x = Math.round(icon.x + icon.width / 2 - w / 2);
-    const y = Math.round(icon.y + icon.height + TRAY_POPOVER_GAP);
-    trayPopover.setPosition(
-      Math.max(area.x + 4, Math.min(x, area.x + area.width - w - 4)),
-      Math.max(area.y + 4, Math.min(y, area.y + area.height - h - 4)),
-    );
-  }
+  positionPopover(bounds);
   trayPopover.show();
   trayPopover.focus();
   // Ask the page to re-read its four values. Deliberately sent on every open
@@ -2037,6 +2177,72 @@ function togglePopover(bounds) {
   // gesture, so ignore the second half of it.
   if (Date.now() - popoverHiddenAt < TRAY_CLICK_GUARD_MS) return;
   showPopover(bounds);
+}
+
+/**
+ * The badge renderer (main/tray-badge.mjs), loaded once.
+ *
+ * ESM, and imported lazily: it rasterises with a hidden BrowserWindow, so it is
+ * only worth paying for when there is a count to draw.
+ */
+async function trayBadgeApi() {
+  if (!trayBadgeMod) {
+    trayBadgeMod = await import(pathToFileURL(path.join(__dirname, "main", "tray-badge.mjs")).href);
+  }
+  return trayBadgeMod;
+}
+
+/**
+ * Paint the menu-bar icon for the current uncleared count.
+ *
+ * Zero goes back to the template image, which macOS paints to match the menu bar.
+ * Anything else is the badged, non-template image for the current appearance —
+ * a template image has no colour, so the red cannot live in it.
+ *
+ * Every failure is non-fatal: the plain icon stays and the next notification (or
+ * the pre-warm finishing) retries, which is why nothing here throws.
+ */
+async function updateTrayBadge() {
+  if (!tray || tray.isDestroyed()) return;
+  const count = notifications.unclearedCount();
+  const dark = !!nativeTheme.shouldUseDarkColors;
+  if (count === trayBadgePainted && dark === trayBadgeDark) return;
+
+  if (count <= 0) {
+    const plain = nativeImage.createFromPath(TRAY_ICON);
+    if (plain.isEmpty()) return;
+    if (process.platform === "darwin") plain.setTemplateImage(true);
+    tray.setImage(plain);
+    tray.setToolTip("Frontdesk Operator");
+    trayBadgePainted = 0;
+    trayBadgeDark = dark;
+    return;
+  }
+
+  try {
+    const mod = await trayBadgeApi();
+    const image = await mod.badgeImage(count, { dark });
+    if (!image) return; // not rendered yet — pre-warm or the next notification retries
+    tray.setImage(image);
+    tray.setToolTip(`Frontdesk Operator — ${count} uncleared notification${count === 1 ? "" : "s"}`);
+    trayBadgePainted = count;
+    trayBadgeDark = dark;
+  } catch (err) {
+    console.log("[operator] tray badge unavailable:", err.message);
+  }
+}
+
+/** Render every badge variant in the background so the first one is instant. */
+async function prewarmTrayBadges() {
+  try {
+    const mod = await trayBadgeApi();
+    const made = await mod.prewarm();
+    // Repaint once the cache exists: the first attempt may have run before any
+    // variant was ready and quietly kept the plain icon.
+    if (made) await updateTrayBadge();
+  } catch (err) {
+    console.log("[operator] tray badge prewarm skipped:", err.message);
+  }
 }
 
 function createTray() {
@@ -2136,6 +2342,13 @@ app.whenReady().then(() => {
   createWindow();
   createTray();
   startPriorityWatch();
+
+  // Menu-bar badge. Repainted from the tray's own lifecycle — a new notification,
+  // a clear, an appearance switch, the pre-warm finishing — never polled, so it
+  // stays correct while the panel is closed.
+  void updateTrayBadge();
+  nativeTheme.on("updated", () => void updateTrayBadge());
+  void prewarmTrayBadges();
 
   // Live log: seed from the unified stream, tail it, and push to the renderer.
   const LOGS_DIR = path.join(REPO, "logs");

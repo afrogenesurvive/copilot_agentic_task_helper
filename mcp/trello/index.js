@@ -18,6 +18,7 @@ import config from "../../shared/config-loader.cjs";
 config.loadEnvInto(process.env);
 import { sanitizeObject } from "../../scripts/sanitize.stub.mjs";
 import { trelloTools } from "../../shared/tool-manifest.js";
+import { normalizeTrelloArgs } from "../../shared/trello-boards.mjs";
 
 const TRELLO_KEY = process.env.TRELLO_KEY || "";
 const TRELLO_TOKEN = process.env.TRELLO_TOKEN || "";
@@ -81,7 +82,19 @@ const server = new Server({ name: "trello-mcp-server", version: "1.0.0" }, { cap
 /* ── Tool call handler (single dispatch) ── */
 
 server.setRequestHandler(CallToolRequestSchema, async (request) => {
-  const { name, arguments: args } = request.params;
+  const { name, arguments: rawArgs } = request.params;
+
+  // Accept `boardName`/`listName` (and an `idList` given as a list name) alongside raw
+  // ids — the agent has no way to look a board up, and used to guess ids. A name that
+  // is neither an id nor in the board map is refused here rather than sent to Trello
+  // as a bogus id. Resolution is additive: `listName` is kept next to the resolved
+  // `listId`, so the log shows both what the model asked for and what was used.
+  const norm = normalizeTrelloArgs(rawArgs, { defaultBoard: name === "trello_get_lists" });
+  if (norm.error) {
+    logToolCall(name, rawArgs, "unresolved id");
+    return { content: [safeText(norm.error)], isError: true };
+  }
+  const args = norm.args;
 
   let result;
   let summary;
@@ -149,7 +162,7 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
 async function handleCreateCard(args) {
   const { listId, name, desc } = args;
   if (!listId || !name) {
-    return { content: [safeText("Missing required parameters: listId, name")], isError: true };
+    return { content: [safeText("Missing required parameters: listId (or listName), name")], isError: true };
   }
   try {
     const data = await trelloFetch(trelloUrl(`/lists/${listId}/cards`, { name, desc: desc || "" }), { method: "POST" });
@@ -175,7 +188,7 @@ async function handleGetCard(args) {
 async function handleListCards(args) {
   const { listId } = args;
   if (!listId) {
-    return { content: [safeText("Missing required parameter: listId")], isError: true };
+    return { content: [safeText("Missing required parameter: listId (or listName)")], isError: true };
   }
   try {
     const data = await trelloFetch(trelloUrl(`/lists/${listId}/cards`, { fields: "name,id,url,dateLastActivity" }));
@@ -214,7 +227,7 @@ async function handleUpdateCard(args) {
 async function handleGetLists(args) {
   const { boardId } = args;
   if (!boardId) {
-    return { content: [safeText("Missing required parameter: boardId")], isError: true };
+    return { content: [safeText("Missing required parameter: boardId (or boardName, or leave both blank for the frontdesk board)")], isError: true };
   }
   try {
     const data = await trelloFetch(trelloUrl(`/boards/${boardId}/lists`, { fields: "name,id" }));
@@ -288,7 +301,7 @@ async function handleAddChecklistItem(args) {
 async function handleCreateList(args) {
   const { boardId, name } = args;
   if (!boardId || !name) {
-    return { content: [safeText("Missing required parameters: boardId, name")], isError: true };
+    return { content: [safeText("Missing required parameters: boardId (or boardName), name")], isError: true };
   }
   try {
     const data = await trelloFetch(trelloUrl(`/boards/${boardId}/lists`, { name }), { method: "POST" });

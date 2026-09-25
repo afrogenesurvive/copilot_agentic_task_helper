@@ -25,12 +25,17 @@
     <title>Frontdesk Operator</title>
 
     <!-- Same primitives as the dashboard, in the same cascade order, so the pills
-         here and the pills in the status bar cannot drift apart. tray.css comes
-         last because it has to undo _reset.css's opaque body background — the
-         window is a macOS vibrancy panel and the material is only visible through
-         a transparent page. -->
+         here and the pills in the status bar cannot drift apart: the pill + dot
+         come from components/_status-bar.css, the notification source/level chips
+         from components/_notification-center.css, and the button look from
+         _form-fields.css. tray.css comes last because it has to undo _reset.css's
+         opaque body background — the window is a macOS vibrancy panel and the
+         material is only visible through a transparent page. -->
     <link rel="stylesheet" href="styles/_reset.css" />
     <link rel="stylesheet" href="styles/_layout.css" />
+    <link rel="stylesheet" href="styles/_form-fields.css" />
+    <link rel="stylesheet" href="styles/components/_status-bar.css" />
+    <link rel="stylesheet" href="styles/components/_notification-center.css" />
     <link rel="stylesheet" href="styles/tray.css" />
   </head>
   <body class="tray">
@@ -40,24 +45,111 @@
         <span class="tray__version" id="tray-version"></span>
       </header>
 
+      <!-- The four status values stay visible whichever tab is open: they answer
+           "is the stack alive?" without a click, which is the panel's first job. -->
       <div class="tray__pills">
         <button id="tray-health" class="status-pill" type="button" title="Backend health — click for the dashboard">
-          <span class="status-dot"></span><span id="tray-health-text">checking…</span>
+          <span class="status-dot"></span><span id="tray-health-text" data-pill-text>checking…</span>
         </button>
         <span id="tray-services" class="status-pill status-pill--plain" title="Local services running">services —</span>
         <span id="tray-queue" class="status-pill status-pill--plain" title="Unactioned priority queue items">queue —</span>
         <span id="tray-keys" class="status-pill status-pill--plain" title="Key store (personal_key_manager) availability">keys —</span>
       </div>
 
-      <div class="tray__section">
-        <span>Latest priority items</span>
-        <span class="tray__section-note" id="tray-items-note"></span>
+      <div class="tray__tabs" role="tablist" aria-label="Menu-bar panel sections">
+        <button
+          id="tray-tab-services"
+          class="tray__tab"
+          type="button"
+          role="tab"
+          aria-selected="true"
+          aria-controls="tray-panel-services"
+          data-tray-tab="services"
+        >
+          Services
+        </button>
+        <button
+          id="tray-tab-queues"
+          class="tray__tab"
+          type="button"
+          role="tab"
+          aria-selected="false"
+          aria-controls="tray-panel-queues"
+          data-tray-tab="queues"
+        >
+          Queues
+        </button>
+        <button
+          id="tray-tab-notifications"
+          class="tray__tab"
+          type="button"
+          role="tab"
+          aria-selected="false"
+          aria-controls="tray-panel-notifications"
+          data-tray-tab="notifications"
+        >
+          Notifications<span class="tray__tab-count" id="tray-notif-count"></span>
+        </button>
       </div>
-      <!-- Built in tray.js with createElement/textContent, never innerHTML: these
-           rows carry frontdesk text, which is attacker-influenced. -->
-      <ul class="tray__list" id="tray-items">
-        <li class="empty">Loading…</li>
-      </ul>
+
+      <section class="tray__pane" id="tray-panel-services" role="tabpanel" aria-labelledby="tray-tab-services">
+        <ul class="tray__list" id="tray-services-list">
+          <li class="empty">Loading…</li>
+        </ul>
+      </section>
+
+      <section
+        class="tray__pane"
+        id="tray-panel-queues"
+        role="tabpanel"
+        aria-labelledby="tray-tab-queues"
+        hidden
+      >
+        <div class="tray__subtabs" role="tablist" aria-label="Queue">
+          <button
+            id="tray-subtab-priority"
+            class="tray__subtab"
+            type="button"
+            role="tab"
+            aria-selected="true"
+            data-tray-subtab="priority"
+          >
+            Priority
+          </button>
+          <button
+            id="tray-subtab-misc"
+            class="tray__subtab"
+            type="button"
+            role="tab"
+            aria-selected="false"
+            data-tray-subtab="misc"
+          >
+            Misc
+          </button>
+          <span class="tray__section-note" id="tray-items-note"></span>
+        </div>
+        <!-- Built in tray.js with createElement/textContent, never innerHTML: these
+             rows carry frontdesk text, which is attacker-influenced. -->
+        <ul class="tray__list" id="tray-items">
+          <li class="empty">Loading…</li>
+        </ul>
+      </section>
+
+      <section
+        class="tray__pane"
+        id="tray-panel-notifications"
+        role="tabpanel"
+        aria-labelledby="tray-tab-notifications"
+        hidden
+      >
+        <div class="tray__subtabs">
+          <span class="tray__section-label">Since the last clear</span>
+          <span class="tray__section-note" id="tray-notif-note"></span>
+        </div>
+        <ul class="tray__list" id="tray-notif-list">
+          <li class="empty">Loading…</li>
+        </ul>
+      </section>
 
       <footer class="tray__foot">
         <button id="tray-open" class="tray__open" type="button">Open dashboard</button>

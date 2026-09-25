@@ -55,6 +55,19 @@
   align-items: center;
   gap: 8px;
   flex-wrap: wrap;
+  /* Grow into the header's slack instead of being content-sized.
+   *
+   * A wrapping flex row's intrinsic (max-content) width does not include its gaps,
+   * so a content-sized `.panel__actions` comes out ~one gap-sum too narrow and the
+   * LAST control wraps onto a second line — with only `justify-content: flex-end`
+   * missing there is nothing to absorb the difference. The Notifications row hit
+   * this exactly (6 controls, 5 gaps, last one pushed down a line).
+   *
+   * `flex: 1 1 auto` lets the box take the free space the header's
+   * `space-between` was leaving unused, and `flex-end` keeps the packed-to-the-right
+   * look it had when the box was content-sized. */
+  flex: 1 1 auto;
+  justify-content: flex-end;
 }
 
 .panel__body {

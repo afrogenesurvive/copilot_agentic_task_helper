@@ -112,6 +112,18 @@
   border-color: var(--color-red);
 }
 
+/* Empties this card's output pane only — muted, unlike the destructive
+   `.clear-all` used by the queue and notification panels. */
+.script-clear {
+  color: var(--text-muted);
+  border-color: var(--border);
+}
+
+.script-clear:hover:not(:disabled) {
+  background: color-mix(in srgb, var(--text-muted) 12%, transparent);
+  border-color: var(--text-muted);
+}
+
 .script-extra {
   flex: 1;
   min-width: 180px;

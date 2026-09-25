@@ -19,6 +19,10 @@
  * "everything in the queue source as seen" is one small write to
  * `feed-state.json`, and the dots are per-source anyway.
  *
+ * The menu-bar badge gets a second, separate counter in the same state file
+ * (`uncleared` + `clearedAt`): recorded-since-last-clear, reset only by
+ * `clearAll()`. Reading is not clearing, so opening the panel must not lower it.
+ *
  * CommonJS: required by the Electron main process.
  */
 "use strict";
@@ -42,6 +46,19 @@ let cfg = {
 /** In-memory ring, oldest first. */
 let entries = [];
 let read = { global: 0 };
+
+/**
+ * The menu-bar badge's counter: notifications recorded since the last clear.
+ *
+ * Deliberately NOT `unreadCounts().total`. Opening the dashboard's Notifications
+ * tab marks everything read (main.js's acknowledgeTab), and the badge has to
+ * survive that — only the operator's explicit Clear resets it. `clearedAt` is
+ * stored beside the counter so a restart can tell "never cleared" from "cleared
+ * a moment ago" without walking the ring.
+ */
+let clearedAt = 0;
+let uncleared = 0;
+
 const listeners = [];
 
 /**
@@ -53,9 +70,15 @@ function configure(opts = {}) {
   if (opts.retentionDays != null && Number.isFinite(opts.retentionDays)) {
     cfg.retentionDays = Math.max(0, Math.min(opts.retentionDays, 3650));
   }
-  read = readState();
+  const state = readState();
+  read = state.read;
+  clearedAt = state.clearedAt;
+  uncleared = state.uncleared;
   prune();
   seed();
+  // First run after the badge existed: persist the migrated marks so the decision
+  // above (existing history is not "uncleared") is not re-made every launch.
+  if (state.migrated) writeState();
   return { dir: cfg.dir, retentionDays: cfg.retentionDays, loaded: entries.length };
 }
 
@@ -64,21 +87,37 @@ const dayFile = (day) => path.join(cfg.dir, `${day}.jsonl`);
 const day = (ts) => String(ts || new Date().toISOString()).slice(0, 10);
 
 function readState() {
+  let raw = null;
   try {
-    const raw = JSON.parse(fs.readFileSync(stateFile(), "utf8"));
-    const out = { global: 0 };
-    for (const s of SOURCES) out[s] = Number(raw?.read?.[s]) || 0;
-    out.global = Number(raw?.read?.global) || 0;
-    return out;
+    raw = JSON.parse(fs.readFileSync(stateFile(), "utf8"));
   } catch {
-    return { global: 0 };
+    /* no state file yet — the defaults below are the answer */
   }
+
+  const marks = { global: 0 };
+  for (const s of SOURCES) marks[s] = Number(raw?.read?.[s]) || 0;
+  marks.global = Number(raw?.read?.global) || 0;
+
+  // A state file written before the menu-bar badge existed carries no counter.
+  // Treat the history already on disk as seen (clearedAt = now, uncleared = 0) so
+  // upgrading does not light the badge with days of backfill.
+  const hasCounter = raw != null && Object.prototype.hasOwnProperty.call(raw, "uncleared");
+  return {
+    read: marks,
+    clearedAt: hasCounter ? Number(raw.clearedAt) || 0 : Date.now(),
+    uncleared: hasCounter ? Number(raw.uncleared) || 0 : 0,
+    migrated: !hasCounter,
+  };
 }
 
 function writeState() {
   try {
     fs.mkdirSync(path.dirname(stateFile()), { recursive: true });
-    fs.writeFileSync(stateFile(), JSON.stringify({ updatedAt: new Date().toISOString(), read }, null, 2) + "\n", "utf8");
+    fs.writeFileSync(
+      stateFile(),
+      JSON.stringify({ updatedAt: new Date().toISOString(), read, clearedAt, uncleared }, null, 2) + "\n",
+      "utf8",
+    );
   } catch (err) {
     console.error("[notifications] could not write state:", err.message);
   }
@@ -172,6 +211,12 @@ function record(n = {}) {
   entries.push(entry);
   if (entries.length > MAX_ENTRIES) entries.splice(0, entries.length - MAX_ENTRIES);
 
+  // Written synchronously: `record()` already does a synchronous append, and the
+  // counter is the menu-bar badge's only source of truth across a restart, so a
+  // debounce here would buy nothing and lose counts on a hard exit.
+  uncleared++;
+  writeState();
+
   for (const cb of listeners) {
     try {
       cb(entry);
@@ -236,7 +281,20 @@ function unreadCounts() {
     bySource[e.source]++;
     total++;
   }
-  return { total, bySource, read, sources: SOURCES };
+  // `clearedAt` rides along so a row can decide its own "new" edge with the very
+  // rule the menu-bar badge counts, without a second round trip to ask.
+  return { total, bySource, read, sources: SOURCES, uncleared, clearedAt };
+}
+
+/**
+ * The menu-bar badge's number: everything recorded since the last clear, whether
+ * or not it has been read.
+ *
+ * This exists so main.js can ask for the badge value on every `notify()` without
+ * walking the ring to rebuild the whole per-source breakdown.
+ */
+function unclearedCount() {
+  return uncleared;
 }
 
 /**
@@ -271,7 +329,12 @@ function clearAll() {
     }
   }
   entries = [];
-  return { ok: true };
+  // The one thing that resets the menu-bar badge. `read` marks are left alone on
+  // purpose: they record "seen", not "dealt with".
+  uncleared = 0;
+  clearedAt = Date.now();
+  writeState();
+  return { ok: true, uncleared };
 }
 
 module.exports = {
@@ -281,6 +344,7 @@ module.exports = {
   onRecord,
   list,
   unreadCounts,
+  unclearedCount,
   markRead,
   clearAll,
   prune,

@@ -28,7 +28,7 @@ the old behaviour.
 | Item | Contents |
 | ---- | -------- |
 | 📊 Dashboard | Start/stop every service, live health + per-service log tails, config, Google status |
-| 🔔 Notifications | Unread feed for the app: new frontdesk messages, error logs, chat turns, unexpected service exits, seat logins and script runs. Sortable and searchable, grouped by day into collapsible sections, with a red unread dot on each source's sidebar item |
+| 🔔 Notifications | Unread feed for the app: new frontdesk messages, error logs, chat turns, unexpected service exits, seat logins and script runs. Sortable and searchable, grouped by day into collapsible sections, with a red unread dot on each source's sidebar item. The menu-bar icon carries a red count of **uncleared** notifications — that one is reset only by the **Clear** button here, never by opening the panel |
 | 🔴 Queue | Priority + misc queues, per-item clear |
 | 📄 Logs | Live unified log stream (filter by source/sub-source/level, fold JSON details) + Log file browser with pretty JSONL view |
 | 👥 Sessions | Frontdesk login/logout sessions |
@@ -156,7 +156,7 @@ requests, with tool activity shown inline as chips and result bubbles:
 - Local file access is allowlisted to operator folders; secrets and private folders are never exposed to
   the model, and external tool results are sanitized before being fed back.
 - Tool access is **operator-channel only** — frontdesk chats stay read-only Q&A by design. Disable tools
-  entirely with `OPERATOR_CHAT_TOOLS=false`. See [`electron/docs/chat.md`](electron/docs/chat.md).
+  entirely with `OPERATOR_CHAT_TOOLS=false`. See [`electron/docs/chat.md`](../electron/docs/chat.md).
 - Each message gets `OPERATOR_CHAT_MAX_ROUNDS` tool steps (default **24**). On exhaustion the agent makes a
   final tool-free **wrap-up** call so you still get an answer; otherwise it stops with a sentinel message
   and the Chat tab offers **▶ Continue** (history is persisted, so continuing resumes with full context).
@@ -165,7 +165,7 @@ requests, with tool activity shown inline as chips and result bubbles:
 
 - Runs executables under the operator scripts folder (bash/node/python3) — manual only.
 - A `<script>.params.json` sidecar generates a typed form (text / number / checkbox / dropdown / file
-  picker); scripts without one keep the raw args box. See [`electron/docs/scripts.md`](electron/docs/scripts.md).
+  picker); scripts without one keep the raw args box. See [`electron/docs/scripts.md`](../electron/docs/scripts.md).
 
 ## Loading & errors
 
@@ -183,14 +183,25 @@ spinning forever. Streamed output (live logs, script output, chat steps) is neve
 Seat licences gate the **public chat webapp**, not this operator app. Management lives in a separate local
 key store driven by its `pkm` CLI — this repo only verifies licences — so the Key Manager tab is a front
 end: it spawns the CLI and renders the result, and never stores or logs a licence. Store locations are
-configured in ⚙️ Config rather than hardcoded. See [`electron/docs/keys.md`](electron/docs/keys.md).
+configured in ⚙️ Config rather than hardcoded. See [`electron/docs/keys.md`](../electron/docs/keys.md).
 
 ## Notes
 
-- The menu-bar item: **left**-click opens a 340×440 panel (webhook health, services running, unactioned
-  priority items, key store, then the five most recent priority items and an **Open dashboard** button);
-  **right**-click opens the menu (Open dashboard, Start services, Quit). The panel is a second renderer
-  document (`src/renderer/tray.html` + `tray.js` + `styles/tray.css`), not a mode of the dashboard.
+- The menu-bar item: **left**-click opens the panel; **right**-click opens the menu (Open dashboard,
+  Start services, Quit). The panel is a second renderer document (`src/renderer/tray.html` + `tray.js` +
+  `styles/tray.css`), not a mode of the dashboard. Four status pills (webhook health, services running,
+  queue depth, key store) stay above three tabs — **Services**, **Queues** (Priority / Misc sub-tabs) and
+  **Notifications** — with an **Open dashboard** button below. It opens at 340×440 and is **resizable**;
+  the size is remembered in
+  `~/Library/Application Support/Frontdesk Operator/popover-size.json`.
+- The menu-bar icon carries a red **uncleared count** (capped at `9+`) beside the glyph, drawn at runtime
+  by `src/main/tray-badge.mjs`. It counts notifications recorded since the last **Clear** in the
+  Notifications tab — deliberately *not* the read/unread dots, which clear as soon as the panel is
+  opened.
+- The panel's data can also be read over HTTP: `GET /api/menubar` returns the webhook/runner/tunnel state,
+  queue counts and a sanitized one-line preview per item (queue items are **summaries**, never message
+  bodies — the route is operator-token-gated), and `node scripts/pkm-status.mjs --json` prints the
+  key-store status. That is what a non-Electron client would consume.
 - A native notification is raised when the priority queue grows.
 - Closing the window **hides** it — the app keeps running in the background, and the menu-bar item, the
   dock icon and a notification click all restore and focus it. Quit via the menu-bar menu or the sidebar

@@ -66,12 +66,13 @@ import {
   pollReplies,
   postReply,
   logSession,
+  rejectSession,
 } from "./lib/frontdesk.js";
 import { startGoogleOAuth, handleGoogleOAuthCallback } from "./lib/oauth.js";
 import { getSeatAccounts } from "../../scripts/frontdesk-accounts.mjs";
+import { frontdeskLists } from "../../shared/trello-boards.mjs";
 import { log as logEvent } from "../../shared/logger.mjs";
-import { sanitizerStatus } from "../../scripts/sanitize.stub.mjs";
-import { ensureWatch as ensureGmailWatch } from "./lib/gmail-watch.js";
+import { sanitizerStatus, sanitizeObject } from "../../scripts/sanitize.stub.mjs";import { ensureWatch as ensureGmailWatch } from "./lib/gmail-watch.js";
 import { startCalendarWatch as renewCalendarWatch, getCalendarWatchStatus } from "./scripts/setup-calendar-watch.js";
 import { startDriveWatch as renewDriveWatch, getDriveWatchStatus } from "./scripts/setup-drive-watch.js";
 import { callChat, getModelName } from "../../shared/model-provider.mjs";
@@ -357,6 +358,94 @@ app.get("/api/queue-status", (_req, res) => {
   }
 });
 
+// GET /api/menubar — one read-only snapshot for a MENU-BAR client.
+//
+// The Electron tray reads all of this over IPC today. This endpoint exists so a native
+// (Swift/AppKit) client does not have to re-implement the backend: services, queue
+// counts and health can all be answered here, whereas the tray's remaining pills — the
+// `keys` capacity (a personal_key_manager CLI call) and the app version (from
+// electron/package.json) — are NOT backend state. See
+// docs/safe/menubar-swift-feasibility.md for what that means for a port.
+//
+// Token-gated by requireAuth (it is deliberately NOT in PUBLIC_PREFIXES): /api/queue-status
+// already warns that queue items carry other seats' messages, and this returns the same
+// queue. Even WITH the token the items are SUMMARIES — a clipped, sanitized one-liner in
+// `summary`, never `data.text` — so a desktop app cannot become a channel for message
+// bodies.
+const RUNNER_PID_FILE = path.resolve(__dirname, "..", "agent-runner", ".runner.pid");
+
+/** Is the agent runner alive? The runner has no HTTP port, so liveness is its PID file. */
+function runnerLiveness() {
+  let pid = 0;
+  try {
+    pid = parseInt(fs.readFileSync(RUNNER_PID_FILE, "utf8").trim(), 10) || 0;
+  } catch {
+    return { up: false, pid: null, reason: "no_pid_file" };
+  }
+  try {
+    process.kill(pid, 0); // signal 0 = "does this process exist", sends nothing
+    return { up: true, pid };
+  } catch (err) {
+    // EPERM means it exists but belongs to another user — still up.
+    if (err && err.code === "EPERM") return { up: true, pid };
+    return { up: false, pid, reason: "stale_pid_file" };
+  }
+}
+
+/** A queue row reduced to what a pill/list can show — no message text, ever. */
+function summarizeEvent(e) {
+  const d = e.data || {};
+  const raw = d.subject || d.card?.name || (typeof d.card === "string" ? d.card : "") || d.title || d.text || "";
+  const clipped = String(raw).replace(/\s+/g, " ").trim().slice(0, 80);
+  return {
+    id: e.id,
+    seqNo: e.seqNo ?? null,
+    source: e.source || null,
+    type: e.type || null,
+    queuedAt: e.queuedAt || null,
+    cleared: !!e.cleared,
+    summary: clipped ? sanitizeObject({ s: clipped }, { auditSource: "api/menubar" }).s : "",
+  };
+}
+
+/** Version from a package.json in the repo, or null (packaged builds may not ship it). */
+function pkgVersion(relPath) {
+  try {
+    const p = path.resolve(__dirname, "..", "..", relPath);
+    return JSON.parse(fs.readFileSync(p, "utf8")).version || null;
+  } catch {
+    return null;
+  }
+}
+
+app.get("/api/menubar", (_req, res) => {
+  try {
+    const priority = readEvents("priority", { cleared: false });
+    const misc = readEvents("misc_notifications", { cleared: false });
+    res.json({
+      ok: true,
+      ts: new Date().toISOString(),
+      version: { operator: pkgVersion("electron/package.json"), repo: pkgVersion("package.json") },
+      services: {
+        webhook: { up: true, port: PORT, uptime: Math.round(process.uptime()) },
+        runner: runnerLiveness(),
+        tunnel: {
+          domain: process.env.CLOUDFLARE_TUNNEL_DOMAIN || "",
+          configured: !!process.env.CLOUDFLARE_TUNNEL_DOMAIN,
+        },
+      },
+      sanitizer: sanitizerStatus(),
+      queue: {
+        priority: { pending: priority.length, items: priority.slice(-20).reverse().map(summarizeEvent) },
+        misc: { pending: misc.length },
+      },
+      keys: { available: false, hint: "node scripts/pkm-status.mjs" },
+    });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
 // GET /api/tasks — Today's task list (if any)
 app.get("/api/tasks", (_req, res) => {
   try {
@@ -428,7 +517,7 @@ app.post("/api/license/verify", (req, res) => {
 // POST /api/frontdesk/send — encrypted message → priority queue
 app.post("/api/frontdesk/send", (req, res) => {
   const session = getSession(req.body?.token);
-  if (!session) return res.status(401).json({ ok: false, error: "invalid_session" });
+  if (!session) return rejectSession("/api/frontdesk/send", res);
   const out = sendMessage(session, req.body?.envelope || req.body);
   res.status(out.ok ? 200 : 400).json(out);
 });
@@ -436,6 +525,7 @@ app.post("/api/frontdesk/send", (req, res) => {
 // GET /api/frontdesk/poll?token=...&since=... — this seat's encrypted replies
 app.get("/api/frontdesk/poll", (req, res) => {
   const session = getSession(req.query?.token);
+  if (!session) return rejectSession("/api/frontdesk/poll", res);
   const out = pollReplies(session, req.query?.since);
   res.status(out.ok ? 200 : 401).json(out);
 });
@@ -451,7 +541,9 @@ app.post("/api/frontdesk/reply", (req, res) => {
     const buf = Buffer.from(provided);
     const ref = Buffer.from(API_TOKEN);
     if (!buf.length || buf.length !== ref.length || !crypto.timingSafeEqual(buf, ref)) {
-      return res.status(401).json({ ok: false, error: "invalid_token" });
+      // Defence in depth — requireAuth answers 503/401 before this runs, but a future
+      // change re-adding this path to PUBLIC_PREFIXES must not silently open it.
+      return rejectSession("/api/frontdesk/reply", res, { reason: "invalid_token" });
     }
   }
   const { sub, text } = req.body || {};
@@ -467,7 +559,7 @@ app.post("/api/frontdesk/reply", (req, res) => {
 // from the session, never from the request body.
 app.post("/api/session-log", (req, res) => {
   const session = getSession(req.body?.token);
-  if (!session) return res.status(401).json({ ok: false, error: "invalid_session" });
+  if (!session) return rejectSession("/api/session-log", res);
   const { action, userAgent, timezone, language } = req.body || {};
   const ip = req.headers["x-forwarded-for"]?.split(",")[0]?.trim() || req.ip || "unknown";
   const out = logSession({ user: session.sub, action: action || "login", ip, userAgent, timezone, language });
@@ -477,7 +569,7 @@ app.post("/api/session-log", (req, res) => {
 // GET /api/frontdesk/account — the Google/Trello accounts bound to this seat
 app.get("/api/frontdesk/account", (req, res) => {
   const session = getSession(req.query?.token);
-  if (!session) return res.status(401).json({ ok: false, error: "invalid_session" });
+  if (!session) return rejectSession("/api/frontdesk/account", res);
   const a = getSeatAccounts(session.sub);
   res.json({
     ok: true,
@@ -488,13 +580,30 @@ app.get("/api/frontdesk/account", (req, res) => {
 });
 
 // GET /api/config — runtime config for the webapp (no secrets; same keys as Netlify fn)
+//
+// Board/list ids resolve from `safe/trello-boards.json` first (see
+// shared/trello-boards.mjs) and fall back to the env keys, so the webapp no longer
+// depends on a hand-copied TRELLO_BOARD_ID. The file is gitignored and therefore
+// absent on many checkouts, hence the fallback rather than a hard requirement.
+function frontdeskIds() {
+  const fd = frontdeskLists();
+  return {
+    board: fd.board || "",
+    boardId: fd.boardId || process.env.TRELLO_BOARD_ID || "",
+    input: fd.input || process.env.TRELLO_LIST_FRONTEDESK_INPUT || "",
+    output: fd.output || process.env.TRELLO_LIST_FRONTEDESK_OUTPUT || "",
+  };
+}
+
 app.get("/api/config", (_req, res) => {
+  const ids = frontdeskIds();
   res.json({
     TRELLO_API_KEY: "",
     TRELLO_API_TOKEN: "",
-    TRELLO_BOARD_ID: process.env.TRELLO_BOARD_ID || "",
-    TRELLO_LIST_FRONTEDESK_INPUT: process.env.TRELLO_LIST_FRONTEDESK_INPUT || "",
-    TRELLO_LIST_FRONTEDESK_OUTPUT: process.env.TRELLO_LIST_FRONTEDESK_OUTPUT || "",
+    TRELLO_BOARD_ID: ids.boardId,
+    TRELLO_BOARD_NAME: ids.board,
+    TRELLO_LIST_FRONTEDESK_INPUT: ids.input,
+    TRELLO_LIST_FRONTEDESK_OUTPUT: ids.output,
     WEBHOOK_BASE_URL: process.env.WEBHOOK_BASE_URL || `http://localhost:${PORT}`,
     FRONTDESK_AGENT_PUBKEY: process.env.FRONTDESK_AGENT_PUBKEY || "",
     FRONTDESK_SESSION_TTL: process.env.FRONTDESK_SESSION_TTL || "7200",

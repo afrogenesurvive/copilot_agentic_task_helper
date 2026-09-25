@@ -42,10 +42,17 @@ Required:
 - `FRONTDESK_AGENT_PUBKEY` — the agent's X25519 public key from your local `.env` (encryption
   peer for chat).
 - `TRELLO_BOARD_ID`
+- `TRELLO_BOARD_NAME` — the board's display name; the webapp's Account view shows it.
 - `TRELLO_LIST_FRONTEDESK_INPUT`
 - `TRELLO_LIST_FRONTEDESK_OUTPUT`
 - `TRELLO_API_KEY`, `TRELLO_API_TOKEN` — kept **server-side** by the proxy only; never sent to the
   browser.
+
+> These four `TRELLO_*` ids do not have to be typed in by hand. They already live in
+> `safe/trello-boards.json`, and `node scripts/trello-boards-sync.mjs --push-netlify --apply`
+> reads that file and writes them here (reading each variable first, so `is_secret`, its scopes and
+> every deploy context survive). Run it without `--apply` to see what would change. A Netlify env
+> change needs a new deploy before the functions see it.
 
 Optional:
 

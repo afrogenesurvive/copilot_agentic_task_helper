@@ -32,17 +32,25 @@
 import { Server } from "@modelcontextprotocol/sdk/server/index.js";
 import { StdioServerTransport } from "@modelcontextprotocol/sdk/server/stdio.js";
 import { CallToolRequestSchema, ListToolsRequestSchema } from "@modelcontextprotocol/sdk/types.js";
-import fetch from "node-fetch";
 import config from "../../shared/config-loader.cjs";
 config.loadEnvInto(process.env);
 import { sanitizeObject } from "../../scripts/sanitize.stub.mjs";
 import { toolCall } from "../../shared/logger.mjs";
 import { netlifyTools } from "../../shared/tool-manifest.js";
+// The env primitives live in shared/ so scripts can reuse them without importing
+// this file (which connects a stdio transport at module top level).
+import {
+  netlifyFetch,
+  envPath,
+  normalizeContexts,
+  resolveAccountForSite,
+  DEPLOY_CONTEXTS,
+} from "../../shared/netlify-env.mjs";
 
-const TOKEN = process.env.NETLIFY_AUTH_TOKEN || "";
 const DEFAULT_SITE = process.env.NETLIFY_SITE_ID || "";
 const DEFAULT_ACCOUNT = process.env.NETLIFY_ACCOUNT_ID || "";
-const BASE = "https://api.netlify.com/api/v1";
+/* The PAT is read per call inside shared/netlify-env.mjs, so there is no module-level
+   token constant here — a long-lived server picks up a rotated token on the next call. */
 
 /* ── Response helpers (sanitized) ── */
 
@@ -62,36 +70,9 @@ function logToolCall(name, args, summary) {
 
 /* ── Netlify REST client ── */
 
-async function netlifyFetch(pathname, { method = "GET", body, params = {} } = {}) {
-  if (!TOKEN) throw new Error("NETLIFY_AUTH_TOKEN not set");
-  const url = new URL(`${BASE}${pathname}`);
-  for (const [k, v] of Object.entries(params)) {
-    if (v !== undefined && v !== null && v !== "") url.searchParams.set(k, String(v));
-  }
-  const resp = await fetch(url, {
-    method,
-    headers: {
-      Authorization: `Bearer ${TOKEN}`,
-      "Content-Type": "application/json",
-      "User-Agent": "frontdesk-netlify-mcp",
-    },
-    body: body !== undefined ? JSON.stringify(body) : undefined,
-  });
-  const text = await resp.text();
-  let json = null;
-  if (text) {
-    try {
-      json = JSON.parse(text);
-    } catch {
-      json = { raw: text };
-    }
-  }
-  if (!resp.ok) {
-    const detail = json && (json.message || json.error) ? `: ${json.message || json.error}` : "";
-    throw new Error(`Netlify API ${resp.status} on ${method} ${pathname}${detail}`);
-  }
-  return json;
-}
+/* netlifyFetch() is imported from shared/netlify-env.mjs (it throws on a non-2xx
+   response with the API's own message, and carries `.status` so a 404 is
+distinguishable from a real failure). */
 
 /* Resolve which site/account a call targets. A siteId may be the Project ID,
  * the site name, or the domain (mysite.netlify.app) — all are interchangeable
@@ -103,39 +84,12 @@ function resolveAccount(args) {
   return (args && args.accountId) || DEFAULT_ACCOUNT;
 }
 
-/** Deploy contexts the env API stores values for. "all" is NOT one of them: a
- *  variable holds one value PER context, and omitting a context leaves whatever
- *  that context already had untouched. */
-const DEPLOY_CONTEXTS = ["production", "deploy-preview", "branch-deploy", "dev", "dev-server"];
+/* DEPLOY_CONTEXTS, resolveAccountForSite() and envPath() are imported from
+   shared/netlify-env.mjs. Note the account indirection: site-scoped env vars do NOT
+   live under /sites/{id}/env (that path 404s); they live under the ACCOUNT path with
+   a site_id query parameter, and the account is discovered from the site. */
 
-/**
- * Resolve the ACCOUNT (team) that owns a site.
- *
- * Site-scoped environment variables do NOT live under `/sites/{id}/env` — that
- * path 404s on the real API (which is why the site-scoped env tools used to fail).
- * They live under the ACCOUNT path with a `site_id` query parameter, so a caller
- * only needs NETLIFY_SITE_ID set; the account is discovered from the site itself.
- */
-async function resolveAccountForSite(siteId) {
-  if (!siteId) return DEFAULT_ACCOUNT || "";
-  if (DEFAULT_ACCOUNT) return DEFAULT_ACCOUNT;
-  const site = await netlifyFetch(`/sites/${encodeURIComponent(siteId)}`);
-  return (site && (site.account_slug || site.account_id)) || "";
-}
-
-/** Account-scoped env path, with the key appended when one is given. */
-function envPath(accountId, key) {
-  const base = `/accounts/${encodeURIComponent(accountId)}/env`;
-  return key ? `${base}/${encodeURIComponent(key)}` : base;
-}
-
-/** "production", "production,dev" or ["production","dev"] → ["production","dev"].
- *  Empty / "all" / undefined → [] meaning "every deploy context". */
-function normalizeContexts(context) {
-  if (context === undefined || context === null || context === "" || context === "all") return [];
-  const list = Array.isArray(context) ? context : String(context).split(",");
-  return list.map((c) => String(c).trim()).filter(Boolean);
-}
+/* normalizeContexts() is imported from shared/netlify-env.mjs. */
 
 function siteRequired(args) {
   return resolveSite(args)

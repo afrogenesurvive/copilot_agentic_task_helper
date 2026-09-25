@@ -274,3 +274,40 @@
   font-size: 0.8rem;
   color: var(--text-muted);
 }
+
+/* ── Trello board map (safe/trello-boards.json) ──
+   Shown at the top of the Trello section: what the id file says, and which env keys
+   disagree with it. Reuses the provider-* vocabulary for the header row. */
+
+.board-map {
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+  margin-bottom: 12px;
+  padding-bottom: 11px;
+  border-bottom: 1px dashed var(--border);
+}
+
+.board-rows {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  padding: 2px 0 4px;
+}
+
+.board-row {
+  font-size: 0.86rem;
+  line-height: 1.5;
+}
+
+.board-lists {
+  padding-left: 10px;
+  font-size: 0.8rem;
+  color: var(--text-muted);
+}
+
+.board-drift {
+  margin: 4px 0 2px 16px;
+  padding: 0;
+}
+
