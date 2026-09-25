@@ -57,6 +57,16 @@ contextBridge.exposeInMainWorld("api", {
   pkmChallenge: (registry, key) => ipcRenderer.invoke("pkm:challenge", registry, key),
   pkmSelfTest: (registry, key) => ipcRenderer.invoke("pkm:selfTest", registry, key),
   pkmCheckRevocation: (registry) => ipcRenderer.invoke("pkm:checkRevocation", registry),
+  // Claims — identity bound to a key. `showVerifier` reveals the `pwdv` scrypt
+  // verifier (display-once: it is offline-crackable, so never log it), and
+  // `claimsSet` with `resign: true` returns a replacement licence under
+  // `resigned.licenseKey` that must be handed to the seat owner.
+  pkmClaimsShow: (registry, sub, showVerifier) => ipcRenderer.invoke("pkm:claimsShow", registry, sub, showVerifier),
+  pkmClaimsSet: (registry, sub, patch) => ipcRenderer.invoke("pkm:claimsSet", registry, sub, patch),
+  pkmClaimsResign: (registry, sub, force) => ipcRenderer.invoke("pkm:claimsResign", registry, sub, force),
+  pkmClaimsBackfill: (registry, opts) => ipcRenderer.invoke("pkm:claimsBackfill", registry, opts),
+  pkmClaimsVerify: (registry) => ipcRenderer.invoke("pkm:claimsVerify", registry),
+  pkmCredsTest: (registry, key, email, password) => ipcRenderer.invoke("pkm:credsTest", registry, key, email, password),
   // Ring management + embedded-blocklist sync (consumer apps that embed it)
   pkmRings: (registry) => ipcRenderer.invoke("pkm:rings", registry),
   pkmRingCreate: (registry, kid) => ipcRenderer.invoke("pkm:ringCreate", registry, kid),

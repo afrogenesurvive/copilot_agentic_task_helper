@@ -68,13 +68,19 @@ const commands = new Map();
 const declaredWrites = sorted(new Set([...commands].filter(([, c]) => c.write).map(([k]) => k)));
 
 // ── Capability literals at `pkm()` call sites ────────────────────────────────
-// Every call site is single-line, and the capability is always the last string
-// argument: `pkm(args, registry, "cap")`.
+// Every call site is single-line. The capability is the LAST string literal in
+// the argument list — which is not always the last ARGUMENT: a command that feeds
+// `--password-stdin` passes the secret after it, e.g.
+// `pkm(args, registry, "claimsSet", password)`.
 const invoked = new Set();
-for (const line of keyManager.split("\n")) {
-  if (!/^\s*(?:return\s+)?pkm\(/.test(line)) continue;
-  const m = /,\s*"([A-Za-z]+)"\s*\)\s*;?\s*$/.exec(line.trim());
-  if (m) invoked.add(m[1]);
+for (const raw of keyManager.split("\n")) {
+  // Drop a trailing `// …` comment so a paren or quote inside it cannot shift the
+  // slice below (one call site's comment explains `ps`-visible argv).
+  const line = raw.trim().replace(/\/\/.*$/, "").trim();
+  if (!/^(?:return\s+)?pkm\(/.test(line)) continue;
+  const args = line.slice(line.indexOf("(") + 1, line.lastIndexOf(")"));
+  const literals = [...args.matchAll(/"([A-Za-z]+)"/g)].map((m) => m[1]);
+  if (literals.length) invoked.add(literals[literals.length - 1]);
 }
 
 // ── Channels ─────────────────────────────────────────────────────────────────

@@ -349,6 +349,8 @@
             <button id="pkm-challenge" title="Simulate the webapp login handshake for a licence — stronger than Validate, which only checks the signature">Challenge…</button>
             <button id="pkm-selftest" title="ECDH → AES-256-GCM round trip (ed25519+x25519 registries) — catches a FRONTDESK_AGENT_PUBKEY mismatch">Crypto self-test…</button>
             <button id="pkm-revocation-check" title="Reject test + embedded-blocklist parity: is a revoked seat still refused, and do consumer apps match the authoritative blocklist?">Revocation check</button>
+            <button id="pkm-claims-verify" title="Cert ↔ ledger drift for every seat. A claim lives in the SIGNED cert (what a consumer app enforces) and in the ledger record (what the next re-sign reads), so the two can diverge silently">Claims drift</button>
+            <button id="pkm-creds-open" title="Run the login check offline: does this email + password actually work for this licence? Answers it before the key is handed over">Test credentials…</button>
             <button id="pkm-perms" title="Report group/other-accessible files under the key store">Permissions</button>
             <button id="pkm-bundle-check" title="Check export/devmon.json against its signature — the bundle dev_mon consumes">Verify bundle</button>
             <span id="pkm-checks-out" class="pkm-checks__out"></span>
@@ -409,6 +411,59 @@
           </div>
 
           <div id="pkm-seats-box"><div class="loading-block"><span class="spin"></span><span>Loading…</span></div></div>
+
+          <!-- Claims — an identity (`email`) and a scrypt password VERIFIER
+               (`pwdv`) signed INTO the cert, so a key can say who holds it. Two
+               copies exist on purpose: the cert (what a consumer app enforces)
+               and the ledger record (what the next re-sign reads). Only a resign
+               changes the licence string, and the replacement is display-once. -->
+          <div class="panel__header">
+            <h3 class="panel__title"><span data-icon="lock"></span>Claims (identity on a key)</h3>
+            <div class="panel__actions">
+              <button id="pkm-claims-backfill" data-pkm-write="claimsBackfill" title="Preview only: for every seat with no email claim, derive one from the seat id. Writes nothing — ledger-only changes need a resign before a cert carries them">Backfill emails (dry run)</button>
+              <button id="pkm-claims-backfill-go" data-pkm-write="claimsBackfill" title="Write the derived email claims into the LEDGER. Each seat still needs a resign before its cert carries them">Backfill emails</button>
+            </div>
+          </div>
+          <div class="pkm-toolbar">
+            <label class="cfg-label" for="pkm-claims-seat">Seat</label>
+            <input id="pkm-claims-seat" type="text" placeholder="alice@example.com" spellcheck="false" />
+            <button id="pkm-claims-show">Show claims</button>
+            <span id="pkm-claims-msg" class="pkm-meta"></span>
+          </div>
+          <div id="pkm-claims-box"><div class="empty">Pick a seat to see the identity bound to its key.</div></div>
+
+          <!-- Credentials test — the SAME check a login performs, run offline, so
+               "will this email + password actually work for this key?" is answered
+               before the key is handed to anyone. The password is passed to pkm on
+               stdin, never on argv (which `ps` can read). -->
+          <div id="pkm-creds-form" class="hidden">
+            <div class="panel">
+              <div class="panel__header"><h3 class="panel__title">Test credentials against a licence</h3></div>
+              <div class="config-field">
+                <label class="cfg-label" for="pkm-creds-key">Licence key</label>
+                <div class="cfg-input-row">
+                  <input id="pkm-creds-key" type="text" placeholder="TA1.…" spellcheck="false" />
+                </div>
+              </div>
+              <div class="config-field">
+                <label class="cfg-label" for="pkm-creds-email">Email</label>
+                <div class="cfg-input-row">
+                  <input id="pkm-creds-email" type="text" placeholder="alice@example.com" spellcheck="false" />
+                </div>
+              </div>
+              <div class="config-field">
+                <label class="cfg-label" for="pkm-creds-password">Password</label>
+                <div class="cfg-input-row">
+                  <input id="pkm-creds-password" type="password" spellcheck="false" />
+                </div>
+              </div>
+              <div class="config-actions">
+                <button id="pkm-creds-go" class="primary">Test</button>
+                <button id="pkm-creds-cancel">Cancel</button>
+              </div>
+              <div id="pkm-creds-msg" class="config-msg"></div>
+            </div>
+          </div>
 
           <div class="panel__header">
             <h3 class="panel__title">Audit log</h3>

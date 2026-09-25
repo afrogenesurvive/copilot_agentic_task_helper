@@ -148,6 +148,94 @@ button.is-gated {
   color: var(--color-yellow);
 }
 
+/* ── Claims panel ──
+ *
+ * One seat's identity, shown as the two copies that exist on purpose: the signed
+ * cert (what a consumer app enforces) and the ledger record (what the next re-sign
+ * reads). They are compared side by side, and `--diff` marks a row where they
+ * disagree — that is the whole point of the panel, since only the cert is enforced.
+ */
+
+.pkm-claims {
+  margin: 10px 0;
+  padding: 10px 12px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  background: var(--surface);
+}
+
+.pkm-claims__head {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-wrap: wrap;
+  margin-bottom: 8px;
+}
+
+.pkm-claims__title {
+  font-size: 0.9rem;
+  font-weight: 600;
+  word-break: break-all;
+}
+
+.pkm-claims__meta {
+  font-size: 0.78rem;
+  color: var(--text-muted);
+}
+
+.pkm-claims__grid {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 8px 14px;
+  margin-bottom: 10px;
+}
+
+.pkm-claims__col {
+  min-width: 0;
+}
+
+.pkm-claims__col-label {
+  font-size: 0.72rem;
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+  color: var(--text-muted);
+  margin-bottom: 4px;
+}
+
+.pkm-claims__row {
+  font-size: 0.82rem;
+  line-height: 1.6;
+  word-break: break-all;
+}
+
+/* A claim the two copies disagree on. */
+.pkm-claims__row--diff {
+  color: var(--color-yellow);
+}
+
+.pkm-claims__form {
+  display: flex;
+  align-items: flex-end;
+  gap: 10px;
+  flex-wrap: wrap;
+  padding-top: 10px;
+  border-top: 1px solid var(--border);
+}
+
+.pkm-claims__field {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  min-width: 0;
+}
+
+.pkm-claims__actions {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-wrap: wrap;
+}
+
 .pkm-checks__out--err {
   color: var(--color-red);
 }

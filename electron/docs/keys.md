@@ -1,7 +1,8 @@
 # 🔑 Key Manager
 
 Issue, revoke, unrevoke and validate **seat licences** — the credentials collaborators use to log
-into the public chat webapp — and manage the **master key rings** that sign them.
+into the public chat webapp — bind an **identity claim** to a key, and manage the **master key
+rings** that sign them.
 
 > All key management lives in the sibling **personal_key_manager** repo. This tab is a front end
 > that shells out to its `pkm` CLI (`--json`); no licence data or logic lives in this app.
@@ -139,6 +140,65 @@ Existing seats keep the ring that signed them; only **new** seats use the new de
 ring does not invalidate the seats it already signed — they keep working until they expire or are
 revoked.
 
+## Claims — identity bound to a key
+
+A **claim** is an optional field inside the licence's signed certificate, so a key can say *who holds
+it*. pkm supports two:
+
+| Claim | What it is |
+| --- | --- |
+| `email` | The mailbox the seat belongs to. Lower-cased and shape-validated — an identity label, never verified by delivery |
+| `pwdv` | A **scrypt password verifier** (`scrypt$N$r$p$salt$hash`). The password itself is never stored, logged, exported or printed |
+
+Type a seat id into **Seat** and press **Show claims**. The panel shows the claim in **both** of the
+places it lives, side by side, because the two can silently diverge:
+
+| Copy | Written by | Read by | Authority |
+| --- | --- | --- | --- |
+| The signed cert | a resign | a consumer app, offline | **what an app enforces** |
+| The ledger record | set / issue | pkm only | source of truth for the next resign |
+
+A row turns amber where the two copies disagree, and the badge shows the drift state: `in-sync`,
+`ledger-only` (set, awaiting a resign), `cert-only`, `mismatch` or `no-cert`.
+
+### Setting claims
+
+Type into **Email to set** and/or **Password to set** — a blank field means *leave this claim alone*,
+matching pkm's own flags — then choose:
+
+- **Apply to ledger** — writes the ledger record only. The cert keeps what it has until a resign.
+- **Apply + resign** — writes the ledger **and re-signs the cert**. ⚠️ This **changes the licence
+  string**, so the replacement is shown once in the same display-once modal an issue uses. Hand it to
+  the seat owner: their old key keeps working, but it still carries the *old* claims.
+- **Clear email** / **Clear password** — removes a claim (ledger only, like any set).
+- **Push ledger → cert** — re-signs with the claims already stored, changing nothing about them.
+  Reports “nothing to do” when the cert already carries them.
+- **Reveal verifier** — shows the `pwdv` string exactly as pkm stores it. ⚠️ **Display-once
+  material:** a verifier is offline-crackable by whoever holds it, which is why it is never rendered
+  into the panel itself. Never reuse a real account password on a seat.
+
+### Backfill
+
+**Backfill emails (dry run)** previews what **Backfill emails** would do: for every seat with no email
+claim, derive one from the seat id. It is **ledger-only** — pkm deliberately does not bulk re-sign,
+because a resign invalidates the licence string you already handed someone. Each seat still needs its
+own resign before its cert carries the claim.
+
+### Test credentials…
+
+Runs the login check **offline**, so “will this email + password actually work for this key?” is
+answered *before* the key is handed over. Paste the licence, the email and the password:
+
+| Verdict | Meaning |
+| --- | --- |
+| ✅ works | The key logs in with that email and password |
+| `password_mismatch` | The password does not match the verifier on this key |
+| `email_mismatch` | The email does not match the key's `email` claim — a key with **no** claim always reports this |
+| `revoked_seat` | The seat is revoked, and revocation is checked before the signature |
+| `malformed` | Not a well-formed `TA1` licence |
+
+The password is passed to `pkm` on **stdin**, never on its command line, which `ps` can read.
+
 ## Audit log
 
 **Show** lists the registry's append-only action log (issue / revoke / unrevoke / expiry) with
@@ -155,6 +215,8 @@ one line, so each shows the result of the last check you ran.
 | **Challenge…** | You paste a licence and the seat signs a fresh nonce, exactly as a login does | The key is expired, revoked, or signed by a retired ring. Stronger than Validate, which only checks the signature |
 | **Crypto self-test…** | An ECDH → AES-256-GCM round trip between the seat and the agent keypair | `FRONTDESK_AGENT_PUBKEY` (⚙️ Config and Netlify) does not match this registry's agent key — replies would fail to decrypt |
 | **Revocation check** | That a revoked seat is refused, and that registries which embed the blocklist are in sync with it | A revoked seat is still accepted, or an embedded app needs a rebuild after a Sync |
+| **Claims drift** | Whether every seat's signed cert matches its ledger record | A claim was set but never resigned (`ledger-only`), or the two copies were edited independently (`mismatch`). Resign the seat to push the ledger into the cert |
+| **Test credentials…** | Whether an email + password completes a login for a given licence | A wrong password (`password_mismatch`), a mismatched or missing `email` claim, or a revoked seat. A claim-less key always reports `email_mismatch` |
 | **Permissions** | Which key-store paths are readable by group or other | Loose file modes. **Fix** tightens them by `chmod` only — key material is never rewritten |
 | **Verify bundle** | `export/devmon.json` against its signature | The bundle was edited by hand or signed by a key that is no longer present. A missing file is reported as missing, not as invalid |
 
@@ -172,4 +234,5 @@ one line, so each shows the result of the last check you ran.
   app id and an engine choice that a dashboard click shouldn't guess, and registering a
   revocation-verifier target (`pkm registry set-verifier --lang ts|py --path <file>`) writes paths into
   another app's source. Both stay in `personal_key_manager` (see its own notes). Everything else has a
-  control here, including `pkm export` (Export bundle) and `pkm perms --fix` (Permissions → Fix).
+  control here, including `pkm export` (Export bundle), `pkm perms --fix` (Permissions → Fix) and the
+  whole **claims** surface (`claims show` / `set` / `resign` / `backfill` / `verify` plus `creds-test`).

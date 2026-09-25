@@ -53,6 +53,11 @@ const DEFAULTS = {
   // Operator chat — tool-step budget per message (Electron Chat tab)
   OPERATOR_CHAT_MAX_ROUNDS: "24",
   FRONTDESK_SESSION_TTL: "7200",
+  // Dev Centre sign-in — session length in SECONDS (12 h). Annotation only; the
+  // app's own fallback is DEFAULT_SESSION_LIMIT_SECONDS in
+  // electron/src/main/dev-centre-auth.js. DEV_CENTRE_ADMINS is deliberately NOT
+  // listed here: it holds secrets, and this list is what the Config tab renders.
+  DEV_CENTRE_SESSION_LIMIT: "43200",
   PRIORITY_REMINDER_INTERVAL: "300000",
   AGENT_RUNNER_ENABLED: "true",
   AGENT_TASK_INTERVAL: "60000",

@@ -1422,6 +1422,304 @@
     return true;
   }
 
+  // ── Claims (identity bound to a key) ────────────────────────────────────────
+  //
+  // A claim lives in TWO places on purpose: the SIGNED cert (what a consumer app
+  // enforces) and the ledger record (what the next re-sign reads). They can
+  // diverge silently, and only the cert is enforced — which is why every render
+  // here shows both copies side by side and marks the rows they disagree on.
+  //
+  // Only a resign touches the cert, and a resign CHANGES THE LICENCE STRING: pkm
+  // hands back the replacement as `resigned.licenseKey`, so it goes straight into
+  // the display-once modal and must be passed to the seat owner.
+  //
+  // A `pwdv` is a scrypt VERIFIER, not a password. Revealing one is a deliberate,
+  // display-once action: unlike a password it is offline-crackable by whoever
+  // holds it, so it is never rendered into the panel itself.
+  let claimsSub = null;
+
+  /** One "label: value" row; `diff` marks a claim the two copies disagree on. */
+  function claimsRow(label, value, diff) {
+    const empty = value === null || value === undefined || value === "";
+    return `<div class="pkm-claims__row${diff ? " pkm-claims__row--diff" : ""}"><b>${esc(label)}:</b> ${empty ? "—" : esc(String(value))}</div>`;
+  }
+
+  function setClaimsMsg(text, kind) {
+    const el = $("pkm-claims-msg");
+    if (!el) return;
+    el.className = kind ? `config-msg ${kind}` : "pkm-meta";
+    el.textContent = text || "";
+  }
+
+  function claimsSeat() {
+    return ($("pkm-claims-seat")?.value || "").trim();
+  }
+
+  /** The drift state → the badge class that already means it. */
+  const CLAIM_STATE_TAG = {
+    "in-sync": "valid",
+    "ledger-only": "expired",
+    "cert-only": "expired",
+    mismatch: "revoked",
+    "no-cert": "expired",
+  };
+
+  function renderClaimsBox(d) {
+    const box = $("pkm-claims-box");
+    if (!box) return;
+    const cert = d.cert || {};
+    const ledger = d.ledger || {};
+    const diffEmail = (cert.email || null) !== (ledger.email || null);
+    const diffPassword = Boolean(cert.hasPassword) !== Boolean(ledger.hasPassword);
+    const tag = CLAIM_STATE_TAG[d.state] || "expired";
+
+    box.innerHTML = `
+      <div class="pkm-claims">
+        <div class="pkm-claims__head">
+          <span class="pkm-claims__title">${esc(d.sub || "")}</span>
+          <span class="tag ${tag}">${esc(d.state || "unknown")}</span>
+          <span class="pkm-claims__meta">ring ${esc(d.kid || "—")} · record ${esc(d.kind || "—")} · resigns ${Number(d.resignCount) || 0}</span>
+        </div>
+        <div class="pkm-claims__grid">
+          <div class="pkm-claims__col">
+            <div class="pkm-claims__col-label">Signed cert — what an app enforces</div>
+            ${claimsRow("email", cert.email, diffEmail)}
+            ${claimsRow("password", cert.hasPassword ? "verifier set" : "", diffPassword)}
+          </div>
+          <div class="pkm-claims__col">
+            <div class="pkm-claims__col-label">Ledger record — what the next resign reads</div>
+            ${claimsRow("email", ledger.email, diffEmail)}
+            ${claimsRow("password", ledger.hasPassword ? "verifier set" : "", diffPassword)}
+          </div>
+        </div>
+        <div class="pkm-claims__form">
+          <div class="pkm-claims__field">
+            <label class="cfg-label" for="pkm-claims-email">Email to set</label>
+            <input id="pkm-claims-email" type="text" placeholder="blank = leave unchanged" spellcheck="false" />
+          </div>
+          <div class="pkm-claims__field">
+            <label class="cfg-label" for="pkm-claims-password">Password to set</label>
+            <input id="pkm-claims-password" type="password" placeholder="blank = leave unchanged" spellcheck="false" />
+          </div>
+          <div class="pkm-claims__actions">
+            <button data-claimset="ledger" data-pkm-write="claimsSet" title="Write these claims to the LEDGER only — the cert keeps what it has until a resign">Apply to ledger</button>
+            <button data-claimset="resign" class="primary" data-pkm-write="claimsSet" title="Write the claims AND re-sign the cert. This changes the licence string, so the seat owner must be handed the replacement">Apply + resign</button>
+            <button data-claimclear="email" data-pkm-write="claimsSet" title="Remove the email claim (ledger only, like any set)">Clear email</button>
+            <button data-claimclear="password" data-pkm-write="claimsSet" title="Remove the password verifier (ledger only)">Clear password</button>
+            <button data-claimresign data-pkm-write="claimsResign" title="Push the claims already in the ledger into the cert, without changing them">Push ledger → cert</button>
+            <button data-claimreveal title="Show the scrypt VERIFIER pkm stores — the string Dev Centre's admin list accepts in place of a plaintext secret. Display-once: a verifier is offline-crackable">Reveal verifier</button>
+          </div>
+        </div>
+        <p class="pkm-claims__meta">licence file: ${esc(d.keyPath || "—")}</p>
+      </div>`;
+
+    box.querySelectorAll("[data-claimset]").forEach((btn) =>
+      btn.addEventListener("click", () => guarded("claims", () => applyClaims({ resign: btn.dataset.claimset === "resign" }))),
+    );
+    box.querySelectorAll("[data-claimclear]").forEach((btn) =>
+      btn.addEventListener("click", () => guarded("claims", () => applyClaims({ clear: btn.dataset.claimclear }))),
+    );
+    box.querySelector("[data-claimresign]")?.addEventListener("click", () => guarded("claims", pushClaimsToCert));
+    box.querySelector("[data-claimreveal]")?.addEventListener("click", () => guarded("claims", revealVerifier));
+
+    // The per-seat buttons were just created, so the gate has to re-paint them.
+    renderGate();
+  }
+
+  async function showClaims(seat) {
+    const sub = (seat || claimsSeat()).trim();
+    if (!sub) {
+      setClaimsMsg("Enter a seat id (the sub — usually its email).", "err");
+      return;
+    }
+    claimsSub = sub;
+    panelLoading("pkm-claims-box", "Loading claims…");
+    const res = await api.pkmClaimsShow(pkmReg(), sub);
+    if (!res || !res.ok) {
+      setClaimsMsg("", null);
+      panelError("pkm-claims-box", (res && res.error) || "Could not read this seat's claims", () => showClaims(sub));
+      return;
+    }
+    setClaimsMsg("", null);
+    renderClaimsBox(res.data || {});
+  }
+
+  /**
+   * Write the two form fields. A blank field means "leave this claim alone",
+   * mirroring pkm's own flags, and a filled one always overwrites.
+   */
+  async function applyClaims({ resign = false, clear = "" } = {}) {
+    const sub = claimsSub || claimsSeat();
+    if (!sub) {
+      toast("Pick a seat first.", "err");
+      return;
+    }
+    if (gatedWrite("claimsSet")) return;
+
+    const email = ($("pkm-claims-email")?.value || "").trim();
+    const password = $("pkm-claims-password")?.value || "";
+    if (!clear && !email && !password) {
+      setClaimsMsg("Enter an email or a password, or use a Clear button.", "err");
+      return;
+    }
+
+    const patch = clear
+      ? { clear }
+      : { ...(email ? { email } : {}), ...(password ? { password } : {}), ...(resign ? { resign: true } : {}) };
+
+    setClaimsMsg("Working…", null);
+    const res = await api.pkmClaimsSet(pkmReg(), sub, patch);
+    // Never leave a typed password sitting in the DOM.
+    const pw = $("pkm-claims-password");
+    if (pw) pw.value = "";
+
+    if (!res || !res.ok) {
+      setClaimsMsg((res && res.error) || "pkm refused the change", "err");
+      toast(`⚠️ ${(res && res.error) || "claims set failed"}`, "err");
+      return;
+    }
+
+    const d = res.data || {};
+    const replacement = d.resigned && d.resigned.licenseKey;
+    if (replacement) showLicenseModal(replacement, sub, "Re-signed");
+    setClaimsMsg(
+      d.changed
+        ? replacement
+          ? "Claims set and the cert re-signed — hand the seat owner the new licence."
+          : "Claims written to the ledger. Resign to push them into the cert."
+        : `Nothing changed${d.resigned && d.resigned.reason ? ` — ${d.resigned.reason}` : ""}.`,
+      d.changed ? "ok" : null,
+    );
+    guarded("claims", () => showClaims(sub));
+  }
+
+  async function pushClaimsToCert() {
+    const sub = claimsSub || claimsSeat();
+    if (!sub) return;
+    if (gatedWrite("claimsResign")) return;
+
+    setClaimsMsg("Re-signing…", null);
+    const res = await api.pkmClaimsResign(pkmReg(), sub);
+    if (!res || !res.ok) {
+      setClaimsMsg((res && res.error) || "pkm refused the resign", "err");
+      return;
+    }
+    const d = res.data || {};
+    const replacement = d.resigned && d.resigned.licenseKey;
+    if (replacement) showLicenseModal(replacement, sub, "Re-signed");
+    setClaimsMsg(
+      d.changed
+        ? "Cert re-signed — hand the seat owner the new licence."
+        : `Nothing to do${d.resigned && d.resigned.reason ? ` — ${d.resigned.reason}` : ""}.`,
+      d.changed ? "ok" : null,
+    );
+    guarded("claims", () => showClaims(sub));
+  }
+
+  /**
+   * Reveal the stored `pwdv`. NOT gated: reading a claim cannot corrupt the store,
+   * which is the same rule the Verify row follows.
+   */
+  async function revealVerifier() {
+    const sub = claimsSub || claimsSeat();
+    if (!sub) return;
+    const res = await api.pkmClaimsShow(pkmReg(), sub, true);
+    if (!res || !res.ok) {
+      setClaimsMsg((res && res.error) || "Could not read the verifier", "err");
+      return;
+    }
+    const pwdv = (res.data?.cert || {}).pwdv || (res.data?.ledger || {}).pwdv;
+    if (!pwdv) {
+      setClaimsMsg("This seat stores no password verifier, so it has no password.", "err");
+      return;
+    }
+    showLicenseModal(pwdv, sub, "Password verifier");
+  }
+
+  /** Retro-fit email claims from seat ids. Ledger-only, so nothing is re-signed. */
+  async function backfillClaims(dryRun) {
+    if (gatedWrite("claimsBackfill")) return;
+    setClaimsMsg("Working…", null);
+    const res = await api.pkmClaimsBackfill(pkmReg(), { emailFromSub: true, dryRun });
+    if (!res || !res.ok) {
+      setClaimsMsg((res && res.error) || "pkm refused the backfill", "err");
+      return;
+    }
+    const d = res.data || {};
+    const changed = Number(d.changed) || 0;
+    setClaimsMsg(
+      `${dryRun ? "Dry run — " : ""}${changed} to change, ${Number(d.skipped) || 0} skipped${changed ? "" : " (every seat already has an email)"}.`,
+      changed && !dryRun ? "ok" : null,
+    );
+    if (!dryRun) {
+      toast("Ledger claims backfilled.", "ok");
+      if (claimsSub) guarded("claims", () => showClaims(claimsSub));
+    }
+  }
+
+  /** The cert↔ledger drift canary, reported into the shared Verify output line. */
+  async function checkClaimsDrift() {
+    const out = $("pkm-checks-out");
+    out.className = "pkm-checks__out";
+    out.textContent = "Checking claims…";
+    const res = await api.pkmClaimsVerify(pkmReg());
+    if (!res || !res.ok) {
+      out.className = "pkm-checks__out pkm-checks__out--warn";
+      out.textContent = (res && res.error) || "claims verify failed";
+      return;
+    }
+    const reports = (res.data && res.data.reports) || [];
+    const rows = reports.flatMap((r) => r.rows || []);
+    const drifted = reports.reduce((n, r) => n + (Number(r.drifted) || 0), 0);
+    const out2 = rows.filter((r) => r.state && r.state !== "in-sync" && r.state !== "no-cert");
+    if (out2.length || drifted) {
+      out.className = "pkm-checks__out pkm-checks__out--warn";
+      out.textContent = `${out2.length} seat(s) with a cert that differs from the ledger — ${out2
+        .slice(0, 3)
+        .map((r) => `${r.sub} (${r.state})`)
+        .join(", ")}${out2.length > 3 ? "…" : ""}. Resign each seat to push the ledger claims into its cert.`;
+      return;
+    }
+    out.className = "pkm-checks__out pkm-checks__out--ok";
+    out.textContent = `Claims in sync for ${rows.length} seat(s) — every cert matches its ledger record.`;
+  }
+
+  /** The login check, offline: does this email + password actually work for this key? */
+  async function testCreds() {
+    const key = ($("pkm-creds-key")?.value || "").trim();
+    const email = ($("pkm-creds-email")?.value || "").trim();
+    const password = $("pkm-creds-password")?.value || "";
+    const msg = $("pkm-creds-msg");
+
+    if (!key || !password) {
+      msg.className = "config-msg err";
+      msg.textContent = "A licence key and a password are both required.";
+      return;
+    }
+    msg.className = "config-msg";
+    msg.textContent = "Testing…";
+
+    const res = await api.pkmCredsTest(pkmReg(), key, email, password);
+    const pw = $("pkm-creds-password");
+    if (pw) pw.value = "";
+
+    if (!res || !res.ok) {
+      msg.className = "config-msg err";
+      msg.textContent = (res && res.error) || "pkm refused the test";
+      return;
+    }
+    const d = res.data || {};
+    const REASONS = {
+      ok: "Credentials work — this key logs in with that email and password.",
+      password_mismatch: "The password does not match the verifier on this key.",
+      email_mismatch: "The email does not match this key's `email` claim (a key with no claim always reports this).",
+      revoked_seat: "That seat is REVOKED — the key is refused before the signature is even examined.",
+      malformed: "That is not a well-formed TA1 licence key.",
+    };
+    msg.className = d.ok ? "config-msg ok" : "config-msg err";
+    msg.textContent = REASONS[d.reason] || `pkm reported: ${d.reason}`;
+  }
+
   /**
    * Load the whole tab. Every failure path paints a Retry-able error box, so the
    * panels can never be left showing their initial "loading…" placeholder.
@@ -1454,14 +1752,16 @@
     }
   }
 
-  // ── Copy-once licence modal ──
-  // pkm prints the licence exactly once and it embeds the seat's private seeds, so
-  // it lives only in this textarea and is cleared the moment the modal closes.
-  function showLicenseModal(licenseKey, sub) {
+  // ── Copy-once secret modal ──
+  // pkm returns these exactly once and each one embeds secret material: an issued
+  // licence (the seat's private seeds), a `resigned.licenseKey` replacement, or a
+  // `pwdv` scrypt verifier (never the password, but offline-crackable). It lives
+  // only in this textarea and is cleared the moment the modal closes.
+  function showLicenseModal(licenseKey, sub, label = "Issued") {
     $("pkm-modal-key").value = licenseKey;
     const msg = $("pkm-modal-msg");
     msg.className = "config-msg ok";
-    msg.textContent = `Issued for ${sub}.`;
+    msg.textContent = `${label} for ${sub}.`;
     $("pkm-modal").classList.remove("hidden");
     const ta = $("pkm-modal-key");
     ta.focus();
@@ -1963,6 +2263,27 @@
   $("pkm-revocation-check").addEventListener("click", checkRevocationState);
   $("pkm-perms").addEventListener("click", checkPerms);
   $("pkm-bundle-check").addEventListener("click", checkBundle);
+  // Claims — the read-only drift canary sits with the other Verify checks; the
+  // seat-scoped actions live in the Claims panel, next to the two copies they act on.
+  $("pkm-claims-verify").addEventListener("click", () => guarded("claims", checkClaimsDrift));
+  $("pkm-claims-show").addEventListener("click", () => guarded("claims", () => showClaims()));
+  $("pkm-claims-seat").addEventListener("keydown", (e) => {
+    if (e.key === "Enter") guarded("claims", () => showClaims());
+  });
+  $("pkm-claims-backfill").addEventListener("click", () => guarded("claims", () => backfillClaims(true)));
+  $("pkm-claims-backfill-go").addEventListener("click", () => guarded("claims", () => backfillClaims(false)));
+  $("pkm-creds-open").addEventListener("click", () => {
+    $("pkm-creds-form").classList.remove("hidden");
+    $("pkm-creds-msg").textContent = "";
+    $("pkm-creds-key").focus();
+  });
+  $("pkm-creds-cancel").addEventListener("click", () => {
+    $("pkm-creds-form").classList.add("hidden");
+    $("pkm-creds-msg").textContent = "";
+    // Never leave a typed password in a hidden form.
+    $("pkm-creds-password").value = "";
+  });
+  $("pkm-creds-go").addEventListener("click", testCreds);
   $("pkm-refresh").addEventListener("click", () => guarded("licenses", refreshLicenses));
   $("pkm-archive").addEventListener("click", archiveExpiredSeats);
   $("pkm-export").addEventListener("click", exportBundle);
@@ -1974,6 +2295,12 @@
     pkmState.registry = e.target.value || null;
     pkmState.entry = pkmState.registries.find((r) => r.id === pkmState.registry) || null;
     $("pkm-audit-box").innerHTML = "";
+    // Claims are per-registry too, so drop the shown seat rather than leaving the
+    // previous registry's identity on screen where it could be edited blindly.
+    claimsSub = null;
+    $("pkm-claims-seat").value = "";
+    $("pkm-claims-box").innerHTML = '<div class="empty">Pick a seat to see the identity bound to its key.</div>';
+    setClaimsMsg("", null);
     renderPkmRingsHint();
     guarded("licenses", refreshLicenses);
   });

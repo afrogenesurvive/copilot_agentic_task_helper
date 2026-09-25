@@ -93,6 +93,12 @@ const COMMANDS = {
   revocation: { write: false },
   bundle: { write: false },
   perms: { write: false },
+  // Claims / credentials (read-only). `claimsShow` needs an extra flag to reveal
+  // the `pwdv` verifier (`--show-verifier`); without it pkm reports
+  // `hasPassword: true` and never the value.
+  claimsShow: { write: false },
+  claimsVerify: { write: false },
+  credsTest: { write: false },
   // `pkm authority` calls ensureAuthority(), which MINTS the export-signing keypair
   // when it is missing — a read-shaped command that writes, so it is gated.
   authority: { write: true, needs: [] },
@@ -108,6 +114,16 @@ const COMMANDS = {
   syncRevocation: { write: true, needs: [] },
   permsFix: { write: true, needs: [] },
   exportBundle: { write: true, needs: [] },
+  // Claims: `set` and `resign` can re-sign the cert, and a re-sign needs the
+  // master private key — so both declare `needs: ["ring"]` even though
+  // `claims set` without `--resign` only touches the ledger. The capability is
+  // per-COMMAND, not per-flag, and a registry whose ring is gone cannot mint the
+  // replacement cert the operator is about to hand over.
+  claimsSet: { write: true, needs: ["ring"] },
+  claimsResign: { write: true, needs: ["ring"] },
+  // Backfill only ever writes ledger records (it never re-signs), so it needs no
+  // ring — but it IS a write, so the blocklist check still applies.
+  claimsBackfill: { write: true, needs: [] },
 };
 
 /* ── pkm runner ────────────────────────────────────────────────────────────── */
@@ -138,9 +154,13 @@ function nodeRuntime() {
  *
  * @param {string[]} args - e.g. ["revoke", registryId, "seat@example.com"]
  * @param {object} P - resolved paths from pkmInfo()
+ * @param {string} [input] - written to pkm's stdin, for `--password-stdin`.
+ *   A secret must NEVER be passed as an argv entry: argv is world-readable via
+ *   `ps` (and zsh tries to expand a verifier's `$`), which is exactly what pkm's
+ *   `--password` warns about. `creds-test` accepts stdin ONLY.
  * @returns {Promise<{ok: boolean, data?: any, error?: string}>}
  */
-function runPkm(args, P) {
+function runPkm(args, P, input) {
   return new Promise((resolve) => {
     if (!fs.existsSync(P.bin)) {
       return resolve(fail(`pkm not found at ${P.bin} — set PKM_REPO in ⚙️ Config.`));
@@ -183,6 +203,14 @@ function runPkm(args, P) {
     } catch (e) {
       return done(fail(`could not run pkm: ${e.message}`));
     }
+
+    // Feed `--password-stdin`, then ALWAYS close stdin: pkm reads it with
+    // `fs.readFileSync(0)`, so a piped stdin that is never ended would block the
+    // command until the timeout. pkm refuses to read a TTY for the same reason.
+    child.stdin.on("error", () => {
+      /* pkm can exit before reading — an EPIPE here is expected, not reportable */
+    });
+    child.stdin.end(input == null ? "" : `${String(input)}\n`);
 
     child.stdout.on("data", (d) => (out += d.toString()));
     child.stderr.on("data", (d) => (err += d.toString()));
@@ -330,9 +358,10 @@ function gateFor(P, cap) {
  * @param {string} [registry] - registry id the command applies to
  * @param {keyof COMMANDS} capability - which declared command this is; the gate
  *   refuses it (without spawning) when the store cannot support it
+ * @param {string} [input] - stdin for `--password-stdin` (never an argv secret)
  * @returns {Promise<{ok: boolean, data?: any, error?: string}>}
  */
-function pkm(args, registry, capability) {
+function pkm(args, registry, capability, input) {
   const P = pkmInfo(registry);
   const cap = capability === undefined ? null : COMMANDS[capability];
 
@@ -344,7 +373,7 @@ function pkm(args, registry, capability) {
     if (!gate.ok) return Promise.resolve(gate);
   }
 
-  const run = () => runPkm(args, P);
+  const run = () => runPkm(args, P, input);
   chain = chain.then(run, run);
   return chain;
 }
@@ -657,6 +686,126 @@ export function archiveExpired(registry) {
 /** Seat issue/revoke/expiry history. */
 export function audit(registry) {
   return pkm(["audit", pkmInfo(registry).registry], registry, "audit");
+}
+
+/* ── Claims (identity bound to a key) ──────────────────────────────────────── */
+
+/**
+ * One seat's claims — the signed copy (what a consumer app enforces) and the
+ * ledger copy (what the next re-sign reads) — plus `state`: `in-sync` |
+ * `ledger-only` | `cert-only` | `mismatch` | `no-cert`.
+ *
+ * `showVerifier` adds `--show-verifier`, which reveals the `pwdv` scrypt
+ * verifier. That is the artifact an operator pastes into Dev Centre's admin list,
+ * so it is display-once material: unlike a password, a verifier is
+ * offline-crackable by whoever holds it. Never log the response with it set.
+ */
+export function claimsShow(registry, sub, { showVerifier = false } = {}) {
+  const seat = String(sub || "").trim();
+  if (!seat) return Promise.resolve(fail("Seat id is required."));
+  const args = ["claims", "show", pkmInfo(registry).registry, seat];
+  if (showVerifier) args.push("--show-verifier");
+  return pkm(args, registry, "claimsShow");
+}
+
+/**
+ * Write a seat's claims.
+ *
+ * At least one of `email` / `password` / `clear` is required — pkm refuses an
+ * empty call, and this pre-check turns that into a sentence instead of a CLI error.
+ *
+ * `resign` pushes the result INTO THE CERTIFICATE, which changes the licence
+ * string: pkm returns the replacement as `resigned.licenseKey` (display once,
+ * exactly like `issue`) and the seat owner must be handed it, or they keep
+ * presenting a key that carries the old claims. Without `--resign` the change is
+ * ledger-only and takes effect at the next re-sign.
+ *
+ * @param {{email?: string, password?: string, clear?: "email"|"password", resign?: boolean, force?: boolean}} patch
+ */
+export function claimsSet(registry, sub, patch = {}) {
+  const seat = String(sub || "").trim();
+  if (!seat) return Promise.resolve(fail("Seat id is required."));
+  const email = patch.email === undefined || patch.email === null ? "" : String(patch.email).trim();
+  const password = patch.password === undefined || patch.password === null ? null : String(patch.password);
+  const clear = patch.clear ? String(patch.clear) : "";
+
+  if (!email && password === null && !clear) {
+    return Promise.resolve(fail("Nothing to set — provide an email, a password, or a claim to clear."));
+  }
+  if (clear && !["email", "password"].includes(clear)) {
+    return Promise.resolve(fail(`Cannot clear "${clear}" — only email or password.`));
+  }
+
+  const args = ["claims", "set", pkmInfo(registry).registry, seat];
+  if (email) args.push("--email", email);
+  if (password !== null) args.push("--password-stdin");
+  if (clear) args.push("--clear", clear);
+  if (patch.resign) args.push("--resign");
+  if (patch.force) args.push("--force");
+  return pkm(args, registry, "claimsSet", password);
+}
+
+/**
+ * Push already-stored ledger claims into the cert, without supplying new values.
+ * Reports `changed: false` with `resigned.reason` when the cert is already
+ * carrying them, which is the normal "nothing to do" answer rather than an error.
+ */
+export function claimsResign(registry, sub, { force = false } = {}) {
+  const seat = String(sub || "").trim();
+  if (!seat) return Promise.resolve(fail("Seat id is required."));
+  const args = ["claims", "resign", pkmInfo(registry).registry, seat];
+  if (force) args.push("--force");
+  return pkm(args, registry, "claimsResign");
+}
+
+/**
+ * Retro-fit an email claim onto every seat that has none, derived from the seat
+ * id. LEDGER-ONLY — a subsequent `claims resign` (or `set --resign`) is what puts
+ * it in a cert, which is why pkm deliberately does not bulk re-sign.
+ *
+ * `dryRun` previews the per-seat actions without writing anything, and is the
+ * only safe way to see what a backfill would touch.
+ */
+export function claimsBackfill(registry, { emailFromSub = true, dryRun = false } = {}) {
+  const args = ["claims", "backfill", pkmInfo(registry).registry];
+  if (emailFromSub) args.push("--email-from-sub");
+  if (dryRun) args.push("--dry-run");
+  return pkm(args, registry, "claimsBackfill");
+}
+
+/**
+ * The cert↔ledger drift canary — the one hazard the two-copy claim model creates.
+ *
+ * A claim lives in both the signed cert (enforced by consumer apps) and the ledger
+ * record (read by the next re-sign), so they can silently diverge. This reports
+ * per seat. Only LIVE seats can fail it: liveness comes from the blocklist plus
+ * expiry, not from which directory the files sit in.
+ */
+export function claimsVerify(registry) {
+  return pkm(["claims", "verify", pkmInfo(registry).registry], registry, "claimsVerify");
+}
+
+/**
+ * `pkm creds-test` — the check a login performs, run offline.
+ *
+ * Answers "will this email + password actually work for this key?" BEFORE the key
+ * is handed over, which is otherwise only discoverable from a collaborator's
+ * failed login. `reason` separates `password_mismatch` from `email_mismatch`;
+ * `revoked_seat` is answered before the signature is even examined, and a
+ * claim-less key reports `email_mismatch` (there is no email to match).
+ *
+ * The password goes on STDIN only — pkm does not accept `--password` here at all.
+ */
+export function credsTest(registry, licenseKey, { email, password } = {}) {
+  const key = String(licenseKey || "").trim();
+  if (!key) return Promise.resolve(fail("A licence key is required."));
+  if (password === undefined || password === null || String(password) === "") {
+    return Promise.resolve(fail("A password is required — pkm creds-test reads it from stdin only."));
+  }
+  const args = ["creds-test", pkmInfo(registry).registry, key];
+  if (email) args.push("--email", String(email).trim());
+  args.push("--password-stdin");
+  return pkm(args, registry, "credsTest", String(password));
 }
 
 /* ── Verify (read-only) ────────────────────────────────────────────────────── */

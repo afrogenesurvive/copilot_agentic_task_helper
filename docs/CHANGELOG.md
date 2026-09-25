@@ -1,5 +1,37 @@
 # Changelog
 
+## [0.4.2-1] — 2026-09-24
+
+### Key Manager: bind an identity to a licence, and test a login before handing the key over
+
+`pkm` gained **claims** — an optional `email` and a scrypt password *verifier* signed into a seat's
+certificate — and the Key Manager now surfaces the whole of it:
+
+- **Claims panel.** Pick a seat and see its claim in both of the places it lives, side by side: the
+  signed certificate (what an app enforces) and the ledger record (what the next resign reads). A row
+  goes amber where the two disagree, and the badge names the drift — `in-sync`, `ledger-only`,
+  `cert-only`, `mismatch` or `no-cert`.
+- **Set, clear and resign from one form.** A blank field leaves that claim alone. **Apply + resign**
+  re-signs the certificate, which *changes the licence string*, so the replacement arrives in the same
+  display-once modal an issued key uses — hand it to the seat owner, because their old key still
+  carries the old claims.
+- **Reveal verifier** shows the stored verifier exactly as `pkm` holds it. Display-once: unlike a
+  password, a verifier is offline-crackable by whoever has it.
+- **Backfill emails** retro-fits a claim from each seat id, with a dry run that writes nothing.
+- **Claims drift** and **Test credentials…** joined the Verify row — the first finds a certificate that
+  no longer matches its ledger, the second runs the login check *offline*, so "will this email and
+  password actually work?" is answered before the key is handed over. A revoked seat is refused before
+  the signature is even examined.
+- A password is passed to `pkm` on stdin, never on its command line, which `ps` can read.
+
+### Groundwork for signing the desktop app in
+
+The credentials core for gating the desktop app behind a sign-in is written and tested, but **not yet
+wired to a screen** — a gitignored role registry with two tiers, an email/secret check that accepts
+either a plaintext secret or a verifier minted by `pkm`, and a session with a wall-clock limit that is
+re-checked at launch and never interrupts a running app. The app rename and the sign-in screen land
+next, so nothing changes about how the app starts today.
+
 ## [0.4.1-2] — 2026-09-24
 
 ### The menu-bar panel is tabbed, resizable, and carries an uncleared count

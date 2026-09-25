@@ -1696,6 +1696,30 @@ function registerIpc() {
   ipcMain.handle("pkm:challenge", async (_e, registry, key) => (await keyManager()).challenge(registry, key));
   ipcMain.handle("pkm:selfTest", async (_e, registry, key) => (await keyManager()).selfTest(registry, key));
   ipcMain.handle("pkm:checkRevocation", async (_e, registry) => (await keyManager()).checkRevocation(registry));
+  // Claims — an identity (`email`) and a scrypt password VERIFIER (`pwdv`) signed
+  // into the cert. `show`/`verify`/`credsTest` read; `set`/`resign`/`backfill` write.
+  // Two responses carry display-once secrets: `claimsShow --show-verifier` (the
+  // `pwdv` string, which an operator pastes into Dev Centre's admin list) and
+  // `claimsSet --resign` (`resigned.licenseKey`, the replacement licence). Neither
+  // is logged here. The password only ever travels as an argument to stdin — never
+  // on pkm's argv, which `ps` can read.
+  ipcMain.handle("pkm:claimsShow", async (_e, registry, sub, showVerifier) =>
+    (await keyManager()).claimsShow(registry, sub, { showVerifier: showVerifier === true }),
+  );
+  ipcMain.handle("pkm:claimsSet", async (_e, registry, sub, patch) => (await keyManager()).claimsSet(registry, sub, patch || {}));
+  ipcMain.handle("pkm:claimsResign", async (_e, registry, sub, force) =>
+    (await keyManager()).claimsResign(registry, sub, { force: force === true }),
+  );
+  ipcMain.handle("pkm:claimsBackfill", async (_e, registry, opts) =>
+    (await keyManager()).claimsBackfill(registry, {
+      emailFromSub: !opts || opts.emailFromSub !== false,
+      dryRun: Boolean(opts && opts.dryRun),
+    }),
+  );
+  ipcMain.handle("pkm:claimsVerify", async (_e, registry) => (await keyManager()).claimsVerify(registry));
+  ipcMain.handle("pkm:credsTest", async (_e, registry, key, email, password) =>
+    (await keyManager()).credsTest(registry, key, { email, password }),
+  );
   // Rings (master keypairs) + cross-app blocklist sync
   ipcMain.handle("pkm:rings", async (_e, registry) => (await keyManager()).rings(registry));
   ipcMain.handle("pkm:ringCreate", async (_e, registry, kid) => (await keyManager()).ringCreate(registry, kid));
