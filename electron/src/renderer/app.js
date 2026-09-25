@@ -331,6 +331,11 @@
   const SVC_COLLAPSE_KEY = "frontdesk.svcSidebarCollapsed";
   const dash = {
     selected: null,
+    // Bulk start/restart picker. This has to be state rather than DOM state:
+    // refreshDashboard() re-runs the whole rail's innerHTML on the 15s background
+    // refresh, which would otherwise wipe a tick the operator had just made.
+    selecting: false,
+    picked: new Set(),
     // Sidebar collapse state is a per-machine UI preference → localStorage.
     collapsed: (() => {
       try {
@@ -384,35 +389,48 @@
       `services ${running}/${svcs.length}`,
       svcs.length === 0 ? "" : running === svcs.length ? "ok" : running > 0 ? "warn" : "bad",
     );
-    // "Restart all down" is scoped to the core services (webhook / runner / tunnel):
-    // the `mcp:*` entries are never bulk-started, because the chat's in-process MCP
-    // client spawns its own copy of each server. `configured` excludes a service with
-    // no runnable command (e.g. the tunnel with no token), which is not "down".
-    const downCore = svcs.filter((s) => s.configured && !s.running && !s.name.startsWith("mcp:"));
-    const allBtn = $("svc-start-down");
-    if (allBtn) {
-      allBtn.disabled = downCore.length === 0;
-      allBtn.textContent = downCore.length ? `Restart all down (${downCore.length})` : "Restart all down";
-      allBtn.title = downCore.length
-        ? `Starts ${downCore.map((s) => s.label).join(", ")}. Services already up (including any started outside the dashboard) are left alone, and MCP servers are never bulk-started — the chat's in-process client owns its own copy of each.`
-        : "Every core service is already up. MCP servers are not included — the chat's in-process client owns its own copy of each.";
-    }
+    // The rail's bulk action is a picker now, so nothing here narrows to "core services"
+    // any more: whatever is ticked is started when down and restarted when up.
     if (!dash.selected || !names.includes(dash.selected)) dash.selected = names[0] || null;
 
     const strip = $("svc-tabs");
     strip.classList.toggle("collapsed", dash.collapsed);
+
+    const selecting = dash.selecting;
+    const pickedCount = svcs.filter((s) => dash.picked.has(s.name)).length;
+    const rowHTML = (s) => {
+      const state = svcState(s);
+      const icon = `<span class="svc-icon">${window.Icons.svg(svcIcon(s.name), 16)}</span>`;
+      const dot = `<span class="svc-dot ${state}"></span>`;
+      const label = `<span class="svc-tab-label">${esc(s.label)}</span>`;
+      if (!selecting) {
+        const cls = ["svc-tab", state, s.name === dash.selected ? "active" : ""].join(" ");
+        return `<button class="${cls}" data-svc="${esc(s.name)}" title="${esc(s.label)} — ${svcStateTitle(s)}">${icon}${dot}${label}</button>`;
+      }
+      // A <label> row, deliberately NOT a button wrapping an <input>: a control inside a
+      // control is invalid and fires both handlers. Picking must also never re-point the
+      // detail pane, which is why these rows are excluded from the click binding below.
+      const cls = ["svc-tab", "svc-pick", state].join(" ");
+      const box = `<input type="checkbox" class="svc-pick-box" data-svc="${esc(s.name)}"${dash.picked.has(s.name) ? " checked" : ""}${s.configured ? "" : " disabled"} />`;
+      const title = s.configured ? `Include ${s.label} — ${svcStateTitle(s)}` : `${s.label} is not configured — nothing to start`;
+      return `<label class="${cls}" title="${esc(title)}">${box}${icon}${dot}${label}</label>`;
+    };
+
     strip.innerHTML =
       `<div class="svc-tabs-head">` +
       `<span class="svc-tabs-title">Services</span>` +
       `<button id="svc-collapse" class="svc-collapse" title="${dash.collapsed ? "Expand the service list" : "Collapse the service list"}">${window.Icons.svg(dash.collapsed ? "chevron-right" : "chevron-left", 14)}</button>` +
       `</div>` +
-      svcs
-        .map((s) => {
-          const state = svcState(s);
-          const cls = ["svc-tab", state, s.name === dash.selected ? "active" : ""].join(" ");
-          return `<button class="${cls}" data-svc="${esc(s.name)}" title="${esc(s.label)} — ${svcStateTitle(s)}"><span class="svc-icon">${window.Icons.svg(svcIcon(s.name), 16)}</span><span class="svc-dot ${state}"></span><span class="svc-tab-label">${esc(s.label)}</span></button>`;
-        })
-        .join("");
+      // The bulk buttons sit between the heading and the rows: the action belongs beside
+      // the things it acts on, and the rail is where the tick-boxes appear.
+      `<div class="svc-bulk">` +
+      (selecting
+        ? `<button id="svc-bulk-toggle" class="svc-bulk-btn" title="Leave selection mode and clear every tick">${window.Icons.svg("close", 12)}<span>Cancel</span></button>` +
+          `<button id="svc-bulk-go" class="svc-bulk-btn primary"${pickedCount ? "" : " disabled"} title="${pickedCount ? "Start the ticked services that are down and restart the ones already up" : "Tick at least one service first"}">${window.Icons.svg("power", 12)}<span id="svc-bulk-go-label">Start / restart (${pickedCount})</span></button>`
+        : `<button id="svc-bulk-toggle" class="svc-bulk-btn" title="Pick services to start (if down) or restart (if up)">${window.Icons.svg("power", 12)}<span>Start / restart…</span></button>`) +
+      `</div>` +
+      svcs.map(rowHTML).join("");
+
     strip.querySelector("#svc-collapse").addEventListener("click", () => {
       dash.collapsed = !dash.collapsed;
       try {
@@ -422,15 +440,102 @@
       }
       refreshDashboard();
     });
-    strip.querySelectorAll(".svc-tab").forEach((b) =>
-      b.addEventListener("click", async () => {
-        dash.selected = b.dataset.svc;
-        strip.querySelectorAll(".svc-tab").forEach((x) => x.classList.toggle("active", x === b));
-        await renderSvcDetail(b.dataset.svc);
-      }),
-    );
+
+    if (selecting) {
+      strip.querySelectorAll(".svc-pick-box").forEach((box) =>
+        box.addEventListener("change", () => {
+          if (box.checked) dash.picked.add(box.dataset.svc);
+          else dash.picked.delete(box.dataset.svc);
+          // Touch only the commit button's own label and disabled state: re-rendering the
+          // rail here would rebuild (and un-focus) the row that was just clicked.
+          const go = strip.querySelector("#svc-bulk-go");
+          const goLabel = strip.querySelector("#svc-bulk-go-label");
+          if (go) go.disabled = dash.picked.size === 0;
+          if (goLabel) goLabel.textContent = `Start / restart (${dash.picked.size})`;
+        }),
+      );
+      strip.querySelector("#svc-bulk-toggle").addEventListener("click", cancelBulkSelection);
+      strip.querySelector("#svc-bulk-go")?.addEventListener("click", () => runBulkSelection(svcs));
+    } else {
+      // `button.svc-tab`, not `.svc-tab`: the picker's rows share that class and must not
+      // answer this handler — a <label> has no `data-svc`, so it would clear the selection
+      // and blank the detail pane.
+      strip.querySelectorAll("button.svc-tab").forEach((b) =>
+        b.addEventListener("click", async () => {
+          dash.selected = b.dataset.svc;
+          strip.querySelectorAll("button.svc-tab").forEach((x) => x.classList.toggle("active", x === b));
+          await renderSvcDetail(b.dataset.svc);
+        }),
+      );
+      strip.querySelector("#svc-bulk-toggle").addEventListener("click", () => {
+        dash.selecting = true;
+        // Pre-tick the core services — the set the old "Restart all down" covered — so the
+        // common "bring the backend back up" case stays one action. MCP servers are a
+        // deliberate, occasional choice, so they start unticked.
+        dash.picked = new Set(svcs.filter((s) => s.configured && !s.name.startsWith("mcp:")).map((s) => s.name));
+        refreshDashboard();
+      });
+    }
 
     await renderSvcDetail(dash.selected, svcs);
+  }
+
+  /**
+   * Leave the picker and forget every tick.
+   *
+   * Used by Cancel and again at the end of a bulk action, so both paths land in exactly the
+   * same state: the rail reverts to its normal rows with nothing left ticked.
+   */
+  function cancelBulkSelection() {
+    dash.selecting = false;
+    dash.picked = new Set();
+    const st = $("svc-bulk-status");
+    if (st) st.textContent = "";
+    refreshDashboard();
+  }
+
+  /**
+   * Bulk start/restart over the ticked services.
+   *
+   * The start-or-restart decision is made in main (`bulkServiceAction`): that side owns
+   * `serviceHealth()`, so it is the one that can tell "down" from "up but external" — the
+   * latter comes back as skipped rather than being silently ignored.
+   */
+  async function runBulkSelection(svcs) {
+    const names = svcs.filter((s) => dash.picked.has(s.name)).map((s) => s.name);
+    if (!names.length) return;
+    const st = $("svc-bulk-status");
+    const go = $("svc-bulk-go");
+    if (go) go.disabled = true;
+    const res = await withLoading(`Starting or restarting ${names.length} service${names.length === 1 ? "" : "s"}…`, () => api.svcBulkAction(names), {
+      context: "svc bulk action",
+      slowHint: "A restart waits for each old process to release its port before the replacement binds…",
+    });
+    if (st) {
+      if (!res) {
+        st.textContent = "No result — check the service list.";
+      } else if (res.ok === false) {
+        st.textContent = `⚠️ ${res.error}`;
+      } else {
+        const rows = res.results || [];
+        const byAction = (action) => rows.filter((r) => r.action === action);
+        st.textContent =
+          [
+            byAction("started").length ? `✅ started ${byAction("started").map((r) => r.label).join(", ")}` : "",
+            byAction("restarted").length ? `🔁 restarted ${byAction("restarted").map((r) => r.label).join(", ")}` : "",
+            byAction("failed").length ? `❌ ${byAction("failed").map((r) => `${r.label} (${r.error})`).join(", ")}` : "",
+            byAction("skipped").length ? `skipped ${byAction("skipped").map((r) => `${r.label} (${r.reason})`).join(", ")}` : "",
+          ]
+            .filter(Boolean)
+            .join(" · ") || "Nothing to do.";
+      }
+    }
+    // The action ends the picker: the ticks and the second button go away with this
+    // re-render. The report above is deliberately left in place — refreshDashboard() does
+    // not touch #svc-bulk-status — so it can still be read afterwards.
+    dash.selecting = false;
+    dash.picked = new Set();
+    refreshDashboard();
   }
 
   // WhatsApp MCP server dashboard details — configured token/WABA, which number
@@ -4143,41 +4248,6 @@
       reportError(err, label);
     }
   };
-
-  // Dashboard: bring every service that is down back up in one action. Bound ONCE —
-  // the button is static markup and survives the 15s dashboard refresh, so binding it
-  // inside refreshDashboard() (which re-runs the innerHTML of everything around it)
-  // would stack duplicate listeners.
-  $("svc-start-down")?.addEventListener("click", async () => {
-    const btn = $("svc-start-down");
-    const st = $("svc-start-down-status");
-    if (btn) btn.disabled = true;
-    if (st) st.textContent = "Starting every service that is down…";
-    const res = await withLoading("Starting every service that is down…", () => api.svcStartAllDown(), {
-      context: "svc start all down",
-      slowHint: "Waiting for the down services to come up…",
-    });
-    if (st) {
-      if (!res) {
-        st.textContent = "No result — check the service list.";
-      } else if (res.ok === false) {
-        st.textContent = `⚠️ ${res.error}`;
-      } else {
-        const rows = res.results || [];
-        const started = rows.filter((r) => r.action === "started");
-        const failed = rows.filter((r) => r.action === "failed");
-        const skipped = rows.filter((r) => r.action === "skipped");
-        st.textContent = [
-          started.length ? `✅ started ${started.map((r) => r.label).join(", ")}` : "Nothing was down.",
-          failed.length ? `❌ ${failed.map((r) => `${r.label} (${r.error})`).join(", ")}` : "",
-          skipped.length ? `skipped ${skipped.length} not configured` : "",
-        ]
-          .filter(Boolean)
-          .join(" · ");
-      }
-    }
-    refreshDashboard();
-  });
 
   // ── Role ──
   // The two tier_1-only nav buttons ship `hidden` — fail-closed, and _layout.css has to

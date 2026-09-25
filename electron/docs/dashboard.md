@@ -55,12 +55,20 @@ local services this app manages, with live output for each one.
 
 ## Common actions
 
-- **Bring the stack back up** — **Restart all down (N)** above the detail panel starts every core
-  service that is not running; the count is how many are down, and it's disabled at 0. It never
-  touches a service that is already up (including one started outside the dashboard), and MCP
-  servers are excluded — the chat's in-process client owns its own copy of each, so starting them
-  here as well would leave two processes per server. The line beside the button reports what
-  happened (`✅ started …  · ❌ … · skipped N not configured`).
+- **Bring the stack back up** — **Start / restart…** sits between the sidebar's heading and the
+  service list. It turns the rail into a picker: every service gets a checkbox (pre-ticked for the
+  configured core services, so the common case is still one extra click; a service that is not
+  configured has its box disabled). Tick what you want and press **Start / restart (N)** — each
+  ticked service that is **down is started**, and each one that is **up is restarted**. The action
+  ends the picker: the checkboxes and the commit button disappear, the rail returns to its normal
+  rows, and the report line above the detail panel stays behind
+  (`✅ started …  ·  🔁 restarted …  ·  ❌ …  ·  skipped … (reason)`). **Cancel** does the same
+  without doing any work, and also clears the report.
+
+  Unlike the old "Restart all down" this **includes the MCP servers** — an explicit tick is a
+  per-server decision, which is what the old bulk default could not be. A service that is up but
+  was started **outside** the dashboard is reported as skipped rather than restarted: the app can
+  only stop the processes it spawned itself.
 
 - **Start the stack** — select **Webhook server** → **▶ Start**, then start **Agent runner** (and
   the tunnel if you need remote access).

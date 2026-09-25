@@ -150,6 +150,56 @@
   background: #ffffff;
 }
 
+/* ── Rail: bulk start/restart picker ──
+ *
+ * The action row sits between the rail's heading and the service rows, so the buttons are
+ * next to the things they act on: heading → action → list, sharing the one divider. */
+.svc-bulk {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px;
+  padding: 0 2px 8px;
+  margin-bottom: 4px;
+  border-bottom: 1px solid var(--border);
+}
+
+/* `flex-wrap` rather than a fixed split: the row is 210px wide, so "Start / restart (3)"
+   beside "Cancel" wraps onto a second line instead of overflowing. */
+.svc-bulk-btn {
+  flex: 1 1 auto;
+  justify-content: center;
+  padding: 4px 8px;
+  font-size: 0.78rem;
+  line-height: 1.25;
+}
+
+/* The collapsed rail is 46px wide, so the labels cannot fit: keep the glyphs, exactly as
+   `.svc-tab-label` already does for the service rows. */
+.svc-tabs.collapsed .svc-bulk-btn span {
+  display: none;
+}
+
+/* A pick row is a <label> carrying `.svc-tab`, so it inherits the row look. Border, radius
+   and padding are restated because a <label> does not get the element defaults that
+   _form-fields.css gives a <button>. It reads as inert on purpose — ticking a box must not
+   move the detail pane's selection, so there is no hover state to invite that. */
+.svc-pick {
+  padding: 6px 12px;
+  border: 1px solid transparent;
+  border-radius: var(--radius-sm);
+  color: var(--text);
+  cursor: pointer;
+}
+
+.svc-pick:hover {
+  border-color: transparent;
+}
+
+.svc-pick-box {
+  flex: 0 0 auto;
+  margin: 0;
+}
+
 /* ── Detail pane ── */
 
 .svc-main {

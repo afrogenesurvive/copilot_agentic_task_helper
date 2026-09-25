@@ -1,6 +1,6 @@
 {
   "name": "dev-centre",
-  "version": "0.4.2",
+  "version": "0.4.3",
   "private": true,
   "description": "Dev Centre — desktop control plane for the frontdesk v2 stack and the local agent tooling: queues, logs, sessions, licences, and the MCP tools, from one macOS app",
   "main": "src/main.js",

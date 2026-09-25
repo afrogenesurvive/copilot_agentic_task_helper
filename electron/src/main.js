@@ -512,54 +512,74 @@ function serviceTail(name, lines = 40) {
   return out.slice(-lines);
 }
 
-// ── "Restart all down": bring back every CORE service that is not up ─────────
+// ── Bulk start/restart over an explicit selection ────────────────────────────
 //
-// Scope is the three services the app itself is responsible for (webhook, runner,
-// tunnel) — the same set `OPERATOR_AUTOSTART` starts — and deliberately NOT `mcp:*`:
-// those are never autostarted because the operator chat's in-process MCP client
-// spawns its own child per server, so a bulk start would leave two processes for
-// every server the chat touches. A service that is up but EXTERNAL is left alone (it
-// is not down, and this app can only stop what it started); one that is not
-// configured (no tunnel token, say) is skipped rather than reported as a failure.
-let startAllDownBusy = false;
+// The Dashboard's service rail hands this an explicit tick-list and this does whatever
+// each service's state needs: one that is DOWN is started, one that is UP and managed is
+// RESTARTED. That is the whole difference from a plain "start everything that is down" —
+// and it is why `mcp:*` is allowed here at all. The old bulk action had to exclude them
+// because "restart every core service" is not a per-server decision; a tick-list is.
+//
+// A service that is up but EXTERNAL is reported as skipped, never restarted: this app can
+// only stop the processes it spawned itself. One that is not configured (no tunnel token,
+// say) is skipped too, rather than being counted as a failure.
+let bulkServiceBusy = false;
 
-async function startAllDown() {
+async function bulkServiceAction(names = []) {
+  if (!Array.isArray(names) || names.length === 0) return { ok: false, error: "no services selected" };
   // Re-entrancy guard: two clicks in flight would otherwise spawn two of everything.
-  if (startAllDownBusy) return { ok: false, error: "already starting services" };
-  startAllDownBusy = true;
+  if (bulkServiceBusy) return { ok: false, error: "already starting services" };
+  bulkServiceBusy = true;
   try {
     const results = [];
-    for (const name of Object.keys(serviceDefs).filter((n) => !n.startsWith("mcp:"))) {
+    for (const name of names) {
+      if (!serviceDefs[name]) {
+        results.push({ name, label: name, action: "failed", error: "unknown service" });
+        continue;
+      }
       const before = await serviceHealth(name);
       if (!before.configured) {
         results.push({ name, label: before.label, action: "skipped", reason: "not configured" });
         continue;
       }
-      if (before.running) {
-        results.push({ name, label: before.label, action: "up", external: before.external });
+      if (!before.running) {
+        const res = startService(name);
+        results.push({
+          name,
+          label: before.label,
+          action: res.ok ? "started" : "failed",
+          pid: res.pid || null,
+          error: res.error || null,
+        });
+        // Let it bind its port / write its pidfile before probing the next one.
+        if (res.ok) await new Promise((r) => setTimeout(r, 400));
         continue;
       }
-      const res = startService(name);
+      if (before.external) {
+        results.push({ name, label: before.label, action: "skipped", reason: "running outside the dashboard" });
+        continue;
+      }
+      // restartService() waits ~700ms for the old process to release its port before the
+      // replacement binds, and answers false for anything it cannot see in `running`.
+      const restarted = await restartService(name);
       results.push({
         name,
         label: before.label,
-        action: res.ok ? "started" : "failed",
-        pid: res.pid || null,
-        error: res.error || null,
+        action: restarted ? "restarted" : "skipped",
+        reason: restarted ? undefined : "not managed by the dashboard",
       });
-      // Let it bind its port / write its pidfile before probing the next one.
-      if (res.ok) await new Promise((r) => setTimeout(r, 400));
     }
-    const started = results.filter((r) => r.action === "started");
+    const count = (action) => results.filter((r) => r.action === action).length;
     return {
       ok: true,
-      started: started.length,
-      startedNames: started.map((r) => r.name),
-      failed: results.filter((r) => r.action === "failed").length,
+      started: count("started"),
+      restarted: count("restarted"),
+      failed: count("failed"),
+      skipped: count("skipped"),
       results,
     };
   } finally {
-    startAllDownBusy = false;
+    bulkServiceBusy = false;
   }
 }
 
@@ -1782,7 +1802,8 @@ function registerIpc() {
   ipcMain.handle("svc:start", (_e, name) => startService(name));
   ipcMain.handle("svc:stop", (_e, name) => stopService(name));
   ipcMain.handle("svc:restart", (_e, name) => restartService(name));
-  ipcMain.handle("svc:startAllDown", () => startAllDown());
+  // The Dashboard rail's bulk action: starts what is down, restarts what is up.
+  ipcMain.handle("svc:bulkAction", (_e, names) => bulkServiceAction(names));
   ipcMain.handle("svc:log", (_e, name, lines) => serviceTail(name, lines));
   ipcMain.handle("webhook:reregister", () => reregisterWebhooks());
 

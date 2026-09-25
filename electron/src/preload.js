@@ -16,7 +16,8 @@ contextBridge.exposeInMainWorld("api", {
   svcStart: (name) => ipcRenderer.invoke("svc:start", name),
   svcStop: (name) => ipcRenderer.invoke("svc:stop", name),
   svcRestart: (name) => ipcRenderer.invoke("svc:restart", name),
-  svcStartAllDown: () => ipcRenderer.invoke("svc:startAllDown"),
+  // Bulk: an array of service names. Each one is started when down and restarted when up.
+  svcBulkAction: (names) => ipcRenderer.invoke("svc:bulkAction", names),
   svcReregisterWebhooks: () => ipcRenderer.invoke("webhook:reregister"),
   svcLog: (name, lines) => ipcRenderer.invoke("svc:log", name, lines),
   health: () => ipcRenderer.invoke("health"),

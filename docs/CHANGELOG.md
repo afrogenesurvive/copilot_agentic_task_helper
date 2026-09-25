@@ -1,5 +1,25 @@
 # Changelog
 
+## [0.4.3-1] — 2026-09-25
+
+### The Dashboard's single bulk button is now a service picker
+
+**Restart all down (N)** could only ever *start what was stopped*, so it sat disabled whenever everything
+was already running — and it could not restart a service that was up. It has been replaced by
+**Start / restart…**, which sits between the sidebar's heading and the service list.
+
+Click it and the rail becomes a picker: every service gets a checkbox, with the core services
+(webhook, runner, tunnel) already ticked and any service that is not configured greyed out. Tick what you
+want and press **Start / restart (N)** — each ticked service that is **down is started**, and each one that
+is **up is restarted**. The picker then closes itself, the rail returns to its normal rows, and the report
+above the service details says what happened (`✅ started …  ·  🔁 restarted …  ·  ❌ …  ·  skipped …
+(reason)`). **Cancel** backs out, clears the ticks and the report, and changes nothing.
+
+The MCP servers are selectable here, because an explicit tick is a deliberate choice per server — which
+the old button's blanket "core services only" rule could not be. A service that is running but was started
+**outside** the app is reported as skipped rather than restarted: Dev Centre can only stop the processes it
+started itself, so it will not kill a runner you launched yourself.
+
 ## [0.4.2-4] — 2026-09-25
 
 ### The sign-in screen's close button now quits, and the menu-bar icon follows the menu bar

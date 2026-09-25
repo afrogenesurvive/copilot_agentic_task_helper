@@ -136,11 +136,12 @@
               licence from this app's own sign-in on launch; collaborators (seats) never see this
               dashboard — each only uses their own webapp chat.
             </div>
-            <!-- One action for the whole list, above the per-service detail panel:
-                 starts every CORE service that is down (the count says how many). -->
+            <!-- Report line for the rail's bulk action. The buttons themselves are built
+                 into the service sidebar (#svc-tabs, see the picker in app.js) so the
+                 action sits next to the rows it selects; only the result stays out here,
+                 where there is width to read it. Empty until an action runs. -->
             <div class="svc-actions svc-reregister">
-              <button id="svc-start-down" title="Start every core service that is down">Restart all down</button>
-              <span class="svc-rereg-status" id="svc-start-down-status"></span>
+              <span class="svc-rereg-status" id="svc-bulk-status"></span>
             </div>
             <div id="svc-detail" class="panel svc-detail">
               <div class="empty">Loading services…</div>
