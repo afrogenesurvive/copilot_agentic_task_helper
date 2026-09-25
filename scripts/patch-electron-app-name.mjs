@@ -37,9 +37,9 @@ const HERE = path.dirname(fileURLToPath(import.meta.url));
 const REPO = path.resolve(HERE, "..");
 
 // Kept in sync with electron/package.json's build.productName / build.appId.
-const APP_NAME = "Frontdesk Operator";
-const BUNDLE_ID = "com.frontdesk.operator";
-const ICON_BASENAME = "frontdesk.icns";
+const APP_NAME = "Dev Centre";
+const BUNDLE_ID = "com.devcentre.app";
+const ICON_BASENAME = "dev-centre.icns";
 
 const APP = path.join(REPO, "electron", "node_modules", "electron", "dist", "Electron.app");
 const PLIST = path.join(APP, "Contents", "Info.plist");

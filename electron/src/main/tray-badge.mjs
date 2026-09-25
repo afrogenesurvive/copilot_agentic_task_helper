@@ -122,6 +122,21 @@ function page(markup) {
 
 const wait = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
 
+/**
+ * Serialises EVERY rasterisation, not just the ones sharing a cache key.
+ *
+ * `INFLIGHT` below dedupes a key that is already being drawn, but two DIFFERENT keys
+ * still ran at once — prewarm()'s twenty sequential renders racing the
+ * `updateTrayBadge()` for the count actually on screen. There is only one window, so
+ * the second `loadURL` aborts the first (that is the ERR_ABORTED pair in the log on
+ * every launch) and the loser's `capturePage()` then lands on a webContents that is
+ * mid-navigation. That has segfaulted the browser process — intermittently, because
+ * it depends on the timing of the grab against the abort.
+ *
+ * `draw` is passed as both handlers so one failed render cannot poison the chain.
+ */
+let renderChain = Promise.resolve();
+
 /** The reused rasteriser window. Created on first use, never destroyed after. */
 function renderWindow() {
   if (win && !win.isDestroyed()) return win;
@@ -193,7 +208,8 @@ export async function badgeImage(count, { dark = false } = {}) {
   const pending = INFLIGHT.get(key);
   if (pending) return pending;
 
-  const job = rasterize(svgFor(label, dark), badgeWidth(label))
+  const draw = () => rasterize(svgFor(label, dark), badgeWidth(label));
+  const job = (renderChain = renderChain.then(draw, draw))
     .then((image) => {
       if (!image || image.isEmpty()) return null;
       CACHE.set(key, image);

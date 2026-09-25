@@ -32,7 +32,7 @@ const AUTH_TIMEOUT_MS = 10 * 60 * 1000;
 const CLOSE_PAGE = `<!DOCTYPE html><html><head><meta charset="utf-8"><title>Authorization complete</title></head>
 <body style="font-family:system-ui,sans-serif;background:#0d1117;color:#c9d1d9;display:flex;align-items:center;justify-content:center;height:100vh;margin:0">
 <div style="text-align:center"><h2 style="color:#3fb950">✓ Authorization complete</h2>
-<p>You can close this tab and return to Frontdesk Operator.</p></div></body></html>`;
+<p>You can close this tab and return to Dev Centre.</p></div></body></html>`;
 
 async function accountsModule(repoRoot) {
   return import(pathToFileURL(path.join(repoRoot, "scripts", "frontdesk-accounts.mjs")).href);

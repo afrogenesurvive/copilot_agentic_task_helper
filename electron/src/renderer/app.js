@@ -1,5 +1,5 @@
 /**
- * Frontdesk Operator — renderer.
+ * Dev Centre — renderer.
  * Vanilla JS driving the dashboard via the preload `window.api` bridge.
  */
 (function () {
@@ -384,6 +384,19 @@
       `services ${running}/${svcs.length}`,
       svcs.length === 0 ? "" : running === svcs.length ? "ok" : running > 0 ? "warn" : "bad",
     );
+    // "Restart all down" is scoped to the core services (webhook / runner / tunnel):
+    // the `mcp:*` entries are never bulk-started, because the chat's in-process MCP
+    // client spawns its own copy of each server. `configured` excludes a service with
+    // no runnable command (e.g. the tunnel with no token), which is not "down".
+    const downCore = svcs.filter((s) => s.configured && !s.running && !s.name.startsWith("mcp:"));
+    const allBtn = $("svc-start-down");
+    if (allBtn) {
+      allBtn.disabled = downCore.length === 0;
+      allBtn.textContent = downCore.length ? `Restart all down (${downCore.length})` : "Restart all down";
+      allBtn.title = downCore.length
+        ? `Starts ${downCore.map((s) => s.label).join(", ")}. Services already up (including any started outside the dashboard) are left alone, and MCP servers are never bulk-started — the chat's in-process client owns its own copy of each.`
+        : "Every core service is already up. MCP servers are not included — the chat's in-process client owns its own copy of each.";
+    }
     if (!dash.selected || !names.includes(dash.selected)) dash.selected = names[0] || null;
 
     const strip = $("svc-tabs");
@@ -3435,7 +3448,7 @@
   async function refreshAbout() {
     const r = await api.appVersion();
     const el = $("about-version");
-    el.textContent = r && r.ok ? `${r.name} — v${r.version}` : "Frontdesk Operator";
+    el.textContent = r && r.ok ? `${r.name} — v${r.version}` : "Dev Centre";
     // Mirror the identity into the status bar. `r.name` is `app.getName()`, which
     // in a packaged build is the same string the OS shows in the dock.
     if (r && r.ok) setStatusText("status-app", `${r.name} v${r.version}`, "");
@@ -4117,7 +4130,7 @@
 
   // ── Quit (stops backend services via main's before-quit) ──
   document.getElementById("quit-btn").addEventListener("click", () => {
-    if (window.confirm("Quit Frontdesk Operator? Backend services will stop.")) api.quit();
+    if (window.confirm("Quit Dev Centre? Backend services will stop.")) api.quit();
   });
 
   // ── Init ──
@@ -4130,6 +4143,68 @@
       reportError(err, label);
     }
   };
+
+  // Dashboard: bring every service that is down back up in one action. Bound ONCE —
+  // the button is static markup and survives the 15s dashboard refresh, so binding it
+  // inside refreshDashboard() (which re-runs the innerHTML of everything around it)
+  // would stack duplicate listeners.
+  $("svc-start-down")?.addEventListener("click", async () => {
+    const btn = $("svc-start-down");
+    const st = $("svc-start-down-status");
+    if (btn) btn.disabled = true;
+    if (st) st.textContent = "Starting every service that is down…";
+    const res = await withLoading("Starting every service that is down…", () => api.svcStartAllDown(), {
+      context: "svc start all down",
+      slowHint: "Waiting for the down services to come up…",
+    });
+    if (st) {
+      if (!res) {
+        st.textContent = "No result — check the service list.";
+      } else if (res.ok === false) {
+        st.textContent = `⚠️ ${res.error}`;
+      } else {
+        const rows = res.results || [];
+        const started = rows.filter((r) => r.action === "started");
+        const failed = rows.filter((r) => r.action === "failed");
+        const skipped = rows.filter((r) => r.action === "skipped");
+        st.textContent = [
+          started.length ? `✅ started ${started.map((r) => r.label).join(", ")}` : "Nothing was down.",
+          failed.length ? `❌ ${failed.map((r) => `${r.label} (${r.error})`).join(", ")}` : "",
+          skipped.length ? `skipped ${skipped.length} not configured` : "",
+        ]
+          .filter(Boolean)
+          .join(" · ");
+      }
+    }
+    refreshDashboard();
+  });
+
+  // ── Role ──
+  // The two tier_1-only nav buttons ship `hidden` — fail-closed, and _layout.css has to
+  // restate `[hidden]` because their `display: flex` would otherwise win — so a tier_2
+  // operator never sees a control that could only ever error. They are revealed only for
+  // a tier_1 session.
+  //
+  // This is presentation, not the control. Main refuses the channels behind those tabs
+  // outright (TIER_1_ONLY in main/dev-centre-auth.js), and it would not have loaded THIS
+  // document at all without a session — the locked screen is gate.html, a separate one.
+  safeInit("role", () => {
+    // Guarded like every other step here, and `safeInit` is what makes that matter: an
+    // unguarded throw would skip the whole rest of the initialisation (the failure the
+    // comment above this section is about). It is reachable — `scripts/render-screenshots.mjs`
+    // loads this document with no preload at all, and the renderer has no bridge then.
+    if (!api || typeof api.authState !== "function") return;
+    api
+      .authState()
+      .then((res) => {
+        const state = (res && res.state) || {};
+        if (state.role !== "tier_1") return;
+        document.querySelectorAll('[data-role-min="tier_1"]').forEach((el) => el.removeAttribute("hidden"));
+      })
+      .catch(() => {
+        /* leave them hidden: an unreadable role is not a reason to reveal tier_1 controls */
+      });
+  });
 
   safeInit("dashboard", refreshDashboard);
   safeInit("config", refreshConfig);

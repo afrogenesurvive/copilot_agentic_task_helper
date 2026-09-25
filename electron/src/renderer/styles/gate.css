@@ -1,0 +1,178 @@
+/*
+ * The gate's stylesheet.
+ *
+ * Deliberately self-contained. This is the one screen that has to render correctly
+ * when nothing else works — there is no session, so there is no data-driven state, and
+ * no icons — so it borrows only the token variables from _layout.css and the control
+ * primitives from _form-fields.css. It still follows the app's palette, light/dark
+ * included, because gate.html loads tokens.js exactly as the dashboard does.
+ *
+ * No inline styles anywhere, and none of this can move into the markup: the page pins
+ * `style-src 'self'` with no 'unsafe-inline', which silently drops a `style="…"`
+ * attribute and any <style> block.
+ */
+
+.gate {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  height: 100vh;
+}
+
+.gate__card {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  width: 340px;
+  padding: 24px 22px 20px;
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  /* The setup notice names absolute paths, which are single tokens far wider than this
+   * card. `anywhere` rather than `break-word`, because it is also the only value that
+   * lowers the MIN-CONTENT size — and a flex item's automatic minimum is derived from
+   * exactly that, so `break-word` alone would keep the box at the long-token width and
+   * let the text run out through the border. Inherited by everything inside, which is
+   * what the paths in the notice, the error and the hint all need. */
+  overflow-wrap: anywhere;
+}
+
+.gate__head {
+  display: flex;
+  align-items: flex-start;
+  /* The version and the close button are pushed right by `margin-left: auto` on the
+   * version rather than by `space-between`, so adding the button did not change where
+   * the brand sits. */
+  justify-content: flex-start;
+  /* The title, the sub-line, the version and the close button share one row. Wrapping
+   * lets them drop to a second line rather than pushing the title out of the card. */
+  flex-wrap: wrap;
+  gap: 8px;
+  margin-bottom: 6px;
+}
+
+.gate__brand {
+  display: flex;
+  flex-direction: column;
+  gap: 1px;
+  /* Allowed to shrink below its content width, so the brand wraps inside the row
+   * instead of forcing the version off the edge. */
+  min-width: 0;
+}
+
+.gate__title {
+  margin: 0;
+  font-size: 1.2em;
+  font-weight: 600;
+}
+
+.gate__sub {
+  color: var(--text-muted);
+  font-size: 0.78em;
+}
+
+.gate__version {
+  /* Consumes the free space in the row, which holds the version and the close button
+   * together at the right edge. */
+  margin-left: auto;
+  color: var(--text-muted);
+  font-size: 0.75em;
+}
+
+/* The close button: a ghost square at the end of the header row. 22px so it is a
+ * comfortable target without competing with the form's primary button. */
+.gate__close {
+  flex-shrink: 0;
+  width: 22px;
+  height: 22px;
+  padding: 0;
+  justify-content: center;
+  color: var(--text-muted);
+  background: transparent;
+  border: 1px solid transparent;
+  border-radius: var(--radius-sm);
+  font-size: 1rem;
+  line-height: 1;
+}
+
+.gate__close:hover {
+  color: var(--text);
+  background: var(--surface-hover);
+  border-color: var(--border);
+}
+
+.gate__close:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 1px;
+}
+
+.gate__label {
+  margin-top: 4px;
+  color: var(--text-muted);
+  font-size: 0.78em;
+}
+
+/* The form is its own flex column so the two label/input pairs and the button keep the
+ * card's rhythm — the card's `gap` does not reach through a block-level box. */
+.gate__form {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+
+.gate__input {
+  width: 100%;
+}
+
+.gate__submit {
+  width: 100%;
+  margin-top: 10px;
+  justify-content: center;
+}
+
+.gate__notice {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  padding: 8px 10px;
+  margin-bottom: 4px;
+  background: var(--bg);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  font-size: 0.78em;
+  line-height: 1.4;
+  /* The one thing here that cannot be guessed is WHERE to put a credential, so the two
+   * paths get a line of their own rather than running together in a paragraph — gate.js
+   * writes the breaks and this keeps them. */
+  white-space: pre-line;
+}
+
+/* Flex items default to `min-width: auto`, which is the long-token width, so without
+ * this the notice's own children stay as wide as the path inside them. */
+.gate__notice > * {
+  min-width: 0;
+}
+
+/* Not a token — the palette has no error colour, and the two existing ones
+ * (.btn--danger, .sidebar-btn--danger) are hover states rather than text colours. */
+.gate__error {
+  margin: 6px 0 0;
+  color: #e5534b;
+  font-size: 0.8em;
+  line-height: 1.4;
+}
+
+.gate__hint {
+  margin: 6px 0 0;
+  color: var(--text-muted);
+  font-size: 0.72em;
+  line-height: 1.45;
+}
+
+/* The UA's `[hidden] { display: none }` loses to any author `display` on the same
+ * element, so a `hidden` notice would stay on screen — tray.css restates the same rule
+ * for its panes. Both of these are toggled from gate.js. */
+.gate__notice[hidden],
+.gate__error[hidden] {
+  display: none;
+}

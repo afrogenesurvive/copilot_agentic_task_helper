@@ -12,7 +12,7 @@
     -->
     <meta http-equiv="Content-Security-Policy" content="default-src 'self'; style-src 'self'; script-src 'self'; img-src 'self' data:;" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-    <title>Frontdesk Operator</title>
+    <title>Dev Centre</title>
 
     <!-- Stylesheets load in cascade order: later files override earlier ones.
          Feature files (components/*) always win over the shared primitives. -->
@@ -47,7 +47,7 @@
           <div class="sidebar-brand">
             <span class="sidebar-brand__mark" data-icon="console" data-icon-size="22"></span>
             <span class="sidebar-brand__text">
-              <span class="sidebar-brand__name">Frontdesk Operator</span>
+              <span class="sidebar-brand__name">Dev Centre</span>
               <span class="sidebar-brand__sub">operator console</span>
             </span>
           </div>
@@ -74,10 +74,16 @@
             <button data-tab="usage" class="sidebar-btn">
               <span data-icon="analytics"></span><span class="sidebar-btn__label">Usage</span>
             </button>
-            <button data-tab="licenses" class="sidebar-btn">
+            <!-- tier_1 ONLY. `hidden` is the fail-closed default: app.js reveals these
+                 once it has read the session's role, so a tier_2 operator never sees
+                 them and a tier_1 one sees them a frame later. Main refuses the
+                 channels behind them for tier_2 regardless of what the renderer shows —
+                 this is presentation, not the control (see TIER_1_ONLY in
+                 dev-centre-auth.js). -->
+            <button data-tab="licenses" class="sidebar-btn" data-role-min="tier_1" hidden>
               <span data-icon="key"></span><span class="sidebar-btn__label">Key Manager</span>
             </button>
-            <button data-tab="accounts" class="sidebar-btn">
+            <button data-tab="accounts" class="sidebar-btn" data-role-min="tier_1" hidden>
               <span data-icon="lock"></span><span class="sidebar-btn__label">Accounts &amp; Keys</span>
             </button>
 
@@ -126,8 +132,15 @@
             <div class="svc-note">
               <b>Operator-only.</b> This app is the operator's single console — it shows every local
               service, seat (Key Manager), and per-seat account binding (Accounts &amp; Keys) at
-              once. Seat licenses &amp; bindings gate the <b>public chat webapp</b>, not this app;
-              collaborators (seats) never see this dashboard — each only uses their own webapp chat.
+              once. Seat licenses &amp; bindings gate the <b>public chat webapp</b> — a separate
+              licence from this app's own sign-in on launch; collaborators (seats) never see this
+              dashboard — each only uses their own webapp chat.
+            </div>
+            <!-- One action for the whole list, above the per-service detail panel:
+                 starts every CORE service that is down (the count says how many). -->
+            <div class="svc-actions svc-reregister">
+              <button id="svc-start-down" title="Start every core service that is down">Restart all down</button>
+              <span class="svc-rereg-status" id="svc-start-down-status"></span>
             </div>
             <div id="svc-detail" class="panel svc-detail">
               <div class="empty">Loading services…</div>
@@ -367,7 +380,8 @@
           </div>
 
           <p class="hint">
-            Seat licences gate <b>webapp login</b> for collaborators — not this app. Every operation
+            Seat licences gate <b>webapp login</b> for collaborators — this app's own gate is the
+            sign-in on launch instead. Every operation
             below runs through the <code>pkm</code> CLI in <b>personal_key_manager</b>, which owns all
             ring, seat, revocation and audit data; this dashboard is only a front end.
             Revocation is read live by the webhook server, so it takes effect on that seat's
@@ -728,7 +742,7 @@
           </div>
           <div id="about-info">
             <p class="hint" id="about-version"></p>
-            <p class="hint">Frontdesk Operator — Electron control plane for the frontdesk v2 stack. Monitor queues, logs, sessions, licenses and MCP services; run the configured LLM from the Chat tab.</p>
+            <p class="hint">Dev Centre — Electron control plane for the frontdesk v2 stack. Monitor queues, logs, sessions, licenses and MCP services; run the configured LLM from the Chat tab.</p>
             <p class="hint"><b>Operator-only:</b> seat licenses &amp; per-seat account bindings gate the <b>public chat webapp</b> (collaborator login + the accounts the agent acts with). This app shows every seat at once; collaborators never see it — each only uses their own webapp chat.</p>
           </div>
           <div id="about-guide" class="hidden">

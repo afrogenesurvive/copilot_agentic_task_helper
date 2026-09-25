@@ -49,8 +49,27 @@ const SESSION_LIMIT_KEY = "DEV_CENTRE_SESSION_LIMIT";
  * Channels that must work before anyone is signed in — the gate's own API.
  * Everything else is refused while locked, which is what makes the gate real:
  * the renderer hiding a tab is cosmetic, this is the enforcement.
+ *
+ * `app:version` and `app:getTheme` are here for the menu-bar panel, which has to be
+ * able to say "locked, sign in" without rendering in the wrong palette. Both are
+ * cosmetic — a version string and the current light/dark choice — and the mutating
+ * `app:setTheme` / `app:setAppearance` / `app:quit` are deliberately NOT.
+ *
+ * The panel's own window management is here for a harder reason: the panel is reachable
+ * from the menu bar WITHOUT signing in, so while it is locked it still has to be able to
+ * hide itself, zoom itself, and — `tray:openDashboard` — provide the only route from the
+ * panel to the gate. Refusing those would leave a locked operator looking at a panel
+ * that neither dismisses nor leads anywhere. None of the three touches the app's data.
  */
-const ALWAYS_OPEN = new Set(["auth:state", "auth:login"]);
+const ALWAYS_OPEN = new Set([
+  "auth:state",
+  "auth:login",
+  "app:version",
+  "app:getTheme",
+  "tray:hidePopover",
+  "tray:zoom",
+  "tray:openDashboard",
+]);
 
 /**
  * Channel groups only `tier_1` may use. `tier_2` is "everything except

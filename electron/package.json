@@ -1,8 +1,8 @@
 {
-  "name": "frontdesk-operator",
+  "name": "dev-centre",
   "version": "0.4.2",
   "private": true,
-  "description": "Frontdesk v2 operator dashboard — monitor queues, logs, sessions, licenses, and run MCP tools from a macOS desktop app",
+  "description": "Dev Centre — desktop control plane for the frontdesk v2 stack and the local agent tooling: queues, logs, sessions, licences, and the MCP tools, from one macOS app",
   "main": "src/main.js",
   "scripts": {
     "start": "electron .",
@@ -20,8 +20,8 @@
     "electron-builder": "^25.0.0"
   },
   "build": {
-    "appId": "com.frontdesk.operator",
-    "productName": "Frontdesk Operator",
+    "appId": "com.devcentre.app",
+    "productName": "Dev Centre",
     "icon": "assets/icon.png",
     "mac": {
       "category": "public.app-category.productivity",

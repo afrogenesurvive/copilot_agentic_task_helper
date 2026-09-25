@@ -9,13 +9,14 @@ preload bridge ([`electron/src/preload.js`](../electron/src/preload.js#L7)) as `
 
 | `window.api` method | IPC channel | Returns |
 | ------------------- | ----------- | ------- |
-| `svcList()` | [`svc:list`](../electron/src/main.js#L1045) | Array of `{name,label,configured,running,managed,external,pid,health}` for every service (webhook, runner, tunnel, `mcp:*`). `external` = up but started outside the dashboard (Start/Restart/Stop disabled) |
-| `svcStart(name)` | [`svc:start`](../electron/src/main.js#L1046) | `{ok, pid?, already?}` |
-| `svcStop(name)` | [`svc:stop`](../electron/src/main.js#L1047) | `{ok}` |
-| `svcRestart(name)` | [`svc:restart`](../electron/src/main.js#L1048) | `{ok}` — stop then start a service (waits ~700 ms for the old process to free its port) |
-| `svcLog(name, lines?)` | [`svc:log`](../electron/src/main.js#L1049) | Tail of a service's stdout/stderr ring buffer |
-| `svcReregisterWebhooks()` | [`webhook:reregister`](../electron/src/main.js#L1050) | Re-runs the Trello/Gmail/Calendar/Drive registration scripts; restarts the webhook service only when the dashboard manages it (an external server is left running — registration alone applies): `{ok, steps:[{label, ok, output}], webhookRestarted}` |
-| `health()` | [`health`](../electron/src/main.js#L1079) | `{ok, json}` from `:3199/health` |
+| `svcList()` | [`svc:list`](../electron/src/main.js#L1657) | Array of `{name,label,configured,running,managed,external,pid,health}` for every service (webhook, runner, tunnel, `mcp:*`). `external` = up but started outside the dashboard (Start/Restart/Stop disabled) — either a live `/health` probe on its port, or (for a service with a `pidFile`, i.e. the runner) the pid in that file still being alive |
+| `svcStart(name)` | [`svc:start`](../electron/src/main.js#L1658) | `{ok, pid?, already?}` |
+| `svcStop(name)` | [`svc:stop`](../electron/src/main.js#L1659) | `{ok}` |
+| `svcRestart(name)` | [`svc:restart`](../electron/src/main.js#L1660) | `{ok}` — stop then start a service (waits ~700 ms for the old process to free its port) |
+| `svcStartAllDown()` | [`svc:startAllDown`](../electron/src/main.js#L1661) | Dashboard **Restart all down**: starts every **core** service that is not running (webhook, runner, tunnel) and leaves everything else alone. `mcp:*` is never bulk-started (the chat's in-process MCP client owns its own copy of each server), a service that is up — including an external one — is reported `action:"up"` and not touched, and an unconfigured one is `"skipped"`. Returns `{ok, started, startedNames, failed, results:[{name,label,action:"started"\|"up"\|"skipped"\|"failed",pid?,error?,reason?}]}`; re-entrancy guarded, so a second call while the first runs returns `{ok:false, error:"already starting services"}` |
+| `svcLog(name, lines?)` | [`svc:log`](../electron/src/main.js#L1662) | Tail of a service's stdout/stderr ring buffer |
+| `svcReregisterWebhooks()` | [`webhook:reregister`](../electron/src/main.js#L1663) | Re-runs the Trello/Gmail/Calendar/Drive registration scripts; restarts the webhook service only when the dashboard manages it (an external server is left running — registration alone applies): `{ok, steps:[{label, ok, output}], webhookRestarted}` |
+| `health()` | [`health`](../electron/src/main.js#L1719) | `{ok, json}` from `:3199/health` |
 | `queue()` | [`queue:get`](../electron/src/main.js#L1087) | `/api/queue-status` result |
 | `eventsClear(id, queue)` | [`events:clear`](../electron/src/main.js#L1094) | PATCH `/events/:id?queue=` |
 | `eventsClearAll(queue)` | [`events:clearAll`](../electron/src/main.js#L1095) | DELETE `/events?queue=` — clears an entire queue |
@@ -59,6 +60,8 @@ preload bridge ([`electron/src/preload.js`](../electron/src/preload.js#L7)) as `
 | `pkmAgentKey(registry?)` | [`pkm:agentKey`](../electron/src/main.js#L1349) | `{ok, data:{registry, dir, publicKey, privateKeyPath}}` — regenerates the X25519 peer keypair (ed25519+x25519 only; refused for `ed25519`) |
 | `pkmSetDefaultKid(registry?, kid)` | [`pkm:setDefaultKid`](../electron/src/main.js#L1350) | `{ok, data:{registry, defaultKid}}` — ring that signs new seats |
 | `pkmSyncRevocation(registry?)` | [`pkm:syncRevocation`](../electron/src/main.js#L1351) | `{ok, data:{results:[{registry, seats, changes:[{label,path,changed}]}]}}` — rewrites an embedded blocklist; **rebuild the consumer app** afterwards |
+| `authState()` | [`auth:state`](../electron/src/main.js#L1756) | `{ok, state}` — the gate's own state: `{locked, email, role, expiresAt, remainingMs, limitSeconds, roles, adminsConfigured, adminCount, registryCount, registryPath, envPath, sessionLog, problems, needsSetup}`. Identities are `null` while locked, so the gate cannot be used to enumerate who has access. **One of the few channels allowed while locked** |
+| `authLogin(email, secret)` | [`auth:login`](../electron/src/main.js#L1757) | Attempts a sign-in → `{ok:true, email, role, expiresAt, remainingMs, limitSeconds}` or `{ok:false, reason, detail}` where `reason` ∈ `no_admins_configured` \| `bad_email` \| `unknown_email` \| `bad_key`. The secret is never logged, stored or echoed back, and a success is applied by **main**, which swaps the window to `index.html`. **Allowed while locked** |
 | `config()` | [`config:get`](../electron/src/main.js#L1271) | Config summary: `{present, source, configPath, values, webhookBaseUrl, …}` (config.json primary, `.env` fallback) |
 | `configSave(values)` | [`config:save`](../electron/src/main.js#L1291) | Merges the changed keys into `config.json` (other keys preserved) and applies them to `process.env`; provider/usage-tracking key changes restart the runner + webhook |
 | `configExport()` | [`config:export`](../electron/src/main.js#L1316) | `{ok, present, source, json}` — effective config as pretty JSON |

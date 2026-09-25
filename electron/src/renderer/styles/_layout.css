@@ -142,6 +142,14 @@ html {
   color: var(--text);
 }
 
+/* Restated because the UA's `[hidden] { display: none }` loses to the author
+ * `display: flex` above — without this the sidebar's `hidden` nav buttons stay on
+ * screen. The tier_1-only tabs ship hidden and app.js reveals them once it has read
+ * the session's role; tray.css restates the same rule for its panes. */
+.sidebar-btn[hidden] {
+  display: none;
+}
+
 .sidebar-btn--active {
   background: var(--accent-border);
   color: var(--text);

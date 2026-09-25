@@ -14,8 +14,9 @@ local services this app manages, with live output for each one.
 
   - `● running` — the process is up (title shows the pid).
   - `● running (external)` — the process is up but was started **outside** the dashboard (for
-    example the webhook server run as a background daemon). It can't be controlled from here, so
-    its Start / Restart / Stop buttons are disabled.
+    example the webhook server run as a background daemon, or the agent runner started with
+    `npm run runner:start` in its own terminal). It can't be controlled from here, so its Start /
+    Restart / Stop buttons are disabled.
   - `○ stopped` — the service is configured but not running.
   - `not configured` — no runnable command is set (for example the Cloudflare tunnel when no
     tunnel token/ID is configured).
@@ -53,6 +54,13 @@ local services this app manages, with live output for each one.
   services also show up here so you can start/stop and inspect them.
 
 ## Common actions
+
+- **Bring the stack back up** — **Restart all down (N)** above the detail panel starts every core
+  service that is not running; the count is how many are down, and it's disabled at 0. It never
+  touches a service that is already up (including one started outside the dashboard), and MCP
+  servers are excluded — the chat's in-process client owns its own copy of each, so starting them
+  here as well would leave two processes per server. The line beside the button reports what
+  happened (`✅ started …  · ❌ … · skipped N not configured`).
 
 - **Start the stack** — select **Webhook server** → **▶ Start**, then start **Agent runner** (and
   the tunnel if you need remote access).

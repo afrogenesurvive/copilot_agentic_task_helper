@@ -180,10 +180,21 @@ spinning forever. Streamed output (live logs, script output, chat steps) is neve
 
 ## Licensing
 
-Seat licences gate the **public chat webapp**, not this operator app. Management lives in a separate local
-key store driven by its `pkm` CLI — this repo only verifies licences — so the Key Manager tab is a front
-end: it spawns the CLI and renders the result, and never stores or logs a licence. Store locations are
-configured in ⚙️ Config rather than hardcoded. See [`electron/docs/keys.md`](../electron/docs/keys.md).
+Two different things are licensed here, and they are deliberately independent:
+
+- **This app** is gated by a **sign-in** on launch. Admins are `DEV_CENTRE_ADMINS` in `.env`
+  (`email:secret` pairs, always `tier_1`); everyone else is in the gitignored role registry
+  `safe/dev-centre-roles.json`, managed with `node scripts/dev-centre-roles.mjs`, at `tier_2` —
+  everything except **Key Manager** and **Accounts & Keys**. A secret may be plain text, or a
+  `scrypt$…` verifier minted by `pkm claims set … --password-stdin`. Sessions are wall-clock
+  (`DEV_CENTRE_SESSION_LIMIT`, 12 h default) and resume across launches while they are still valid.
+  While locked the window loads a separate sign-in document, so the dashboard's code never runs — but
+  the **menu-bar panel** still opens, and its *Sign in to Dev Centre* button is the way to the gate.
+- **The public chat webapp** is gated by **seat licences**, which are a different mechanism entirely.
+  Management lives in a separate local key store driven by its `pkm` CLI — this repo only verifies
+  licences — so the Key Manager tab is a front end: it spawns the CLI and renders the result, and
+  never stores or logs a licence. Store locations are configured in ⚙️ Config rather than hardcoded.
+  See [`electron/docs/keys.md`](../electron/docs/keys.md).
 
 ## Notes
 
@@ -191,9 +202,12 @@ configured in ⚙️ Config rather than hardcoded. See [`electron/docs/keys.md`]
   Start services, Quit). The panel is a second renderer document (`src/renderer/tray.html` + `tray.js` +
   `styles/tray.css`), not a mode of the dashboard. Four status pills (webhook health, services running,
   queue depth, key store) stay above three tabs — **Services**, **Queues** (Priority / Misc sub-tabs) and
-  **Notifications** — with an **Open dashboard** button below. It opens at 340×440 and is **resizable**;
-  the size is remembered in
-  `~/Library/Application Support/Frontdesk Operator/popover-size.json`.
+  **Notifications** — with an **Open dashboard** button below. It opens at 340×440 and its size is set by a
+  **corner zoom grip** — drag to zoom, double-click to reset — which scales the window *and* the page, so
+  text and rows grow instead of the layout gaining empty space. Dragging the window edge deliberately does
+  nothing: a resizable frameless window is an ordinary window to macOS. The chosen scale is remembered in
+  `~/Library/Application Support/Dev Centre/popover-scale.json`. Being a non-activating `panel` window, it
+  floats above other apps — including full-screen ones — without taking focus from them.
 - The menu-bar icon carries a red **uncleared count** (capped at `9+`) beside the glyph, drawn at runtime
   by `src/main/tray-badge.mjs`. It counts notifications recorded since the last **Clear** in the
   Notifications tab — deliberately *not* the read/unread dots, which clear as soon as the panel is

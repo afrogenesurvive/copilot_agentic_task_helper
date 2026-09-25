@@ -124,7 +124,7 @@ The store's exported surface — `configure`, `record`, `list`, `markRead`,
 `unreadCounts`, `unclearedCount`, `clearAll` — is the entire contract its callers use, so the storage
 engine can be swapped without touching the producers or the renderer. The intended
 move is `better-sqlite3` at `app.getPath("userData")/frontdesk.db`
-(`~/Library/Application Support/Frontdesk Operator/`), WAL mode, with these tables
+(`~/Library/Application Support/Dev Centre/`), WAL mode, with these tables
 first: `notifications`, then `queue_events`, `script_runs` + `script_run_output`,
 `log_entries`, `chat_entries` and `frontdesk_sessions`.
 

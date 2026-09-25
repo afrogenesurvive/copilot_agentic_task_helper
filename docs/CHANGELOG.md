@@ -1,5 +1,72 @@
 # Changelog
 
+## [0.4.2-3] — 2026-09-25
+
+### The app is now Dev Centre, and it is gated behind a sign-in
+
+**Dev Centre** is the new name (it was *Frontdesk Operator*). The desktop app and the web frontdesk
+that collaborators chat with are two different things, and sharing a name kept causing confusion; the
+dock, application menu, About panel, window title, sidebar and menu-bar panel all say Dev Centre now.
+Your remembered panel size and window preferences are carried over from the old name automatically on
+first launch.
+
+Launching it now asks for an **email and secret**. Admins are listed in `DEV_CENTRE_ADMINS` in `.env`
+and always get everything. Everyone else lives in the gitignored role registry
+(`safe/dev-centre-roles.json`, managed with `node scripts/dev-centre-roles.mjs`) at **tier_2** —
+everything except **Key Manager** and **Accounts & Keys**. Those two tabs are not shown for tier_2,
+and the channels behind them are refused outright, so hiding them is presentation rather than the
+control. A session lasts 12 hours by default (`DEV_CENTRE_SESSION_LIMIT`) and is resumed on the next
+launch while it is still valid.
+
+The sign-in screen is a separate document rather than an overlay: while locked, the dashboard's code
+is never evaluated at all. The menu-bar panel still opens without signing in, and its **Sign in to
+Dev Centre** button is the way to the gate. The gate has its own **close button**, which hides the
+window exactly as closing it always has — the backend keeps running, and the panel, the dock icon or
+the tray menu all bring it back. Quit stays on the tray's right-click menu, so a locked app is never
+stuck with no way out.
+
+Your secret may be a plain text string, or a `scrypt$…` verifier minted by
+`pkm claims set … --password-stdin`, which lets you keep a real password without storing it here.
+
+### The Config tab can no longer see or set the admin list
+
+`DEV_CENTRE_ADMINS` is stripped from every config surface — the Config tab, its per-key source view
+and the config export — and refused by both save and import. Writing it would have outranked the
+built-in default and let a tier_2 operator promote themselves.
+
+### Menu-bar panel
+
+- **It no longer un-focuses a full-screen window.** The panel is a non-activating macOS `panel`
+  window, so it floats above other apps — full-screen ones included — and stays out of Mission
+  Control, without stealing focus from whatever you were doing.
+- **The corner grip zooms instead of dragging the window edge.** Pulling the bottom-right handle
+  scales the panel and everything in it together (double-click resets it), because a frameless window
+  that can be drag-resized is an ordinary window as far as macOS is concerned. The scale is
+  remembered per gesture, not per frame.
+- **The startup crash is fixed.** Badge rendering raced itself on a single hidden window, which could
+  bring the whole app down with a segfault a second or two after launch.
+- **A second launch focuses the first** instead of quietly starting a second copy of the webhook
+  server, the agent runner and the tunnel.
+
+## [0.4.2-2] — 2026-09-24
+
+### Dashboard: one action to bring every down service back up
+
+A dead runner or a dropped tunnel used to mean reading the service list and starting each one by
+hand. The Dashboard now has **Restart all down (N)** above the detail panel — N is how many core
+services are down, and the button is disabled at zero. It never touches a service that is already
+up (including one started outside the dashboard) and leaves MCP servers alone, because the chat's
+in-process client already owns a copy of each. The line beside it reports what started, what
+failed, and what was skipped as not configured.
+
+That also fixes something which would have made the button dangerous: the **Agent runner**, when
+started from your own terminal, was reported as *stopped*. The dashboard now checks the runner's
+pidfile, so it shows `running (external)` — and the button will not start a second runner to compete
+for the same queue.
+
+Two clicks in a row cannot start everything twice: while a bulk start is in flight the second
+request is refused instead of acted on.
+
 ## [0.4.2-1] — 2026-09-24
 
 ### Key Manager: bind an identity to a licence, and test a login before handing the key over

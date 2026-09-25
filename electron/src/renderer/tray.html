@@ -22,7 +22,7 @@
       http-equiv="Content-Security-Policy"
       content="default-src 'self'; style-src 'self'; script-src 'self'; img-src 'self' data:;"
     />
-    <title>Frontdesk Operator</title>
+    <title>Dev Centre</title>
 
     <!-- Same primitives as the dashboard, in the same cascade order, so the pills
          here and the pills in the status bar cannot drift apart: the pill + dot
@@ -41,7 +41,7 @@
   <body class="tray">
     <main class="tray__panel">
       <header class="tray__head">
-        <span class="tray__title">Frontdesk</span>
+        <span class="tray__title">Dev Centre</span>
         <span class="tray__version" id="tray-version"></span>
       </header>
 
@@ -154,6 +154,20 @@
       <footer class="tray__foot">
         <button id="tray-open" class="tray__open" type="button">Open dashboard</button>
       </footer>
+
+      <!-- The zoom grip. The panel is deliberately NOT drag-resizable — a frameless
+           window that can be resized reads as a normal window to macOS (edge
+           affordances, Mission Control, the window cycle). This corner handle scales
+           the panel and its whole UI instead, and a double-click resets it. Positioned
+           entirely from tray.css: the page pins style-src 'self' with no
+           'unsafe-inline'. -->
+      <div
+        id="tray-zoom"
+        class="tray__zoom"
+        role="separator"
+        aria-label="Zoom panel"
+        title="Drag to zoom the panel · double-click to reset"
+      ></div>
     </main>
 
     <script src="tokens.js"></script>

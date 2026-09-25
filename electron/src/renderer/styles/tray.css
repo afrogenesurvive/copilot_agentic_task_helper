@@ -22,10 +22,11 @@ body {
   background: transparent;
 }
 
-/* The panel fills the window. The window IS resizable now — main.js remembers
- * whatever the operator dragged it to — so nothing here may assume the original
- * 340x440: the panel is a flex column, and each pane's list is the only thing
- * that scrolls. */
+/* The panel fills the window. The window is NOT drag-resizable — it is scaled by the
+ * corner grip at the bottom of this file, which resizes the window and applies a
+ * matching zoom factor — so nothing here may assume the original 340x440: the panel is
+ * a flex column, and each pane's list is the only thing that scrolls. Because the whole
+ * page is zoomed, every length below is in CSS pixels and scales with the panel. */
 .tray {
   display: flex;
   height: 100vh;
@@ -33,6 +34,8 @@ body {
 }
 
 .tray__panel {
+  /* Positioning context for the zoom grip. */
+  position: relative;
   display: flex;
   flex-direction: column;
   flex: 1;
@@ -345,4 +348,44 @@ body {
 
 .tray__open {
   width: 100%;
+}
+
+/* The zoom grip.
+ *
+ * The panel cannot be drag-resized as a window (see the .tray comment above), so this
+ * corner handle is what the operator pulls instead: it asks main.js for a new scale,
+ * which resizes the window AND sets a matching zoom factor, so the layout reflows
+ * rather than stretching. Double-click resets to 1x.
+ *
+ * Absolutely positioned so it costs no layout, and it sits in the panel's own padding
+ * gutter (right/bottom 2px, against 12px of padding) so it barely overlaps the button
+ * above it — it is on top, and thereby owns that sliver of the corner. */
+.tray__zoom {
+  position: absolute;
+  right: 2px;
+  bottom: 2px;
+  width: 16px;
+  height: 16px;
+  /* A triangle of hairlines: the stripes come from the gradient, the shape from the
+   * clip. The box is deliberately unscaled CSS pixels — the whole page is zoomed, so
+   * this grows with the panel along with everything else. */
+  background-image: repeating-linear-gradient(
+    135deg,
+    var(--text-muted) 0 1px,
+    transparent 1px 4px
+  );
+  clip-path: polygon(100% 0, 100% 100%, 0 100%);
+  opacity: 0.45;
+  cursor: nwse-resize;
+  /* Without `touch-action: none` the browser claims the gesture and pointermove stops
+   * arriving, which would make the drag die on the first frame. */
+  touch-action: none;
+  -webkit-user-select: none;
+  user-select: none;
+  transition: opacity 120ms ease;
+}
+
+.tray__zoom:hover,
+.tray__zoom:active {
+  opacity: 1;
 }

@@ -1,0 +1,101 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <!--
+      The gate — the sign-in screen.
+
+      This is a THIRD renderer document, loaded into the MAIN WINDOW while no session
+      is active (main.js picks between this and index.html in createWindow). It is a
+      document rather than an overlay on the dashboard for one reason: the dashboard's
+      script is then never evaluated while locked, so there is no fail-open gap between
+      the first paint and an async check, and no locked-renderer state to poke at. Main
+      chooses the document, so the renderer cannot influence the decision.
+
+      It inherits the dashboard's CSP verbatim, which means the same trap applies:
+      `style-src 'self'` has no 'unsafe-inline', so an inline `style="…"` attribute and
+      any <style> block are silently DROPPED. Every visual rule lives in
+      styles/gate.css.
+    -->
+    <meta
+      http-equiv="Content-Security-Policy"
+      content="default-src 'self'; style-src 'self'; script-src 'self'; img-src 'self' data:;"
+    />
+    <title>Dev Centre — Sign in</title>
+
+    <!-- The same cascade the dashboard starts with: the reset, then the tokens, then
+         the control primitives (`button`/`input` element defaults live in
+         _form-fields.css, plus the canonical `.btn`/`.input` classes). gate.css comes
+         last because it is the only file specific to this document. -->
+    <link rel="stylesheet" href="styles/_reset.css" />
+    <link rel="stylesheet" href="styles/_layout.css" />
+    <link rel="stylesheet" href="styles/_form-fields.css" />
+    <link rel="stylesheet" href="styles/gate.css" />
+  </head>
+  <body class="gate">
+    <main class="gate__card">
+      <header class="gate__head">
+        <div class="gate__brand">
+          <h1 class="gate__title">Dev Centre</h1>
+          <span class="gate__sub">operator console</span>
+        </div>
+        <span class="gate__version" id="gate-version"></span>
+        <!-- Closes the WINDOW, which in this app means HIDE: main's `close` handler
+             preventDefaults and hides it, because the app's job is to keep the backend
+             running. Plain `window.close()` rather than an IPC channel on purpose — a
+             locked screen should have as little reachable surface as possible, and this
+             is the window's own path, so it needs no change to the gate's allow-list. -->
+        <button
+          id="gate-close"
+          class="gate__close"
+          type="button"
+          title="Close the window — Dev Centre keeps running"
+        >
+          ×
+        </button>
+      </header>
+
+      <!-- Only shown when NO credential source holds anything at all — see
+           state.needsSetup. It names both locations, because "nothing is configured"
+           without saying where to configure it is the single most annoying state to
+           land in. -->
+      <div class="gate__notice" id="gate-setup" hidden>
+        <strong>No credentials configured</strong>
+        <span id="gate-setup-detail"></span>
+      </div>
+
+      <form class="gate__form" id="gate-form">
+        <label class="gate__label" for="gate-email">Email</label>
+        <input
+          id="gate-email"
+          class="input gate__input"
+          type="email"
+          autocomplete="username"
+          spellcheck="false"
+          autocapitalize="off"
+          required
+        />
+
+        <label class="gate__label" for="gate-secret">Secret</label>
+        <input
+          id="gate-secret"
+          class="input gate__input"
+          type="password"
+          autocomplete="current-password"
+          required
+        />
+
+        <button id="gate-submit" class="btn btn--primary gate__submit" type="submit">Sign in</button>
+      </form>
+
+      <p class="gate__error" id="gate-error" role="alert" hidden></p>
+      <p class="gate__hint" id="gate-hint"></p>
+    </main>
+
+    <!-- tokens.js first, exactly as the dashboard and the menu-bar panel load it, so
+         the gate follows the app's palette (including light/dark) instead of being a
+         differently-coloured screen before the dashboard appears. -->
+    <script src="tokens.js"></script>
+    <script src="gate.js"></script>
+  </body>
+</html>

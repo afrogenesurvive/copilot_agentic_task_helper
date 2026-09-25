@@ -5,11 +5,18 @@
 const { contextBridge, ipcRenderer } = require("electron");
 
 contextBridge.exposeInMainWorld("api", {
+  // The gate. While locked these two are the ONLY channels main will answer — every
+  // other invoke rejects with "locked: …", which is what makes hiding the UI cosmetic
+  // rather than the actual control. The secret is passed straight through and is never
+  // logged, stored or echoed back (main's login() answers with email/role/deadline only).
+  authState: () => ipcRenderer.invoke("auth:state"),
+  authLogin: (email, secret) => ipcRenderer.invoke("auth:login", email, secret),
   // Services
   svcList: () => ipcRenderer.invoke("svc:list"),
   svcStart: (name) => ipcRenderer.invoke("svc:start", name),
   svcStop: (name) => ipcRenderer.invoke("svc:stop", name),
   svcRestart: (name) => ipcRenderer.invoke("svc:restart", name),
+  svcStartAllDown: () => ipcRenderer.invoke("svc:startAllDown"),
   svcReregisterWebhooks: () => ipcRenderer.invoke("webhook:reregister"),
   svcLog: (name, lines) => ipcRenderer.invoke("svc:log", name, lines),
   health: () => ipcRenderer.invoke("health"),
@@ -148,8 +155,15 @@ contextBridge.exposeInMainWorld("api", {
   // dashboard, so these are the only two channels the panel adds.
   trayOpenDashboard: () => ipcRenderer.invoke("tray:openDashboard"),
   trayHide: () => ipcRenderer.invoke("tray:hidePopover"),
+  // The corner grip: asks main to scale the panel (window size AND zoom factor) and
+  // gets back the scale actually applied, which is lower when the display cannot fit it.
+  // `persist` is false for the frames of a drag and true once, on release.
+  trayZoom: (scale, persist) => ipcRenderer.invoke("tray:zoom", scale, persist),
   onTrayRefresh: (cb) => {
-    const listener = () => cb();
+    // The payload carries the current scale: the grip needs it to turn a pointer delta
+    // into a size, because the page itself is zoomed (a raw CSS-pixel delta would make
+    // the handle drift away from the cursor).
+    const listener = (_e, payload) => cb(payload);
     ipcRenderer.on("tray:refresh", listener);
     return () => ipcRenderer.removeListener("tray:refresh", listener);
   },

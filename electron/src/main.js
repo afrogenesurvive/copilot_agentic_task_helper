@@ -1,7 +1,8 @@
 /**
- * Frontdesk Operator — Electron main process.
+ * Dev Centre — Electron main process.
  *
- * A lightweight macOS control plane for the frontdesk v2 stack. It:
+ * A lightweight macOS control plane for the frontdesk v2 stack and the local agent
+ * tooling. It:
  *   - Spawns / monitors the webhook server, agent runner, and (optionally) the
  *     Cloudflare tunnel as child processes
  *   - Serves the renderer (local HTML — no build step) with an IPC bridge
@@ -20,6 +21,26 @@ const { createRequire } = require("module");
 const { connectGoogleForSeat, connectGoogleOperator } = require("./main/oauth");
 const liveLog = require("./main/logger");
 const notifications = require("./main/notifications");
+const auth = require("./main/dev-centre-auth");
+
+// ── The gate ─────────────────────────────────────────────────────────────────
+// Access to the app is gated behind a credential (see `main/dev-centre-auth.js`), and
+// this is where it stops being cosmetic. `ipcMain.handle` is REPLACED before any
+// handler is registered, so every channel — including ones added later — is
+// authorised by default and there is exactly one place to audit.
+//
+// A refusal is THROWN rather than returned: `ipcRenderer.invoke` then rejects, so no
+// handler can mistake a denial for a result, and the renderer's gate screen has one
+// signal to key off. `auth:state` and `auth:login` are the only channels the gate
+// lets through while locked, which is what lets a locked renderer ask whether it is
+// locked and offer a way in.
+const rawIpcHandle = ipcMain.handle.bind(ipcMain);
+ipcMain.handle = (channel, listener) =>
+  rawIpcHandle(channel, (event, ...args) => {
+    const verdict = auth.authorize(channel);
+    if (!verdict.ok) throw new Error(`${verdict.reason}: ${verdict.hint}`);
+    return listener(event, ...args);
+  });
 
 // ── Identity ─────────────────────────────────────────────────────────────────
 // Set the name BEFORE anything resolves `userData`, so dev and packaged builds
@@ -30,7 +51,61 @@ const notifications = require("./main/notifications");
 // CFBundleName. In dev that bundle is Electron's own, so
 // `scripts/patch-electron-app-name.mjs` (wired to electron/package.json's
 // postinstall) rewrites its Info.plist to match.
-app.setName("Frontdesk Operator");
+app.setName("Dev Centre");
+
+/**
+ * The app was called "Frontdesk Operator" until 0.4.2, and `userData` is derived from the
+ * name — so the rename would silently orphan everything the old one had stored: the
+ * panel scale the corner grip was dragged to, and the renderer's localStorage (theme,
+ * sidebar width, collapsed sections). Chromium's own caches are deliberately NOT moved:
+ * they are rebuilt on demand, and a copied cache is the only thing that could go stale.
+ *
+ * Idempotent and failure-tolerant. A missing legacy directory, an already-used
+ * destination, or an unreadable source all just leave the new directory empty — which is
+ * the pre-rename behaviour anyway, so this can never block startup.
+ */
+function migrateLegacyUserData() {
+  try {
+    const next = app.getPath("userData");
+    const legacy = path.join(path.dirname(next), "Frontdesk Operator");
+    if (legacy === next) return;
+    // Already used under the new name: either this has run before, or the app has just
+    // been launched since the rename.
+    if (fs.existsSync(path.join(next, "popover-scale.json"))) return;
+    if (!fs.existsSync(legacy)) return;
+    fs.mkdirSync(next, { recursive: true });
+    for (const entry of ["popover-scale.json", "Local Storage"]) {
+      const from = path.join(legacy, entry);
+      if (!fs.existsSync(from)) continue;
+      fs.cpSync(from, path.join(next, entry), { recursive: true });
+    }
+    console.log("[operator] migrated the panel scale + localStorage from the previous app name");
+  } catch (err) {
+    console.log("[operator] could not migrate the previous app name's settings:", err.message);
+  }
+}
+migrateLegacyUserData();
+
+// ── Single instance ──────────────────────────────────────────────────────────
+// A second launch must FOCUS the first, not start a second copy of everything.
+//
+// Without this lock every extra launch spawns its own webhook server, agent runner
+// and tunnel — and the runner is the dangerous one, because two of them poll the same
+// priority queue and can answer the same message twice. It also explains the pile-up
+// after a crash: the teardown that reaps those children only runs on a clean quit, so
+// a segfault leaves a whole orphaned service set behind and the next launch adds
+// another. (Five runners and three tunnels were found alive together on 2026-09-24.)
+const hasSingleInstanceLock = app.requestSingleInstanceLock();
+if (!hasSingleInstanceLock) {
+  app.quit();
+} else {
+  // Registered at module scope so a launch during startup is not dropped. The
+  // isReady() guard covers the gap before createWindow() has run — the starting
+  // instance shows its own window anyway.
+  app.on("second-instance", () => {
+    if (app.isReady()) showDashboard();
+  });
+}
 
 // ── Paths ──
 const ROOT = app.isPackaged ? path.join(process.resourcesPath, "..", "..") : path.resolve(__dirname, "..", "..");
@@ -42,18 +117,30 @@ const RENDERER_HTML = path.join(__dirname, "renderer", "index.html");
 // it loads four pills and a short list, not the 27-file renderer (see the CSP
 // note in electron/src/renderer/tray.html for the rules it inherits).
 const TRAY_HTML = path.join(__dirname, "renderer", "tray.html");
-// Panel geometry. These are only the FIRST size: the window is resizable and
-// remembers what the operator dragged it to (popoverSizeFile() below), and
-// showPopover() reads getSize() rather than these constants, so a remembered size
-// positions itself for free. The defaults are the measured original — five rows of
-// two clamped lines plus the surrounding chrome (title, pills, tab strip, footer)
-// — so the panel looks the same as it always has until someone resizes it.
+// The gate's own document, loaded INTO THE MAIN WINDOW while no session is active —
+// see createWindow(). A third renderer document for the same reason the panel is a
+// second one: it needs a form and nothing else, and keeping it separate means the
+// dashboard's script is never evaluated while locked.
+const GATE_HTML = path.join(__dirname, "renderer", "gate.html");
+
+// Panel geometry. The panel is NOT freely resizable — a frameless window that can be
+// drag-resized is a normal window as far as macOS is concerned (edge affordances, a
+// place in Mission Control, a slot in the window cycle), which is not what a menu-bar
+// panel should be. It has a SCALE instead: one grip in the corner zooms the panel and
+// its whole UI proportionally, and the top-centre anchor is preserved.
+//
+// The base size is the measured original — five rows of two clamped lines plus the
+// surrounding chrome (title, pills, tab strip, footer) — so the panel looks the same
+// as it always has at scale 1.
 const TRAY_POPOVER_WIDTH = 340;
 const TRAY_POPOVER_HEIGHT = 440;
-const TRAY_POPOVER_MIN_WIDTH = 280;
-const TRAY_POPOVER_MIN_HEIGHT = 320;
-const TRAY_POPOVER_MAX_WIDTH = 720;
-const TRAY_POPOVER_MAX_HEIGHT = 900;
+// 1 = the base size above. Never smaller: the layout has a comfortable minimum and
+// shrinking it would only hide rows. The ceiling mirrors DS-mon's popoverScaleMax, and
+// is additionally clamped per display on read.
+const TRAY_POPOVER_SCALE_MIN = 1;
+const TRAY_POPOVER_SCALE_MAX = 2.2;
+// Headroom left under the menu bar when a scale is clamped to a display.
+const TRAY_POPOVER_SCREEN_MARGIN = 24;
 const TRAY_POPOVER_GAP = 6; // px between the menu bar and the panel
 const TRAY_CLICK_GUARD_MS = 200; // see togglePopover()
 
@@ -150,6 +237,14 @@ let trayBadgeMod = null;
 // open blurs the panel *before* the click arrives, so the click would reopen what
 // it just closed; this stamp lets togglePopover() see both halves as one gesture.
 let popoverHiddenAt = 0;
+
+// The panel's SCALE (1 = TRAY_POPOVER_WIDTH x TRAY_POPOVER_HEIGHT). Loaded from disk
+// before the popover is created, then re-applied on every show.
+let popoverScale = TRAY_POPOVER_SCALE_MIN;
+
+// Stamped when the panel is shown, so an `activate` caused by focusing it is not
+// mistaken for the operator asking for the dashboard. Same shape as popoverHiddenAt.
+let popoverShownAt = 0;
 // Set by beginQuit() so the window's `close` handler can tell "the operator
 // closed the window" (hide it, keep running in the background) from "the app is
 // quitting" (let the close through).
@@ -219,7 +314,11 @@ const API_TOKEN = process.env.WEBHOOK_API_TOKEN || "";
 // ── Service manager ──────────────────────────────────────────────────────────
 const serviceDefs = {
   webhook: { label: "Webhook server", cmd: "node", args: ["mcp/webhook-server/index.js"], cwd: REPO, port: WEBHOOK_PORT },
-  runner: { label: "Agent runner", cmd: "node", args: ["mcp/agent-runner/index.js"], cwd: REPO },
+  // `pidFile` lets serviceHealth() see a runner that was started from its own terminal
+  // (`npm run runner:start`) instead of assuming anything this app did not spawn is
+  // down — which is what would make a bulk start spawn a SECOND runner competing for
+  // the same queue.
+  runner: { label: "Agent runner", cmd: "node", args: ["mcp/agent-runner/index.js"], cwd: REPO, pidFile: path.join(REPO, "mcp", "agent-runner", ".runner.pid") },
   tunnel: {
     label: "Cloudflare tunnel",
     cmd: "cloudflared",
@@ -340,6 +439,30 @@ function stopService(name) {
   return { ok: true };
 }
 
+/**
+ * PID recorded in a pidfile, or 0 when the file is missing, unreadable or stale.
+ *
+ * The liveness probe is `kill(pid, 0)`: it sends no signal, it only asks the kernel
+ * whether the process exists. EPERM means it exists but belongs to another user, so
+ * that still counts as alive.
+ */
+function pidFilePid(file) {
+  if (!file) return 0;
+  let pid = 0;
+  try {
+    pid = parseInt(fs.readFileSync(file, "utf8").trim(), 10) || 0;
+  } catch {
+    return 0;
+  }
+  if (!pid) return 0;
+  try {
+    process.kill(pid, 0);
+    return pid;
+  } catch (err) {
+    return err && err.code === "EPERM" ? pid : 0;
+  }
+}
+
 async function serviceHealth(name) {
   const def = serviceDefs[name] || {};
   const entry = running[name];
@@ -357,7 +480,10 @@ async function serviceHealth(name) {
       health = null;
     }
   }
-  const isUp = managed || (def.port != null && health !== null);
+  // A service with no port is otherwise only detectable when THIS app spawned it, so
+  // a pidfile — when the service keeps one — is the only way to see an external one.
+  const externPid = def.port ? 0 : pidFilePid(def.pidFile);
+  const isUp = managed || (def.port != null && health !== null) || externPid > 0;
   const external = isUp && !managed;
   return {
     name,
@@ -366,7 +492,7 @@ async function serviceHealth(name) {
     running: isUp,
     managed,
     external,
-    pid: managed ? entry.proc.pid : null,
+    pid: managed ? entry.proc.pid : externPid || null,
     health,
   };
 }
@@ -375,6 +501,57 @@ function serviceTail(name, lines = 40) {
   const entry = running[name];
   const out = entry ? entry.out : [];
   return out.slice(-lines);
+}
+
+// ── "Restart all down": bring back every CORE service that is not up ─────────
+//
+// Scope is the three services the app itself is responsible for (webhook, runner,
+// tunnel) — the same set `OPERATOR_AUTOSTART` starts — and deliberately NOT `mcp:*`:
+// those are never autostarted because the operator chat's in-process MCP client
+// spawns its own child per server, so a bulk start would leave two processes for
+// every server the chat touches. A service that is up but EXTERNAL is left alone (it
+// is not down, and this app can only stop what it started); one that is not
+// configured (no tunnel token, say) is skipped rather than reported as a failure.
+let startAllDownBusy = false;
+
+async function startAllDown() {
+  // Re-entrancy guard: two clicks in flight would otherwise spawn two of everything.
+  if (startAllDownBusy) return { ok: false, error: "already starting services" };
+  startAllDownBusy = true;
+  try {
+    const results = [];
+    for (const name of Object.keys(serviceDefs).filter((n) => !n.startsWith("mcp:"))) {
+      const before = await serviceHealth(name);
+      if (!before.configured) {
+        results.push({ name, label: before.label, action: "skipped", reason: "not configured" });
+        continue;
+      }
+      if (before.running) {
+        results.push({ name, label: before.label, action: "up", external: before.external });
+        continue;
+      }
+      const res = startService(name);
+      results.push({
+        name,
+        label: before.label,
+        action: res.ok ? "started" : "failed",
+        pid: res.pid || null,
+        error: res.error || null,
+      });
+      // Let it bind its port / write its pidfile before probing the next one.
+      if (res.ok) await new Promise((r) => setTimeout(r, 400));
+    }
+    const started = results.filter((r) => r.action === "started");
+    return {
+      ok: true,
+      started: started.length,
+      startedNames: started.map((r) => r.name),
+      failed: results.filter((r) => r.action === "failed").length,
+      results,
+    };
+  } finally {
+    startAllDownBusy = false;
+  }
 }
 
 // ── User-script runner (scripts/user allowlist) ──────────────────────────────
@@ -1151,7 +1328,7 @@ const CHAT_ORIGIN_DEFAULT = "operator";
 const CHAT_SYSTEM_PROMPTS = {
   operator:
     process.env.ELECTRON_CHAT_SYSTEM_PROMPT ||
-    "You are the Frontdesk Operator console assistant, running inside the Electron dashboard (channel: operator). " +
+    "You are the Dev Centre console assistant, running inside the Electron app (channel: operator). " +
       "You have operator access and may discuss local service state, logs, config, and dashboards. Answer directly and concisely.",
   frontdesk:
     process.env.FRONTDESK_CHAT_SYSTEM_PROMPT ||
@@ -1572,10 +1749,30 @@ function effectiveLlmLabel() {
 
 // ── IPC ──────────────────────────────────────────────────────────────────────
 function registerIpc() {
+  // The gate's own two channels. They are also why the wrapper above can be
+  // unconditional: a locked renderer still has to be able to ask whether it is locked
+  // and to present a way in. Neither ever returns a secret — `login()` answers with the
+  // email, the role and the deadline and nothing else.
+  ipcMain.handle("auth:state", () => ({ ok: true, state: auth.state() }));
+  ipcMain.handle("auth:login", (_e, email, secret) => {
+    const res = auth.login(email, secret);
+    // Swap the gate document for the dashboard on success. The window itself is
+    // untouched — same instance, same dock/tray/activate behaviour — so the only thing
+    // that changes is which document it is showing, and it changes because MAIN
+    // decided to. A locked renderer has no route to the dashboard, even by
+    // hand-crafting IPC.
+    if (res && res.ok && mainWindow && !mainWindow.isDestroyed()) {
+      mainWindow.loadFile(RENDERER_HTML);
+      showDashboard();
+    }
+    return res;
+  });
+
   ipcMain.handle("svc:list", () => Promise.all(Object.keys(serviceDefs).map(serviceHealth)));
   ipcMain.handle("svc:start", (_e, name) => startService(name));
   ipcMain.handle("svc:stop", (_e, name) => stopService(name));
   ipcMain.handle("svc:restart", (_e, name) => restartService(name));
+  ipcMain.handle("svc:startAllDown", () => startAllDown());
   ipcMain.handle("svc:log", (_e, name, lines) => serviceTail(name, lines));
   ipcMain.handle("webhook:reregister", () => reregisterWebhooks());
 
@@ -1751,13 +1948,30 @@ function registerIpc() {
     }
   }
 
+  // `DEV_CENTRE_ADMINS` holds the admin `email:secret` list, and `readEffective()`
+  // returns EVERY key it knows — so without this the Config tab would hand a tier_2
+  // operator the other admins' secrets, and `config:save` / `config:import` would let
+  // them write themselves in as an admin, because config.json outranks the built-in
+  // default in `dev-centre-auth`'s lookup. The key is therefore removed from every
+  // config surface and refused on the way in. The Config tab never declared the field;
+  // the renderer is not the enforcement point, this is.
+  const REDACTED_CONFIG_KEYS = new Set(["DEV_CENTRE_ADMINS"]);
+  /** Strip gate-owned keys out of a flat key→value map of any shape. */
+  const redactConfig = (values) => {
+    const out = {};
+    for (const [k, v] of Object.entries(values || {})) {
+      if (!REDACTED_CONFIG_KEYS.has(k)) out[k] = v;
+    }
+    return out;
+  };
+
   ipcMain.handle("config:get", async () => {
     const eff = config.readEffective();
     return {
       present: eff.present,
       source: eff.source,
       configPath: eff.present ? config.CONFIG_PATH : config.ENV_PATH,
-      values: eff.values || {},
+      values: redactConfig(eff.values),
       webhookBaseUrl: process.env.WEBHOOK_BASE_URL || `http://localhost:${WEBHOOK_PORT}`,
       agentPub: process.env.FRONTDESK_AGENT_PUBKEY || "",
       corsOrigins: process.env.CORS_ORIGINS || "",
@@ -1770,10 +1984,19 @@ function registerIpc() {
   });
   ipcMain.handle("config:getWithSources", async () => {
     const res = config.readWithSources();
-    return { ok: true, present: res.present, source: res.source, configPath: res.configPath, count: res.count, values: res.values, trelloBoards: await trelloBoardsSnapshot(), ...(res.error ? { error: res.error } : {}) };
+    // Redacted before the count is derived, so the count cannot hint that a hidden key
+    // exists either.
+    const values = redactConfig(res.values);
+    return { ok: true, present: res.present, source: res.source, configPath: res.configPath, count: Object.keys(values).length, values, trelloBoards: await trelloBoardsSnapshot(), ...(res.error ? { error: res.error } : {}) };
   });
   ipcMain.handle("config:save", async (_e, values) => {
     const payload = values || {};
+    // Refused loudly rather than dropped silently: a no-op would look like the save
+    // worked, and the operator would have no idea their credential never changed.
+    const blocked = Object.keys(payload).filter((k) => REDACTED_CONFIG_KEYS.has(k));
+    if (blocked.length) {
+      return { ok: false, error: `${blocked.join(", ")} cannot be set from the app — edit .env` };
+    }
     // Merge (not overwrite): a partial edit must not clobber other keys already
     // in config.json. Empty strings are dropped (they mean "revert to
     // .env/default"), mirroring the transcription agent's save semantics.
@@ -1797,13 +2020,38 @@ function registerIpc() {
     }
     return { ...res, restarted, provider: process.env.LLM_PROVIDER || "deepseek" };
   });
-  ipcMain.handle("config:export", () => ({
-    ok: true,
-    present: config.hasConfigJson(),
-    source: config.readEffective().source,
-    json: config.exportConfig(),
-  }));
-  ipcMain.handle("config:import", (_e, raw) => config.importConfig(raw));
+  ipcMain.handle("config:export", () => {
+    // The export is a JSON *string* of everything in config.json, so the gate-owned
+    // keys have to be deleted from the parsed object rather than filtered out of a map.
+    let json = config.exportConfig();
+    try {
+      const parsed = JSON.parse(json);
+      for (const key of REDACTED_CONFIG_KEYS) delete parsed[key];
+      json = JSON.stringify(parsed, null, 2);
+    } catch {
+      /* not JSON, or nothing to export — hand back exactly what we were given */
+    }
+    return {
+      ok: true,
+      present: config.hasConfigJson(),
+      source: config.readEffective().source,
+      json,
+    };
+  });
+  ipcMain.handle("config:import", (_e, raw) => {
+    // The other way into config.json, and the same escalation: an import carrying the
+    // admin list would install it with higher precedence than the built-in default.
+    try {
+      const parsed = typeof raw === "string" ? JSON.parse(raw) : raw;
+      const blocked = Object.keys(parsed || {}).filter((k) => REDACTED_CONFIG_KEYS.has(k));
+      if (blocked.length) {
+        return { ok: false, error: `${blocked.join(", ")} cannot be set from the app — edit .env` };
+      }
+    } catch {
+      /* not JSON: let importConfig() report the parse failure in its own words */
+    }
+    return config.importConfig(raw);
+  });
 
   // Usage (DS-mon LLM token usage + DeepSeek credit balance)
   ipcMain.handle("usage:aggregate", () => usageAggregate());
@@ -1957,6 +2205,16 @@ function registerIpc() {
     hidePopover();
     return { ok: true };
   });
+  // The panel's corner grip. Returns the scale actually applied, which can be lower
+  // than the request when the current display cannot fit it.
+  //
+  // The renderer sends `persist: false` on every frame of a drag and one final
+  // `true` when the pointer comes up, so a whole gesture costs one write — the
+  // renderer cannot decide where the drag ended, because only this side knows what
+  // the clamp did.
+  ipcMain.handle("tray:zoom", (_e, scale, persist) =>
+    applyPopoverScale(Number(scale), { persist: persist !== false }),
+  );
   ipcMain.handle("app:quit", () => {
     app.quit();
     return { ok: true };
@@ -1998,7 +2256,7 @@ function createWindow() {
     height: 720,
     minWidth: 760,
     minHeight: 520,
-    title: "Frontdesk Operator",
+    title: "Dev Centre",
     backgroundColor: WINDOW_BG[getThemeInfo().effective],
     webPreferences: {
       preload: path.join(__dirname, "preload.js"),
@@ -2006,7 +2264,12 @@ function createWindow() {
       nodeIntegration: false,
     },
   });
-  mainWindow.loadFile(RENDERER_HTML);
+  // The gate is a DOCUMENT, not an overlay: while locked the window loads
+  // `gate.html` and the dashboard's own script is never even evaluated, so there is
+  // nothing for a locked renderer to hide and no fail-open window between the first
+  // paint and an async check. Which document loads is main's decision, made from the
+  // session main already hydrated — the renderer cannot influence it.
+  mainWindow.loadFile(auth.currentSession() ? RENDERER_HTML : GATE_HTML);
   // Closing the window hides it rather than destroying it. This app's job is to
   // keep the stack running, so the dashboard is reopened (menu-bar item, dock
   // icon) instead of rebuilt — and a rebuild used to leave the tray's "Open
@@ -2024,51 +2287,112 @@ function createWindow() {
 }
 
 /**
- * The panel's remembered size.
+ * The panel's remembered SCALE.
  *
  * A file rather than a config key: this is window geometry — it changes on every
- * drag, must never be hand-edited, and has no business appearing in the Config
- * tab. userData resolves to `~/Library/Application Support/Frontdesk Operator`
- * because app.setName() runs before anything reads it.
+ * drag of the corner grip, must never be hand-edited, and has no business appearing
+ * in the Config tab. userData resolves to `~/Library/Application Support/Frontdesk
+ * Operator` because app.setName() runs before anything reads it.
+ *
+ * A scale rather than a size is the right shape: the panel scales as a unit (see
+ * applyPopoverScale), so one number describes both dimensions and the aspect ratio
+ * cannot drift.
  */
-function popoverSizeFile() {
-  return path.join(app.getPath("userData"), "popover-size.json");
+function popoverScaleFile() {
+  return path.join(app.getPath("userData"), "popover-scale.json");
 }
 
 /**
- * The remembered size, clamped. A drag made on a large display must still open
- * on a small one, and a hand-edited file must not be able to open the panel
- * off-screen, so both bounds are enforced on read rather than trusted.
+ * The largest scale that still fits the display the menu-bar item is on.
+ *
+ * Mirrors DS-mon's `resizePopover(to:)`: a scale that is comfortable on a large
+ * monitor must not push the panel off a small one, so the ceiling is derived from the
+ * visible frame rather than trusted from the file.
  */
-function readPopoverSize() {
-  const size = { width: TRAY_POPOVER_WIDTH, height: TRAY_POPOVER_HEIGHT };
+function popoverScaleCeiling() {
   try {
-    const raw = JSON.parse(fs.readFileSync(popoverSizeFile(), "utf8"));
-    const w = Math.round(Number(raw && raw.width));
-    const h = Math.round(Number(raw && raw.height));
-    if (Number.isFinite(w)) size.width = Math.min(Math.max(w, TRAY_POPOVER_MIN_WIDTH), TRAY_POPOVER_MAX_WIDTH);
-    if (Number.isFinite(h)) size.height = Math.min(Math.max(h, TRAY_POPOVER_MIN_HEIGHT), TRAY_POPOVER_MAX_HEIGHT);
+    const icon = tray && tray.getBounds ? tray.getBounds() : null;
+    const display = icon && icon.width ? screen.getDisplayMatching(icon) : screen.getPrimaryDisplay();
+    const byHeight = (display.workArea.height - TRAY_POPOVER_SCREEN_MARGIN) / TRAY_POPOVER_HEIGHT;
+    return Math.max(TRAY_POPOVER_SCALE_MIN, Math.min(TRAY_POPOVER_SCALE_MAX, byHeight));
   } catch {
-    /* nothing remembered yet — the defaults are the answer */
+    return TRAY_POPOVER_SCALE_MAX;
   }
-  return size;
 }
 
-function savePopoverSize() {
-  if (!trayPopover || trayPopover.isDestroyed()) return;
+/** Clamp a scale into [MIN, the ceiling for the display the panel opens on]. */
+function clampPopoverScale(scale) {
+  const value = Number.isFinite(scale) && scale > 0 ? scale : TRAY_POPOVER_SCALE_MIN;
+  return Math.min(Math.max(value, TRAY_POPOVER_SCALE_MIN), popoverScaleCeiling());
+}
+
+/**
+ * The remembered scale, clamped. A scale chosen on a large display must still open on
+ * a small one, so the bound is re-applied on read rather than trusted.
+ */
+function readPopoverScale() {
+  let raw = null;
   try {
-    const [width, height] = trayPopover.getSize();
-    fs.mkdirSync(path.dirname(popoverSizeFile()), { recursive: true });
-    fs.writeFileSync(popoverSizeFile(), JSON.stringify({ width, height }, null, 2) + "\n", "utf8");
+    raw = JSON.parse(fs.readFileSync(popoverScaleFile(), "utf8"));
+  } catch {
+    /* nothing remembered yet — the base size is the answer */
+  }
+  const saved = Number(raw && raw.scale);
+  if (Number.isFinite(saved) && saved > 0) return clampPopoverScale(saved);
+  // A file written before the panel became scalable holds a {width,height} the
+  // operator had dragged it to. Keep that intent rather than snapping back to 1.
+  const legacyHeight = Number(raw && raw.height);
+  if (Number.isFinite(legacyHeight) && legacyHeight > 0) {
+    return clampPopoverScale(legacyHeight / TRAY_POPOVER_HEIGHT);
+  }
+  return TRAY_POPOVER_SCALE_MIN;
+}
+
+/** Persist the scale — one small write per gesture, never per frame. */
+function savePopoverScale(scale) {
+  try {
+    fs.mkdirSync(path.dirname(popoverScaleFile()), { recursive: true });
+    fs.writeFileSync(popoverScaleFile(), JSON.stringify({ scale: clampPopoverScale(scale) }, null, 2) + "\n", "utf8");
   } catch (err) {
-    console.log("[operator] could not remember the panel size:", err.message);
+    console.log("[operator] could not remember the panel scale:", err.message);
   }
 }
 
 /**
- * The popover window. Frameless, resizable, and never in the window list the
- * operator cycles through — it is a panel hanging off the menu-bar item, not a
- * second document window.
+ * Scale the panel and its whole UI together.
+ *
+ * Two things have to move in lockstep and only one of them is a window property:
+ * `setContentSize` grows the window, and `setZoomFactor` grows the CONTENT. Resizing
+ * the window on its own would only add empty space — bigger text, icons and spacing is
+ * what "zoom" means here, which is why nothing in tray.css has to change.
+ *
+ * The position is re-derived afterwards, so a scaled panel keeps its top-centre anchor
+ * under the menu-bar item instead of growing off the screen edge it hangs from.
+ *
+ * @param {number} scale - requested scale, clamped to this display
+ * @param {{persist?: boolean}} [opts] - write it to disk (on gesture end, not per frame)
+ * @returns {number} the scale actually applied, which may be below the request
+ */
+function applyPopoverScale(scale, { persist = false } = {}) {
+  popoverScale = clampPopoverScale(scale);
+  if (persist) savePopoverScale(popoverScale);
+  if (!trayPopover || trayPopover.isDestroyed()) return popoverScale;
+  trayPopover.setContentSize(
+    Math.round(TRAY_POPOVER_WIDTH * popoverScale),
+    Math.round(TRAY_POPOVER_HEIGHT * popoverScale),
+  );
+  // The zoom factor belongs to the loaded page, so it is set here and again on every
+  // load and every show: a reload would otherwise render at 1.0 in a scaled window.
+  if (!trayPopover.webContents.isDestroyed()) trayPopover.webContents.setZoomFactor(popoverScale);
+  positionPopover(null);
+  return popoverScale;
+}
+
+/**
+ * The popover window. A non-activating macOS `panel` (see the `type` option below):
+ * frameless, fixed-size, and never in the window list the operator cycles through — it
+ * hangs off the menu-bar item rather than being a second document window. Its size comes
+ * from applyPopoverScale() rather than a drag on the window edge.
  *
  * `vibrancy: "popover"` is what makes it read as a native menu-bar panel; the
  * page's body background is transparent so the material shows through (see
@@ -2081,26 +2405,34 @@ function createPopover() {
   // else holds a reference to.
   if (trayPopover && !trayPopover.isDestroyed()) return;
   try {
-    const remembered = readPopoverSize();
+    popoverScale = readPopoverScale();
     trayPopover = new BrowserWindow({
-      width: remembered.width,
-      height: remembered.height,
-      minWidth: TRAY_POPOVER_MIN_WIDTH,
-      minHeight: TRAY_POPOVER_MIN_HEIGHT,
-      maxWidth: TRAY_POPOVER_MAX_WIDTH,
-      maxHeight: TRAY_POPOVER_MAX_HEIGHT,
+      width: Math.round(TRAY_POPOVER_WIDTH * popoverScale),
+      height: Math.round(TRAY_POPOVER_HEIGHT * popoverScale),
       show: false,
       frame: false,
-      // Resizable because this is a panel the operator works in, not a fixed
-      // tooltip. A frameless window has no visible grab handle, so the whole
-      // border is the target — and `movable: false` stays: the position is
-      // computed from the menu-bar item, never dragged.
-      resizable: true,
+      // `panel` is what makes this behave like DS-mon's popover, and it is the one
+      // option with no method equivalent — Electron adds NSWindowStyleMaskNonactivatingPanel
+      // to the window at construction, which is what lets it "float on top of
+      // full-screened apps" and appear on every Space. Without it the panel renders only
+      // over our OWN windows: the higher always-on-top level below is not enough, because
+      // a window belonging to an INACTIVE app is not placed above another app's
+      // full-screen window. It also makes the window non-activating, so clicking inside
+      // the panel no longer pulls focus (DS-mon instead calls NSApp.activate, which is the
+      // behaviour we were explicitly asked to avoid).
+      type: "panel",
+      // NOT resizable: a frameless window that can be drag-resized is a normal window
+      // to macOS (edge affordances, Mission Control, a slot in the window cycle). The
+      // panel is scaled from its corner grip instead — see applyPopoverScale().
+      resizable: false,
       movable: false,
       minimizable: false,
       maximizable: false,
       fullscreenable: false,
       skipTaskbar: true,
+      // The macOS counterpart of DS-mon's `collectionBehavior = [.transient, …]`:
+      // without it a menu-bar panel is listed in Mission Control like any window.
+      hiddenInMissionControl: true,
       hasShadow: true,
       vibrancy: "popover",
       visualEffectState: "active",
@@ -2112,24 +2444,28 @@ function createPopover() {
       },
     });
     trayPopover.loadFile(TRAY_HTML);
+    // The zoom factor belongs to the loaded page, so it has to be re-applied whenever a
+    // document loads — a reload would otherwise render at 1.0 in a scaled window.
+    trayPopover.webContents.on("did-finish-load", () => {
+      if (trayPopover && !trayPopover.isDestroyed()) trayPopover.webContents.setZoomFactor(popoverScale);
+    });
     // Above full-screen windows and present on every Space, so a tray click works
     // regardless of what the operator is doing.
     trayPopover.setAlwaysOnTop(true, "pop-up-menu");
-    trayPopover.setVisibleOnAllWorkspaces(true, { visibleOnFullScreen: true });
+    // `skipTransformProcessType` is REQUIRED here: without it this call transforms the
+    // app's process type into an accessory (UIElement) app, which hides the dock icon
+    // and changes activation behaviour — a side effect nobody asks for when the
+    // intention is only "be present on every Space".
+    trayPopover.setVisibleOnAllWorkspaces(true, { visibleOnFullScreen: true, skipTransformProcessType: true });
     trayPopover.on("blur", () => {
       // DevTools steals focus and would close the panel out from under you while
       // inspecting it.
       if (trayPopover.webContents.isDevToolsOpened()) return;
       hidePopover();
     });
-    // Remember the new size, and re-park the panel: one dragged wider while open
-    // would otherwise keep its old origin and hang off the screen edge until it
-    // was closed and reopened. `resized` fires once per drag, not per frame, so
-    // this is one small write per gesture.
-    trayPopover.on("resized", () => {
-      savePopoverSize();
-      positionPopover(null);
-    });
+    // No `resized` handler any more: the window cannot be resized (see the options
+    // above). The corner grip in tray.js drives applyPopoverScale(), which persists
+    // once per gesture and re-parks the panel itself.
     // The panel is not a normal window: it must not be reachable by Cmd+`, nor
     // keep the app "open" in a way that surprises the dock.
     trayPopover.on("closed", () => {
@@ -2181,13 +2517,26 @@ function showPopover(bounds) {
   if (!trayPopover || trayPopover.isDestroyed()) return;
 
   positionPopover(bounds);
-  trayPopover.show();
-  trayPopover.focus();
+  // showInactive(), NOT show() + focus().
+  //
+  // focus() makes our window key, which ACTIVATES the app, which deactivates whatever
+  // was frontmost — so a click on the menu-bar item pulled the focus ring off another
+  // app's full-screen window. The panel is a glance-and-click surface with no text
+  // fields, so it does not need to be the key window: `acceptFirstMouse: true` still
+  // delivers the first click to a button in an unfocused window.
+  //
+  // The cost is that an unfocused window never fires `blur`, so the blur handler in
+  // createPopover() cannot be the only way out — tray.js hides on pointer-leave as well
+  // (see bindAutoHide there). Clicking INSIDE the panel still activates the app, after
+  // which blur works exactly as it did before.
+  trayPopover.showInactive();
   // Ask the page to re-read its four values. Deliberately sent on every open
   // rather than polled: the panel is only looked at for a few seconds at a time,
   // and the dashboard already polls the same endpoints on its own timer.
   try {
-    trayPopover.webContents.send("tray:refresh");
+    // The payload carries the scale so the corner grip can turn a pointer delta into
+    // an absolute size without a second round trip on every open.
+    trayPopover.webContents.send("tray:refresh", { scale: popoverScale });
   } catch {
     /* mid-navigation — the page's own load-time fetch covers it */
   }
@@ -2237,7 +2586,7 @@ async function updateTrayBadge() {
     if (plain.isEmpty()) return;
     if (process.platform === "darwin") plain.setTemplateImage(true);
     tray.setImage(plain);
-    tray.setToolTip("Frontdesk Operator");
+    tray.setToolTip("Dev Centre");
     trayBadgePainted = 0;
     trayBadgeDark = dark;
     return;
@@ -2248,7 +2597,7 @@ async function updateTrayBadge() {
     const image = await mod.badgeImage(count, { dark });
     if (!image) return; // not rendered yet — pre-warm or the next notification retries
     tray.setImage(image);
-    tray.setToolTip(`Frontdesk Operator — ${count} uncleared notification${count === 1 ? "" : "s"}`);
+    tray.setToolTip(`Dev Centre — ${count} uncleared notification${count === 1 ? "" : "s"}`);
     trayBadgePainted = count;
     trayBadgeDark = dark;
   } catch (err) {
@@ -2286,7 +2635,7 @@ function createTray() {
     // match the current menu-bar appearance.
     if (process.platform === "darwin") image.setTemplateImage(true);
     tray = new Tray(image);
-    tray.setToolTip("Frontdesk Operator");
+    tray.setToolTip("Dev Centre");
     const menu = Menu.buildFromTemplate([
       { label: "Open dashboard", click: () => showDashboard() },
       { type: "separator" },
@@ -2339,11 +2688,13 @@ async function spawnMcpForSeat(sub) {
   return { ok: true, spawned };
 }
 
-app.whenReady().then(() => {
+// Skipped entirely by the LOSING instance of a double launch: it must not create a
+// window, register IPC handlers, or start a single service (see the lock above).
+if (hasSingleInstanceLock) app.whenReady().then(() => {
   // The About panel reads from the bundle, which in dev is Electron's own — so
   // state the real identity explicitly rather than inheriting "Electron".
   app.setAboutPanelOptions({
-    applicationName: "Frontdesk Operator",
+    applicationName: "Dev Centre",
     applicationVersion: (() => {
       try {
         return require(path.join(__dirname, "..", "package.json")).version || "";
@@ -2351,7 +2702,7 @@ app.whenReady().then(() => {
         return "";
       }
     })(),
-    copyright: "Frontdesk v2 operator console",
+    copyright: "Dev Centre — developer control plane",
   });
 
   // In dev the dock uses Electron's own icon; in a packaged build the bundle
@@ -2361,6 +2712,14 @@ app.whenReady().then(() => {
     const dockIcon = nativeImage.createFromPath(DOCK_ICON);
     if (!dockIcon.isEmpty()) app.dock.setIcon(dockIcon);
   }
+
+  // Resume a session that is still inside its deadline BEFORE the window exists, so
+  // the renderer's very first `auth:state` — and therefore its first paint — already
+  // knows whether to show the gate. Hydration runs only here: it re-resolves the
+  // recorded email against the CURRENT credential sources and never interrupts a
+  // running app, so removing someone from the registry takes effect next launch.
+  auth.configure({ repo: REPO });
+  auth.hydrate({ version: app.getVersion() });
 
   registerIpc();
   createWindow();
@@ -2415,6 +2774,13 @@ app.whenReady().then(() => {
     // Not `getAllWindows().length === 0`: closing the dashboard now hides it
     // rather than destroying it, so a hidden window would make the dock icon a
     // no-op. showDashboard() restores, shows and focuses whatever state it is in.
+    //
+    // ...EXCEPT while the menu-bar panel is open. Showing or focusing the panel can
+    // activate the app, which fires this event; showDashboard() would then throw a
+    // 1080x720 window over whatever the operator was looking at — most visibly over
+    // another app's full-screen window, which is also what "the menu bar unfocused my
+    // full-screen window" was.
+    if (trayPopover && !trayPopover.isDestroyed() && trayPopover.isVisible()) return;
     showDashboard();
   });
 });

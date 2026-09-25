@@ -4,7 +4,7 @@ The About tab has two sub-tabs:
 
 ## About
 
-Shows the app name + version and a one-line description of Frontdesk Operator.
+Shows the app name + version and a one-line description of Dev Centre.
 
 ## Guide
 

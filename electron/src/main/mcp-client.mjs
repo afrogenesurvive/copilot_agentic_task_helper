@@ -163,7 +163,7 @@ async function connect(server, entry) {
   // an import-time crash (bad credentials, missing module) is captured, not lost.
   if (transport.stderr) pipeStderr(server, transport.stderr);
 
-  const client = new Client({ name: "frontdesk-operator", version: ctx.version }, { capabilities: {} });
+  const client = new Client({ name: "dev-centre", version: ctx.version }, { capabilities: {} });
   await client.connect(transport);
 
   entry.client = client;

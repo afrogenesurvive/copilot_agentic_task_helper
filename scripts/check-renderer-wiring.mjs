@@ -33,8 +33,14 @@ const iconsJs = fs.readFileSync(path.join(RENDERER, "icons.js"), "utf8");
 // from either file.
 const trayHtml = fs.readFileSync(path.join(RENDERER, "tray.html"), "utf8");
 const trayJs = fs.readFileSync(path.join(RENDERER, "tray.js"), "utf8");
-const htmlAll = `${html}\n${trayHtml}`;
-const jsAll = `${appJs}\n${trayJs}`;
+// The gate is a THIRD document (gate.html + gate.js), loaded into the main window
+// while there is no session. It is checked here for the same reason as the panel: it
+// is hand-written markup that a script looks up by id, and it is what a locked
+// operator sees — so a broken id there has no working screen behind it to fall back to.
+const gateHtml = fs.readFileSync(path.join(RENDERER, "gate.html"), "utf8");
+const gateJs = fs.readFileSync(path.join(RENDERER, "gate.js"), "utf8");
+const htmlAll = `${html}\n${trayHtml}\n${gateHtml}`;
+const jsAll = `${appJs}\n${trayJs}\n${gateJs}`;
 
 /** Collect all CSS across a directory tree. */
 function readCssTree(dir) {
