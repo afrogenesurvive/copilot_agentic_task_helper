@@ -88,20 +88,27 @@
   if (form) form.addEventListener("submit", signIn);
 
   /**
-   * Close = HIDE, exactly as clicking the window's own close button does. main.js
-   * preventDefaults that close and hides the window instead of destroying it, because
-   * this app's job is to keep the backend services running — the menu-bar panel, the
-   * dock icon, or the tray menu can all bring it back. Quit is still reachable from the
-   * tray's right-click menu, so a locked operator is never stuck with no way out.
+   * Close = QUIT the app, exactly as the dashboard sidebar's Quit button does.
    *
-   * `window.close()` rather than an IPC channel, deliberately: a locked screen should
-   * have as little reachable surface as possible, and this is the window's own path, so
-   * it needs no channel and no change to the gate's allow-list.
+   * It used to hide the window. Hiding is right for the DASHBOARD — the app's job is to
+   * keep the backend services running — but the gate is what the window shows when nobody
+   * is signed in, so a close button that only hid left a locked operator with no way out
+   * of the app except the tray's right-click menu or Cmd+Q. `app:quit` is on the gate's
+   * allow-list for this reason (see main/dev-centre-auth.js), and main.js quits on a close
+   * of the window ITSELF while this document is loaded, so both routes agree.
+   *
+   * The confirmation is deliberately the sidebar's exact wording: quitting stops the
+   * webhook server, the agent runner and the tunnel, which is not obvious from a login
+   * screen. A refused `invoke` is reported rather than swallowed, so the button can never
+   * look dead while locked.
    */
   var closeBtn = $("gate-close");
   if (closeBtn) {
     closeBtn.addEventListener("click", function () {
-      window.close();
+      if (!window.confirm("Quit Dev Centre? Backend services will stop.")) return;
+      api.quit().catch(function (err) {
+        showError(err && err.message ? err.message : "Could not quit Dev Centre.");
+      });
     });
   }
 

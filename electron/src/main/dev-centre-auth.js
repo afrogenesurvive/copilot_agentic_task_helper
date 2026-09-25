@@ -53,7 +53,13 @@ const SESSION_LIMIT_KEY = "DEV_CENTRE_SESSION_LIMIT";
  * `app:version` and `app:getTheme` are here for the menu-bar panel, which has to be
  * able to say "locked, sign in" without rendering in the wrong palette. Both are
  * cosmetic — a version string and the current light/dark choice — and the mutating
- * `app:setTheme` / `app:setAppearance` / `app:quit` are deliberately NOT.
+ * `app:setTheme` / `app:setAppearance` are deliberately NOT.
+ *
+ * `app:quit` is here because the gate IS the window: its × used to hide the window and
+ * leave a locked operator with no way out of the app except the tray's right-click menu
+ * or Cmd+Q. Quitting reveals nothing, it is not accounts/keys, and a close of the window
+ * itself while the gate is showing does the same thing (see main.js's `close` handler) —
+ * so both routes agree instead of one of them quietly backgrounding the app.
  *
  * The panel's own window management is here for a harder reason: the panel is reachable
  * from the menu bar WITHOUT signing in, so while it is locked it still has to be able to
@@ -66,6 +72,7 @@ const ALWAYS_OPEN = new Set([
   "auth:login",
   "app:version",
   "app:getTheme",
+  "app:quit",
   "tray:hidePopover",
   "tray:zoom",
   "tray:openDashboard",

@@ -1,5 +1,28 @@
 # Changelog
 
+## [0.4.2-4] — 2026-09-25
+
+### The sign-in screen's close button now quits, and the menu-bar icon follows the menu bar
+
+Closing the app **while the sign-in screen is showing now quits it**, exactly like the sidebar's Quit,
+after asking *"Quit Dev Centre? Backend services will stop."* It used to hide the window instead, which
+left a locked app with no way out besides the tray's right-click menu or Cmd+Q. The window's own close
+button — the red dot, or Cmd+W — does the same while you are signed out, so the two agree. Nothing
+changes once you are signed in: closing the window still hides the dashboard and the backend keeps
+running.
+
+The **menu-bar icon** is now **white, always**. It previously took its colour from the *system* menu-bar
+appearance, and before that from the app's own **Appearance** setting — which Electron applies to the menu
+bar item itself, so a pinned theme drew the mark in the menu bar's *opposite* colour. Neither signal is
+reliable on macOS 26, where the menu bar's tint comes from the wallpaper, so the mark no longer tries to
+match it: it is the same white on every menu bar. On a light menu bar a white mark is faint by design —
+the red **uncleared-notification count** beside it is what reads. The badge itself is unchanged.
+
+While you are signed out, the menu-bar **panel** no longer sits behind the sign-in prompt loading data it
+cannot have: each pane says *sign in to see…* instead of "Loading…", the counts are blanked rather than
+showing numbers read before the lock, and the panel stops asking at all — a locked app used to write a
+refused-read error to its log for every notification it had ever recorded.
+
 ## [0.4.2-3] — 2026-09-25
 
 ### The app is now Dev Centre, and it is gated behind a sign-in

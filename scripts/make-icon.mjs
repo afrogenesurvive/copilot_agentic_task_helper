@@ -16,8 +16,8 @@
  * .gitignore has an unanchored `build/` rule that would swallow it):
  *   icon.png              1024x1024  dock / Finder / electron-builder source
  *   icon.icns                        derived with sips + iconutil
- *   trayTemplate.png      16x16      alpha-only menu-bar template image
- *   trayTemplate@2x.png   32x32
+ *   trayWhite.png         16x16      the white menu-bar glyph
+ *   trayWhite@2x.png      32x32
  */
 import { app, BrowserWindow, nativeImage, screen } from "electron";
 import { execFileSync } from "node:child_process";
@@ -55,11 +55,22 @@ const RADIUS_RATIO = 0.225; // macOS squircle corner radius, as a fraction of th
 const GLYPH_RATIO = 0.46; // glyph size, as a fraction of the canvas
 const GLYPH_STROKE = 1.7; // matches the icon set's stroke-width at 24x24
 
-// Tray icons are smaller, so the glyph needs a proportionally heavier stroke to
-// stay legible at 16px, and macOS template images must be alpha-only (black).
-const TRAY_TARGETS = [
-  { file: "trayTemplate.png", px: 16, stroke: 2.4 },
-  { file: "trayTemplate@2x.png", px: 32, stroke: 2.2 },
+// Tray icons are smaller, so the glyph needs a proportionally heavier stroke to stay
+// legible at 16px.
+//
+// WHITE, always — and deliberately not a macOS *template* image. A template image is
+// painted by the OS from its alpha channel, which normally makes the mark adapt to the
+// menu bar for free; but this app pins its own appearance (`nativeTheme.themeSource`,
+// written by the Appearance tab) and Electron applies that to the status item's own view,
+// so a pinned theme painted the mark in the menu bar's OPPOSITE colour. Matching the bar
+// instead was tried and abandoned: macOS 26 tints its glass menu bar from the wallpaper,
+// which no API exposes, so the colour would still be wrong on a dark wallpaper over a
+// Light system. A fixed white mark is the operator's choice — see trayIcon() in main.js.
+const TRAY_COLOUR = "#ffffff";
+const TRAY_BASE = "trayWhite";
+const TRAY_SIZES = [
+  { suffix: "", px: 16, stroke: 2.4 },
+  { suffix: "@2x", px: 32, stroke: 2.2 },
 ];
 
 // ── colours (kept in sync with tokens.js by hand — see the comment there) ────
@@ -92,10 +103,10 @@ function appIconSvg() {
 </svg>`;
 }
 
-/** The bare glyph, for macOS menu-bar template images (alpha only). */
-function traySvg(stroke) {
+/** The bare glyph at one colour on transparent — a menu-bar mark, at 16/32px. */
+function traySvg(stroke, colour) {
   return `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24">
-  <path d="${GLYPH}" fill="none" stroke="#000000" stroke-width="${stroke}"
+  <path d="${GLYPH}" fill="none" stroke="${colour}" stroke-width="${stroke}"
         stroke-linecap="round" stroke-linejoin="round"/>
 </svg>`;
 }
@@ -204,12 +215,14 @@ async function main() {
     fs.writeFileSync(iconPath, iconPng);
     written.push([iconPath, `${CANVAS}x${CANVAS}`, iconPng.length]);
 
-    // 2. tray template images (alpha-only)
-    for (const target of TRAY_TARGETS) {
-      const png = await renderToPng(win, traySvg(target.stroke), target.px, scaleFactor);
-      const file = path.join(OUT_DIR, target.file);
+    // 2. the tray glyph at each scale. The @2x sibling is picked up by Electron
+    //    automatically (nativeImage's @2x convention), so main.js only ever names the
+    //    16px file.
+    for (const size of TRAY_SIZES) {
+      const png = await renderToPng(win, traySvg(size.stroke, TRAY_COLOUR), size.px, scaleFactor);
+      const file = path.join(OUT_DIR, `${TRAY_BASE}${size.suffix}.png`);
       fs.writeFileSync(file, png);
-      written.push([file, `${target.px}x${target.px}`, png.length]);
+      written.push([file, `${size.px}x${size.px}`, png.length]);
     }
   } finally {
     win.destroy();

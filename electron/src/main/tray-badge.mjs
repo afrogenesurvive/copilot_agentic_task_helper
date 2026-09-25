@@ -3,21 +3,20 @@
  *
  * WHY THIS EXISTS
  * ---------------
- * The tray icon is a macOS *template* image (main.js calls `setTemplateImage(true)`,
- * and electron/assets/trayTemplate.png is alpha-only). macOS paints a template
- * image black or white to match the menu bar, which is exactly what you want for
- * a mark — and exactly why a red badge cannot be drawn into it: a template image
- * has no colour to give.
+ * The plain menu-bar icon is a static PNG, so it cannot carry a count. The badged icon
+ * is therefore rasterised here at runtime with the same technique as
+ * `scripts/make-icon.mjs`: a real Chromium renderer draws the SVG. The glyph path is
+ * read from the renderer's own icon set (`electron/src/renderer/icons.js`), so the
+ * menu-bar mark cannot drift from the app icon, and the badge red is the same
+ * `--color-red` as the in-app dots.
  *
- * So the badged icon is an ordinary (non-template) image, rasterised here at
- * runtime with the same technique as `scripts/make-icon.mjs`: a real Chromium
- * renderer draws the SVG. The glyph path is read from the renderer's own icon set
- * (`electron/src/renderer/icons.js`), so the menu-bar mark cannot drift from the
- * app icon, and the badge red is the same `--color-red` as the in-app dots.
- *
- * Because a template image no longer does the light/dark adaptation for us, there
- * are two families: a black glyph for a light menu bar, white for a dark one.
- * main.js picks between them with `nativeTheme.shouldUseDarkColors`.
+ * WHITE, always, matching electron/assets/trayWhite.png. There is deliberately no
+ * appearance detection: a macOS template image is painted by the OS, but Electron applies
+ * the app's pinned appearance to the status item's own view, and macOS 26 tints the glass
+ * menu bar from the wallpaper — so no signal available to this app reliably describes the
+ * bar. A mark that tried to match it would still be wrong on a dark wallpaper over a Light
+ * system, and would flip colour whenever a badge appeared. The cost is that the white
+ * glyph is faint on a light menu bar, where the red pill carries the meaning on its own.
  *
  * COST CONTROL
  * ------------
@@ -56,6 +55,7 @@ const BADGE_HEIGHT = 11;
 const BADGE_RADIUS = 5.5;
 const BADGE_FONT = 8;
 const BADGE_RED = "#f85149"; // --color-red: the same red as the in-app unread dots
+const GLYPH_WHITE = "#ffffff"; // white on every menu bar — see the module header
 const NARROW_PILL = 10; // "1".."9"
 const WIDE_PILL = 14; // "9+"
 
@@ -89,18 +89,19 @@ function badgeWidth(label) {
  *
  * The glyph keeps the existing tray recipe verbatim: a nested 16x16 viewport over
  * the icons.js 24x24 coordinate space, so its stroke scales by 16/24 exactly as
- * it does in electron/assets/trayTemplate.png.
+ * it does in electron/assets/trayWhite.png.
+ *
+ * @param {string} label — the pill text ("1".."9", then "9+")
  */
-function svgFor(label, dark) {
+function svgFor(label) {
   const pillW = pillWidth(label);
   const width = badgeWidth(label);
   const pillX = GLYPH_BOX + BADGE_GAP;
   const pillY = (GLYPH_BOX - BADGE_HEIGHT) / 2;
-  const glyphColour = dark ? "#ffffff" : "#000000";
 
   return `<svg xmlns="http://www.w3.org/2000/svg" width="${width}" height="${GLYPH_BOX}" viewBox="0 0 ${width} ${GLYPH_BOX}">
   <svg x="0" y="0" width="${GLYPH_BOX}" height="${GLYPH_BOX}" viewBox="0 0 24 24" preserveAspectRatio="xMidYMid meet">
-    <path d="${GLYPH}" fill="none" stroke="${glyphColour}" stroke-width="${GLYPH_STROKE}"
+    <path d="${GLYPH}" fill="none" stroke="${GLYPH_WHITE}" stroke-width="${GLYPH_STROKE}"
           stroke-linecap="round" stroke-linejoin="round"/>
   </svg>
   <rect x="${pillX}" y="${pillY}" width="${pillW}" height="${BADGE_HEIGHT}" rx="${BADGE_RADIUS}" fill="${BADGE_RED}"/>
@@ -193,22 +194,21 @@ async function rasterize(markup, width) {
  * render could not happen.
  *
  * @param {number} count
- * @param {{ dark?: boolean }} [opts] — menu-bar appearance to draw the glyph for
  * @returns {Promise<Electron.NativeImage|null>}
  */
-export async function badgeImage(count, { dark = false } = {}) {
+export async function badgeImage(count) {
   if (!GLYPH) return null;
   const n = Math.max(0, Math.round(Number(count) || 0));
   if (n <= 0) return null;
 
   const label = labelFor(n);
-  const key = `${dark ? "dark" : "light"}:${label}`;
+  const key = label;
   const cached = CACHE.get(key);
   if (cached) return cached;
   const pending = INFLIGHT.get(key);
   if (pending) return pending;
 
-  const draw = () => rasterize(svgFor(label, dark), badgeWidth(label));
+  const draw = () => rasterize(svgFor(label), badgeWidth(label));
   const job = (renderChain = renderChain.then(draw, draw))
     .then((image) => {
       if (!image || image.isEmpty()) return null;
@@ -227,13 +227,11 @@ export async function badgeImage(count, { dark = false } = {}) {
 export async function prewarm() {
   if (!GLYPH) return 0;
   let made = 0;
-  for (const dark of [false, true]) {
-    for (let n = 1; n <= 10; n += 1) {
-      // 10 renders as "9+" — and so does any larger count.
-      const before = CACHE.size;
-      await badgeImage(n, { dark });
-      if (CACHE.size > before) made += 1;
-    }
+  for (let n = 1; n <= 10; n += 1) {
+    // 10 renders as "9+" — and so does any larger count.
+    const before = CACHE.size;
+    await badgeImage(n);
+    if (CACHE.size > before) made += 1;
   }
   return made;
 }

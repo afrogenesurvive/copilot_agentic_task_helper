@@ -89,11 +89,14 @@ Three consequences worth knowing:
   `clearedAt = now, uncleared = 0`, so upgrading does not light the badge with days of backfill.
 
 The image cannot be a macOS template image: the OS paints a template black or white, and a red badge
-needs colour. So it is rasterised as an ordinary image — two families (black glyph for a light menu bar,
-white for a dark one) picked with `nativeTheme.shouldUseDarkColors` and repainted on
-`nativeTheme.on("updated")`. Variants are cached and pre-warmed in the background after the tray appears,
-and the icon falls back to the plain template at zero. `updateTrayBadge()` is called from `notify()`,
-from the `notifications:clear` handler and once at startup — never from a timer.
+needs colour. Nor is it appearance-aware — the glyph is always white, matching `trayWhite.png`, because no
+signal available here reliably describes the menu bar (Electron's theme values follow the app's pinned
+`themeSource`, and macOS 26 tints the glass bar from the wallpaper). So it is rasterised as an ordinary
+image on demand, and there is no appearance listener to repaint it. Variants are cached and pre-warmed in
+the background after the tray appears — one per label, 1–9 then `9+` — and the icon falls back to the plain
+white glyph at zero.
+`updateTrayBadge()` is called from `notify()`, from the `notifications:clear` handler and once at startup
+— never from a timer.
 
 ## Settings
 

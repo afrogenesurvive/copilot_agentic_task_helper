@@ -41,6 +41,19 @@
   var zoomDragging = false;
 
   /**
+   * True while the app is locked. Set by refresh(), which is the one place that asks.
+   *
+   * This panel is reachable from the menu bar WITHOUT a session, and while locked main
+   * answers only `auth:state` plus the panel's own window-management channels. So every
+   * other read here would not merely fail — main THROWS on a gated channel, and Electron
+   * prints an "Error occurred in handler" stack to the app's stdout for each one. A locked
+   * app therefore filled its own log with refused reads, one per notification, which is
+   * noise that buries real errors. The push handler and the tab switch below check this
+   * flag rather than firing and letting the refusal be counted.
+   */
+  var locked = false;
+
+  /**
    * Every paint is wrapped: a throw in one of these must not take the rest of the
    * panel with it. (In the dashboard a single unguarded module-level call once
    * killed every later binding in the IIFE — same hazard, smaller file.)
@@ -418,8 +431,9 @@
       if (pane) pane.hidden = !on;
     });
     // Fetched on first view rather than with the pills: it is the one list of 50
-    // rather than 20, and most opens never look at it.
-    if (name === "notifications") {
+    // rather than 20, and most opens never look at it — and not at all while locked,
+    // where the read would only be refused.
+    if (name === "notifications" && !locked) {
       guarded("notifications", function () {
         paintNotifications().catch(function () {});
       });
@@ -450,6 +464,28 @@
     setPill("tray-services", "—", "plain");
     setPill("tray-queue", "—", "plain");
     setPill("tray-keys", "—", "plain");
+
+    // The three panes a locked operator can still click into must say WHY they are empty
+    // rather than keep the `<li class="empty">Loading…</li>` the markup ships with:
+    // nothing paints them while locked, so a frozen "Loading…" reads as a hung backend
+    // rather than a locked one. These are the same helpers the unlocked paints use, so
+    // clearing and the empty state look identical either way.
+    fillList($("tray-services-list"), [], "Sign in to Dev Centre to see the services.");
+    // The queue pane renders from `queueItems`/`queueError` via renderQueue(), which the
+    // Priority/Misc subtabs call too — so setting the line HERE is what makes every one of
+    // those paths show the locked reason instead of "✅ Empty", without guarding each one.
+    queueItems = { priority: [], misc: [] };
+    queueError = "Sign in to Dev Centre to see the queue.";
+    renderQueue();
+    fillList($("tray-notif-list"), [], "Sign in to Dev Centre to see notifications.");
+
+    // The counts are app data too: neither the tab label nor the notifications note may
+    // keep a number that was read before the lock.
+    var notifCount = $("tray-notif-count");
+    if (notifCount) notifCount.textContent = "";
+    var notifNote = $("tray-notif-note");
+    if (notifNote) notifNote.textContent = "";
+
     // The only useful thing to do from here, and the only route from the panel to the
     // gate: `tray:openDashboard` is allowed without a session.
     var open = $("tray-open");
@@ -485,7 +521,8 @@
       .authState()
       .then(function (res) {
         var state = (res && res.state) || {};
-        if (state.locked) return paintLocked();
+        locked = state.locked === true;
+        if (locked) return paintLocked();
         return paintAll();
       })
       // State unreadable: fall through to the normal reads rather than blanking the panel
@@ -660,6 +697,11 @@
   // incremented locally, because it is the same number the menu-bar badge shows —
   // and only a clear in the dashboard lowers either of them.
   api.onNotification(function () {
+    // Nothing here is readable while locked, and asking anyway is not free — see the
+    // `locked` declaration. This is the path that produced one refused
+    // `notifications:list` per recorded notification. The panel repaints from refresh()
+    // the moment it is unlocked.
+    if (locked) return;
     guarded("notif-count", function () {
       refreshNotificationCount().catch(function () {});
     });

@@ -167,7 +167,11 @@ try {
 // unanchored `build/` rule.
 const ASSETS_DIR = path.join(__dirname, "..", "assets");
 const DOCK_ICON = path.join(ASSETS_DIR, "icon.png");
-const TRAY_ICON = path.join(ASSETS_DIR, "trayTemplate.png");
+// The menu-bar mark: WHITE, on every menu bar. Not a macOS *template* image and not
+// appearance-aware — see trayIcon() for why that is the deliberate choice rather than an
+// oversight. make-icon.mjs writes the @2x sibling next to this file, so only the 16px
+// name is ever referenced.
+const TRAY_ICON = path.join(ASSETS_DIR, "trayWhite.png");
 
 // Window chrome colours. Must match electron/src/renderer/tokens.js's
 // DARK.bg / LIGHT.bg, or the window flashes the wrong colour on launch.
@@ -226,11 +230,10 @@ let mainWindow = null; // hoisted so applyTheme() can reference it at module loa
 // rect and is also shown/hidden from IPC (the dashboard's "open" path).
 let tray = null;
 let trayPopover = null;
-// Menu-bar badge: the count the icon currently shows, and the appearance its
-// glyph was drawn for. Both are remembered so an unchanged count costs nothing,
-// and so switching light/dark redraws the glyph even at the same number.
+// Menu-bar badge: the count the icon currently shows. Remembered so an unchanged
+// count costs nothing. There is no "which appearance was it drawn for" companion any
+// more, because the glyph is white on every menu bar (see trayIcon).
 let trayBadgePainted = -1;
-let trayBadgeDark = null;
 // main/tray-badge.mjs — ESM, loaded once, and only when there is a count to draw.
 let trayBadgeMod = null;
 // When the panel was last hidden. Clicking the menu-bar item while the panel is
@@ -249,6 +252,12 @@ let popoverShownAt = 0;
 // closed the window" (hide it, keep running in the background) from "the app is
 // quitting" (let the close through).
 let isQuitting = false;
+// Which document the main window is showing: true while it is the GATE (no session), false
+// once the dashboard is loaded. The `close` handler needs to know whether there is a
+// dashboard to hide behind — see the comment there. Deliberately NOT recomputed from
+// `auth.currentSession()`: a session that expires while the dashboard is open does not
+// re-lock the window, so that test would turn a Hide into a Quit.
+let gateShowing = false;
 
 // ── Appearance / theme (APPEARANCE_THEME = light | dark | system)
 //    + accent color (APPEARANCE_ACCENT_COLOR) + font size (APPEARANCE_FONT_SIZE) ──
@@ -1762,6 +1771,7 @@ function registerIpc() {
     // decided to. A locked renderer has no route to the dashboard, even by
     // hand-crafting IPC.
     if (res && res.ok && mainWindow && !mainWindow.isDestroyed()) {
+      gateShowing = false; // from here a close hides again, which is what the dashboard expects
       mainWindow.loadFile(RENDERER_HTML);
       showDashboard();
     }
@@ -2269,17 +2279,28 @@ function createWindow() {
   // nothing for a locked renderer to hide and no fail-open window between the first
   // paint and an async check. Which document loads is main's decision, made from the
   // session main already hydrated — the renderer cannot influence it.
-  mainWindow.loadFile(auth.currentSession() ? RENDERER_HTML : GATE_HTML);
+  //
+  // `gateShowing` is REMEMBERED rather than re-derived, because the `close` handler below
+  // branches on it and by then the session may have expired — which does not re-lock this
+  // window, so re-deriving would turn the dashboard's Hide into a Quit (see its declaration).
+  gateShowing = !auth.currentSession();
+  mainWindow.loadFile(gateShowing ? GATE_HTML : RENDERER_HTML);
   // Closing the window hides it rather than destroying it. This app's job is to
   // keep the stack running, so the dashboard is reopened (menu-bar item, dock
   // icon) instead of rebuilt — and a rebuild used to leave the tray's "Open
   // dashboard" pointing at a null window. Quit is unaffected: `before-quit`
   // preventDefaults and exits via app.exit(), so no close event is ever needed
   // to get out — and `isQuitting` lets one through if that ever changes.
+  //
+  // The GATE is the exception: while it is showing there is nothing to hide behind,
+  // because the app cannot be used without signing in. Closing the window there is the
+  // operator leaving, so it quits — the same full teardown as the sidebar's Quit and the
+  // tray menu — rather than backgrounding a window nobody can sign in to.
   mainWindow.on("close", (e) => {
     if (isQuitting) return;
     e.preventDefault();
-    mainWindow.hide();
+    if (gateShowing) app.quit();
+    else mainWindow.hide();
   });
   mainWindow.on("closed", () => {
     mainWindow = null;
@@ -2566,40 +2587,73 @@ async function trayBadgeApi() {
 }
 
 /**
+ * The plain (unbadged) menu-bar icon — always the white glyph.
+ *
+ * WHY WHITE, ALWAYS, AND WHY NOT A TEMPLATE IMAGE
+ * -----------------------------------------------
+ * A macOS *template* image is painted by the OS from its alpha channel, which normally
+ * makes a menu-bar mark adapt for free. It cannot be trusted here: this app pins its own
+ * appearance (`nativeTheme.themeSource`, written by the Appearance tab) and Electron
+ * applies that to the status item's own view, so a pinned theme painted the mark in the
+ * menu bar's OPPOSITE colour — a black glyph on a dark bar.
+ *
+ * Picking the colour ourselves was tried and abandoned. `nativeTheme.shouldUseDarkColors`
+ * answers the app's question, not the menu bar's, and `AppleInterfaceStyle` (the system
+ * setting) is no better: macOS 26's menu bar is glass and takes its tint from the
+ * wallpaper, which no API exposes. So a mark that tried to match the bar would still be
+ * wrong on a dark wallpaper over a Light system — and would flip colour whenever a badge
+ * appeared. A fixed white mark is predictable and always the same, which is what the
+ * operator asked for; the trade-off is that it is faint on a light menu bar, where the
+ * badge's red pill carries the meaning on its own.
+ *
+ * Decoding is synchronous, so this is safe on the startup path, and the result is cached
+ * because it is re-applied on every badge repaint.
+ *
+ * @returns {Electron.NativeImage|null} null if the asset could not be decoded.
+ */
+let trayIconCache = null;
+function trayIcon() {
+  if (trayIconCache) return trayIconCache;
+  const image = nativeImage.createFromPath(TRAY_ICON);
+  if (image.isEmpty()) {
+    console.log("[operator] tray icon could not be decoded:", TRAY_ICON);
+    return null;
+  }
+  trayIconCache = image;
+  return image;
+}
+
+/**
  * Paint the menu-bar icon for the current uncleared count.
  *
- * Zero goes back to the template image, which macOS paints to match the menu bar.
- * Anything else is the badged, non-template image for the current appearance —
- * a template image has no colour, so the red cannot live in it.
+ * Zero goes back to the plain white glyph. Anything else is the badged image, whose
+ * glyph is drawn in the same white — the red pill needs real colour, so it cannot come
+ * from the plain asset.
  *
- * Every failure is non-fatal: the plain icon stays and the next notification (or
- * the pre-warm finishing) retries, which is why nothing here throws.
+ * Every failure is non-fatal: the plain icon stays and the next notification (or the
+ * pre-warm finishing) retries, which is why nothing here throws.
  */
 async function updateTrayBadge() {
   if (!tray || tray.isDestroyed()) return;
   const count = notifications.unclearedCount();
-  const dark = !!nativeTheme.shouldUseDarkColors;
-  if (count === trayBadgePainted && dark === trayBadgeDark) return;
+  if (count === trayBadgePainted) return;
 
   if (count <= 0) {
-    const plain = nativeImage.createFromPath(TRAY_ICON);
-    if (plain.isEmpty()) return;
-    if (process.platform === "darwin") plain.setTemplateImage(true);
+    const plain = trayIcon();
+    if (!plain) return;
     tray.setImage(plain);
     tray.setToolTip("Dev Centre");
     trayBadgePainted = 0;
-    trayBadgeDark = dark;
     return;
   }
 
   try {
     const mod = await trayBadgeApi();
-    const image = await mod.badgeImage(count, { dark });
+    const image = await mod.badgeImage(count);
     if (!image) return; // not rendered yet — pre-warm or the next notification retries
     tray.setImage(image);
     tray.setToolTip(`Dev Centre — ${count} uncleared notification${count === 1 ? "" : "s"}`);
     trayBadgePainted = count;
-    trayBadgeDark = dark;
   } catch (err) {
     console.log("[operator] tray badge unavailable:", err.message);
   }
@@ -2620,20 +2674,14 @@ async function prewarmTrayBadges() {
 
 function createTray() {
   try {
-    // A real template image. This used to be a 1x1 transparent PNG placeholder,
-    // which rendered the menu-bar item invisible.
-    if (!fs.existsSync(TRAY_ICON)) {
+    // A real white glyph, not a template image and not appearance-aware — see trayIcon()
+    // for why. This used to be a 1x1 transparent PNG placeholder, which rendered the
+    // menu-bar item invisible.
+    const image = trayIcon();
+    if (!image) {
       console.log("[operator] tray icon missing — run `npm run make:icon` in electron/");
       return;
     }
-    const image = nativeImage.createFromPath(TRAY_ICON);
-    if (image.isEmpty()) {
-      console.log("[operator] tray icon could not be decoded:", TRAY_ICON);
-      return;
-    }
-    // macOS template images are alpha-only: the OS paints them black or white to
-    // match the current menu-bar appearance.
-    if (process.platform === "darwin") image.setTemplateImage(true);
     tray = new Tray(image);
     tray.setToolTip("Dev Centre");
     const menu = Menu.buildFromTemplate([
@@ -2726,11 +2774,14 @@ if (hasSingleInstanceLock) app.whenReady().then(() => {
   createTray();
   startPriorityWatch();
 
-  // Menu-bar badge. Repainted from the tray's own lifecycle — a new notification,
-  // a clear, an appearance switch, the pre-warm finishing — never polled, so it
-  // stays correct while the panel is closed.
+  // Menu-bar badge. Repainted from the tray's own lifecycle — a new notification, a
+  // clear, the pre-warm finishing — never polled, so it stays correct while the panel is
+  // closed.
+  //
+  // There is deliberately NO appearance listener any more. The glyph is white on every
+  // menu bar (see trayIcon), so a system or app appearance change cannot change the icon,
+  // and the old `nativeTheme.on("updated")` repaint would now be a no-op.
   void updateTrayBadge();
-  nativeTheme.on("updated", () => void updateTrayBadge());
   void prewarmTrayBadges();
 
   // Live log: seed from the unified stream, tail it, and push to the renderer.

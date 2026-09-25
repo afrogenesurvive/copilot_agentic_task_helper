@@ -40,16 +40,20 @@
           <span class="gate__sub">operator console</span>
         </div>
         <span class="gate__version" id="gate-version"></span>
-        <!-- Closes the WINDOW, which in this app means HIDE: main's `close` handler
-             preventDefaults and hides it, because the app's job is to keep the backend
-             running. Plain `window.close()` rather than an IPC channel on purpose — a
-             locked screen should have as little reachable surface as possible, and this
-             is the window's own path, so it needs no change to the gate's allow-list. -->
+        <!-- QUITS the app, exactly as the dashboard sidebar's Quit does, after the same
+             confirmation — quitting stops the webhook server, the agent runner and the
+             tunnel. It used to hide the window only, which left a locked operator with no
+             way out of the app besides the tray's right-click menu or Cmd+Q. `app:quit`
+             is on the gate's allow-list (see main/dev-centre-auth.js), and main.js quits
+             on a close of the window ITSELF while this document is loaded — so the × and
+             the window's own close button agree instead of one of them backgrounding the
+             app. -->
         <button
           id="gate-close"
           class="gate__close"
           type="button"
-          title="Close the window — Dev Centre keeps running"
+          aria-label="Quit Dev Centre"
+          title="Quit Dev Centre — backend services will stop"
         >
           ×
         </button>

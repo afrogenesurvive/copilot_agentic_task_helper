@@ -100,8 +100,15 @@ The icons are generated, not drawn. [`scripts/make-icon.mjs`](../scripts/make-ic
 macOS squircle plate, so the app icon can never drift from the UI's own icon set:
 
 ```bash
-npm --prefix electron run make:icon     # -> electron/assets/{icon.png,icon.icns,trayTemplate*.png}
+npm --prefix electron run make:icon     # -> electron/assets/{icon.png,icon.icns,trayWhite*}
 ```
+
+The menu-bar mark is the **same white on every menu bar** (`trayWhite.png`, with its `@2x` sibling). It is
+deliberately not a macOS *template* image (which the OS paints for you) and not appearance-aware: this app
+pins its own appearance, Electron applies that to the status item's own view, and on macOS 26 the menu
+bar's tint comes from the wallpaper — which no API exposes. Rather than chase a colour it cannot reliably
+know, the mark is fixed; the red notification badge is what changes. It is faint on a light menu bar, by
+choice.
 
 Icons live in `electron/assets/`, **not** `electron/build/` — the repo `.gitignore` has an unanchored
 `build/` rule that would silently swallow them. `assets/**/*` is in `build.files` because the main
@@ -190,6 +197,8 @@ Two different things are licensed here, and they are deliberately independent:
   (`DEV_CENTRE_SESSION_LIMIT`, 12 h default) and resume across launches while they are still valid.
   While locked the window loads a separate sign-in document, so the dashboard's code never runs — but
   the **menu-bar panel** still opens, and its *Sign in to Dev Centre* button is the way to the gate.
+  Closing the window while the gate is showing **quits** the app, exactly as the sidebar's Quit does;
+  once you are signed in, closing hides the dashboard instead and the backend keeps running.
 - **The public chat webapp** is gated by **seat licences**, which are a different mechanism entirely.
   Management lives in a separate local key store driven by its `pkm` CLI — this repo only verifies
   licences — so the Key Manager tab is a front end: it spawns the CLI and renders the result, and
@@ -219,7 +228,8 @@ Two different things are licensed here, and they are deliberately independent:
 - A native notification is raised when the priority queue grows.
 - Closing the window **hides** it — the app keeps running in the background, and the menu-bar item, the
   dock icon and a notification click all restore and focus it. Quit via the menu-bar menu or the sidebar
-  Quit button.
+  Quit button. **While the sign-in gate is showing, a close quits the app instead** — a locked window has
+  no dashboard to hide behind.
 - If `electron --version` reports `Electron failed to install correctly`, reinstall:
   `cd electron && rm -rf node_modules/electron && npm install electron@33.4.11` (decline npx's
   offer to fetch a different version and use `./node_modules/.bin/electron`).
