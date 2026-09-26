@@ -4233,6 +4233,14 @@
     hook("queue-clear-misc", "misc_notifications", "Misc notifications");
   }
 
+  // ── Log Out (ends the session, stops backend services, returns to the gate) ──
+  // The reply is deliberately NOT awaited: main swaps this document for the gate, which
+  // destroys the calling renderer, so the promise usually never settles. Same rule gate.js
+  // documents for a successful login, in the other direction.
+  document.getElementById("logout-btn").addEventListener("click", () => {
+    if (window.confirm("Log out of Dev Centre? Backend services will stop.")) api.authLogout();
+  });
+
   // ── Quit (stops backend services via main's before-quit) ──
   document.getElementById("quit-btn").addEventListener("click", () => {
     if (window.confirm("Quit Dev Centre? Backend services will stop.")) api.quit();
@@ -4268,6 +4276,18 @@
       .authState()
       .then((res) => {
         const state = (res && res.state) || {};
+        // Who is signed in, in the sidebar footer. Deliberately BEFORE the tier check below
+        // and shown for BOTH tiers: knowing which seat this is is what makes Log Out
+        // meaningful, and `state()` only reports the email while a session is live.
+        const who = document.getElementById("session-identity");
+        if (who) {
+          const label = state.email ? `${state.email}${state.role ? ` — ${state.role}` : ""}` : "";
+          if (label) {
+            who.textContent = label;
+            who.title = label;
+            who.removeAttribute("hidden");
+          }
+        }
         if (state.role !== "tier_1") return;
         document.querySelectorAll('[data-role-min="tier_1"]').forEach((el) => el.removeAttribute("hidden"));
       })

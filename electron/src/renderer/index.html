@@ -113,6 +113,12 @@
           </nav>
 
           <div class="sidebar-footer">
+            <!-- Who is signed in, filled from auth:state by app.js. Starts hidden so a
+                 locked or role-less renderer never shows a blank line. -->
+            <p class="hint sidebar-session" id="session-identity" hidden></p>
+            <button id="logout-btn" class="sidebar-btn" title="End this session and stop the backend services">
+              <span data-icon="lock"></span><span class="sidebar-btn__label">Log Out</span>
+            </button>
             <button id="quit-btn" class="sidebar-btn sidebar-btn--danger">
               <span data-icon="power"></span><span class="sidebar-btn__label">Quit</span>
             </button>

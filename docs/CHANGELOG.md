@@ -1,5 +1,24 @@
 # Changelog
 
+## [0.4.3-2] — 2026-09-25
+
+### Log Out in the Dev Centre
+
+The operator console had no way to end a session. Once you signed in you were in until the 12-hour
+deadline, or until you quit the app. There is now a **Log Out** button in the sidebar, above Quit, with
+the address you are signed in as shown just above it.
+
+Logging out stops the backend services this app started, ends the session and puts the sign-in screen
+back — so the next person can sign in with their own address and key. Signing back in starts the services
+again automatically. Quit is unchanged and still exits the app.
+
+Two details worth knowing:
+
+- **Logging out is remembered.** Quit and relaunch after a logout and you land on the sign-in screen,
+  rather than the app quietly resuming the session you had just ended.
+- **Log Out is not Quit.** The app keeps running (so does the menu-bar panel) and it returns to the
+  sign-in screen.
+
 ## [0.4.3-1] — 2026-09-25
 
 ### The Dashboard's single bulk button is now a service picker

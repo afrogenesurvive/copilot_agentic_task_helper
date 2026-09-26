@@ -5,12 +5,20 @@
 const { contextBridge, ipcRenderer } = require("electron");
 
 contextBridge.exposeInMainWorld("api", {
-  // The gate. While locked these two are the ONLY channels main will answer — every
-  // other invoke rejects with "locked: …", which is what makes hiding the UI cosmetic
-  // rather than the actual control. The secret is passed straight through and is never
-  // logged, stored or echoed back (main's login() answers with email/role/deadline only).
+  // The gate. While locked these three are the ONLY auth channels main will answer —
+  // every other invoke rejects with "locked: …", which is what makes hiding the UI
+  // cosmetic rather than the actual control. The secret is passed straight through and is
+  // never logged, stored or echoed back (main's login() answers with email/role/deadline
+  // only).
+  //
+  // authLogout ends the session, stops the app's services and returns the window to the
+  // gate. It is here (rather than gated) because a session that lapses while the dashboard
+  // is open does not re-lock the window, so refusing it would leave an operator with a Log
+  // Out button that errors and no way to clear it. It never reveals anything: the reply is
+  // a locked state, and the document that asked is destroyed by the gate swap.
   authState: () => ipcRenderer.invoke("auth:state"),
   authLogin: (email, secret) => ipcRenderer.invoke("auth:login", email, secret),
+  authLogout: () => ipcRenderer.invoke("auth:logout"),
   // Services
   svcList: () => ipcRenderer.invoke("svc:list"),
   svcStart: (name) => ipcRenderer.invoke("svc:start", name),

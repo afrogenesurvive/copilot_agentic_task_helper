@@ -10,8 +10,10 @@
  * starts a WALL-CLOCK session (`DEV_CENTRE_SESSION_LIMIT` seconds, 12 h default)
  * whose deadline is appended to a gitignored session log; the deadline is
  * re-checked on every launch and the session is resumed when it is still valid.
- * The session is never interrupted while the app runs, and there is deliberately
- * no logout — the operator asked for "no logout for now".
+ * The session is never interrupted while the app runs. Logging out is an explicit
+ * operator action (`logout()`): it appends a terminal `logout` row to the session
+ * log — which is what stops the next launch RESUMING the session — and drops the
+ * in-memory session so the window can return to the gate for a different address.
  *
  * Everything here is pure filesystem + crypto: no pkm, no child process, no
  * network. A broken or moved key store cannot lock the operator out of their own
@@ -46,6 +48,13 @@ const ADMINS_KEY = "DEV_CENTRE_ADMINS";
 const SESSION_LIMIT_KEY = "DEV_CENTRE_SESSION_LIMIT";
 
 /**
+ * The session-log events that say something about the CURRENT session. `hydrate()`
+ * reads the last one of these to decide whether to resume; everything else
+ * (`app_start`, `denied`) is noise for that purpose.
+ */
+const SESSION_EVENTS = new Set(["login", "logout", "session_expired", "session_revoked"]);
+
+/**
  * Channels that must work before anyone is signed in — the gate's own API.
  * Everything else is refused while locked, which is what makes the gate real:
  * the renderer hiding a tab is cosmetic, this is the enforcement.
@@ -66,10 +75,17 @@ const SESSION_LIMIT_KEY = "DEV_CENTRE_SESSION_LIMIT";
  * hide itself, zoom itself, and — `tray:openDashboard` — provide the only route from the
  * panel to the gate. Refusing those would leave a locked operator looking at a panel
  * that neither dismisses nor leads anywhere. None of the three touches the app's data.
+ *
+ * `auth:logout` is here for a specific reason: a session that LAPSES while the dashboard
+ * is open does not re-lock the window (see `gateShowing` in main.js), so `authorize` would
+ * refuse the operator's own Log Out with `locked` — an error they cannot clear from the
+ * screen they are on. Ending a session is always permitted; the handler no-ops when there
+ * is nothing to end.
  */
 const ALWAYS_OPEN = new Set([
   "auth:state",
   "auth:login",
+  "auth:logout",
   "app:version",
   "app:getTheme",
   "app:quit",
@@ -291,8 +307,16 @@ function logEvent(event, extra = {}) {
   }
 }
 
-/** The most recent `login` record in the session log, or null. */
-function lastLoginRecord() {
+/**
+ * The most recent session-relevant record in the session log, or null.
+ *
+ * This deliberately returns the last record of ANY of `SESSION_EVENTS`, not just the last
+ * `login`. `hydrate()` resumes a session from a single record, so a `logout` that this
+ * function skipped would be invisible to it and the next launch would cheerfully resume
+ * the session we just ended, while still inside the original deadline. Terminal events
+ * have to be visible here for `logout` to mean anything across a restart.
+ */
+function lastSessionRecord() {
   let text;
   try {
     text = fs.readFileSync(sessionLogPath(), "utf8");
@@ -308,7 +332,7 @@ function lastLoginRecord() {
     } catch {
       continue; // a torn final line must not discard the whole history
     }
-    if (rec && rec.event === "login" && typeof rec.email === "string" && typeof rec.expiresAt === "number") {
+    if (rec && SESSION_EVENTS.has(rec.event) && typeof rec.email === "string") {
       found = rec;
     }
   }
@@ -327,8 +351,17 @@ function lastLoginRecord() {
 function hydrate({ version } = {}) {
   logEvent("app_start", version ? { version } : {});
 
-  const record = lastLoginRecord();
+  const record = lastSessionRecord();
   if (!record) {
+    session = null;
+    return state();
+  }
+
+  // The last thing that happened was an operator logout (or an expiry/revocation another
+  // launch recorded), so there is nothing to resume. Tested as `!== "login"` rather than
+  // `=== "logout"` on purpose: ANY terminal record ends the session, so a future event
+  // name cannot silently become resumable by being forgotten here.
+  if (record.event !== "login" || typeof record.expiresAt !== "number") {
     session = null;
     return state();
   }
@@ -408,10 +441,42 @@ function login(email, secret) {
   };
 }
 
-/** Drop the in-memory session (no UI exposes this — there is no logout, by design). */
+/** Drop the in-memory session. Returns the locked state. */
 function lock() {
   session = null;
   return state();
+}
+
+/**
+ * End the session on purpose — the sidebar's Log Out.
+ *
+ * Two halves, and the first is the easy one to forget: the terminal record is what makes
+ * the logout survive a restart. Without it the app resumes the session on the next launch,
+ * because `hydrate()` reads the last session record and an unrecorded logout leaves it
+ * looking at the `login` row from earlier in the day.
+ *
+ * Safe to call with no session: it then only clears what is already cleared and returns the
+ * locked state. Nothing is appended in that case, because a lapsed session carries no
+ * address to attribute — `state()` deliberately hides `email` while locked so the login
+ * screen cannot be used to enumerate who has access.
+ *
+ * Stopping the app's services is main.js's job, not this module's: nothing here spawns or
+ * owns a child process.
+ *
+ * @param {string} [reason] short machine-readable note for the audit trail
+ * @returns {object} the state object (see `state()`)
+ */
+function logout(reason = "operator_logout") {
+  if (session) {
+    logEvent("logout", {
+      email: session.email,
+      role: session.role,
+      expiresAt: session.expiresAt,
+      source: session.source,
+      reason,
+    });
+  }
+  return lock();
 }
 
 /**
@@ -500,10 +565,11 @@ module.exports = {
   credentialFor,
   sessionLimitSeconds,
   sessionLogPath,
-  lastLoginRecord,
+  lastSessionRecord,
   hydrate,
   login,
   lock,
+  logout,
   state,
   authorize,
   currentSession,

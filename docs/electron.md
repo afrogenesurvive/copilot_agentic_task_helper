@@ -195,6 +195,10 @@ Two different things are licensed here, and they are deliberately independent:
   everything except **Key Manager** and **Accounts & Keys**. A secret may be plain text, or a
   `scrypt$…` verifier minted by `pkm claims set … --password-stdin`. Sessions are wall-clock
   (`DEV_CENTRE_SESSION_LIMIT`, 12 h default) and resume across launches while they are still valid.
+  The sidebar's **Log Out** ends a session on demand: it stops the backend services this app started
+  and returns to the sign-in screen, so the next person can sign in with their own address and key —
+  the services come back on the next sign-in. A logout is **remembered**, so relaunching does not
+  resume the session you just ended.
   While locked the window loads a separate sign-in document, so the dashboard's code never runs — but
   the **menu-bar panel** still opens, and its *Sign in to Dev Centre* button is the way to the gate.
   Closing the window while the gate is showing **quits** the app, exactly as the sidebar's Quit does;
@@ -230,6 +234,8 @@ Two different things are licensed here, and they are deliberately independent:
   dock icon and a notification click all restore and focus it. Quit via the menu-bar menu or the sidebar
   Quit button. **While the sign-in gate is showing, a close quits the app instead** — a locked window has
   no dashboard to hide behind.
+- **Log Out is not Quit.** It stops the backend services and returns to the sign-in screen, but leaves the
+  app and the menu-bar panel running; Quit exits the app entirely.
 - If `electron --version` reports `Electron failed to install correctly`, reinstall:
   `cd electron && rm -rf node_modules/electron && npm install electron@33.4.11` (decline npx's
   offer to fetch a different version and use `./node_modules/.bin/electron`).

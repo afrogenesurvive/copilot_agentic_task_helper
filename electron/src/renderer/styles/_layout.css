@@ -120,6 +120,16 @@ html {
   gap: 2px;
 }
 
+/* The "signed in as …" line above Log Out. One line only: an address can be long and the
+   sidebar is narrow, so it ellipsises rather than wrapping into the buttons below it. */
+.sidebar-session {
+  margin: 0;
+  padding: 2px 10px 6px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
 .sidebar-btn {
   display: flex;
   align-items: center;

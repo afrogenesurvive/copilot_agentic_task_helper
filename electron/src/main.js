@@ -258,6 +258,11 @@ let isQuitting = false;
 // `auth.currentSession()`: a session that expires while the dashboard is open does not
 // re-lock the window, so that test would turn a Hide into a Quit.
 let gateShowing = false;
+// True while `auth:logout` is draining. A second Log Out click during that window would
+// otherwise run `stopAllServices()` concurrently with the first, and the two would race to
+// signal the same process groups. Deliberately separate from `isQuitting`: logging out
+// stops the services but does NOT end the process.
+let loggingOut = false;
 
 // ── Appearance / theme (APPEARANCE_THEME = light | dark | system)
 //    + accent color (APPEARANCE_ACCENT_COLOR) + font size (APPEARANCE_FONT_SIZE) ──
@@ -446,6 +451,67 @@ function stopService(name) {
   setTimeout(() => signalTree(entry.proc, "SIGKILL"), 3000);
   delete running[name];
   return { ok: true };
+}
+
+/**
+ * Stop every service the app started, quietly, WITHOUT quitting.
+ *
+ * Log Out needs this and must not call `shutdownEverything()` on its own, for two reasons
+ * that both come from `stopService()`'s delete-before-signal ordering:
+ *
+ *   - `stopService()` removes `running[name]` BEFORE the signal lands, so the child's
+ *     `exit` handler reads `operatorStopped === true` and stays silent. Signalling the raw
+ *     processes in bulk (what `shutdownEverything()` does) leaves the entry in place, so a
+ *     signal-death is indistinguishable from a crash and posts a dashboard-error
+ *     notification for the webhook server and the tunnel — neither of which has a graceful
+ *     SIGTERM path.
+ *   - it leaves no stale `running[name]` behind, so a later ▶ Start really spawns.
+ *     `startService()` answers `{already:true}` for ANY existing entry without probing
+ *     liveness, which would leave the next operator looking at a service that reads
+ *     "stopped" and refuses to start.
+ *
+ * The tail call reaps what `stopService()` does not own — user-script runs, the operator
+ * chat's MCP stdio children and the priority-queue timer. It early-returns when `running`
+ * is already empty, so the common case costs nothing.
+ */
+async function stopAllServices() {
+  const procs = [];
+  for (const name of Object.keys(running)) {
+    const entry = running[name];
+    if (entry && entry.proc) procs.push(entry.proc);
+    stopService(name);
+  }
+  // `running` is already empty at this point (stopService deletes eagerly), so the wait has
+  // to track the procs captured above rather than re-reading the map.
+  const deadline = Date.now() + 3000;
+  while (Date.now() < deadline && procs.some(isAlive)) {
+    await new Promise((r) => setTimeout(r, 50));
+  }
+  await shutdownEverything();
+}
+
+/**
+ * Start the stack the app autostarts: webhook + runner (+ tunnel if configured).
+ *
+ * Pulled out of the `app.whenReady` block so the SAME set comes back after a Log Out.
+ * Log Out stops the services, so without this a second operator would sign in to a
+ * dashboard with nothing running and have to bring the stack up by hand.
+ *
+ * Safe to call when everything is already up: `startService()` answers `{already:true}`
+ * for a service that is still running, so a login that does not follow a Log Out is a
+ * no-op.
+ *
+ * The MCP servers are NOT autostarted: the operator chat's MCP client spawns a child per
+ * server on first use, and starting them here as well would leave two processes for every
+ * server the chat touches. They stay manually startable from the Dashboard rail; set
+ * OPERATOR_AUTOSTART_MCP=true for the old behaviour.
+ */
+function autostartServices() {
+  if (process.env.OPERATOR_AUTOSTART === "false") return;
+  const auto = ["webhook", "runner"];
+  if (process.env.OPERATOR_AUTOSTART_MCP === "true") auto.push(...MCP_NAMES.map((n) => `mcp:${n}`));
+  if (serviceDefs.tunnel.args.length > 0) auto.push("tunnel");
+  for (const n of auto) startService(n);
 }
 
 /**
@@ -1778,10 +1844,10 @@ function effectiveLlmLabel() {
 
 // ── IPC ──────────────────────────────────────────────────────────────────────
 function registerIpc() {
-  // The gate's own two channels. They are also why the wrapper above can be
+  // The gate's own channels. They are also why the wrapper above can be
   // unconditional: a locked renderer still has to be able to ask whether it is locked
-  // and to present a way in. Neither ever returns a secret — `login()` answers with the
-  // email, the role and the deadline and nothing else.
+  // and to present a way in. Neither `auth:state` nor `auth:login` ever returns a secret —
+  // `login()` answers with the email, the role and the deadline and nothing else.
   ipcMain.handle("auth:state", () => ({ ok: true, state: auth.state() }));
   ipcMain.handle("auth:login", (_e, email, secret) => {
     const res = auth.login(email, secret);
@@ -1794,8 +1860,55 @@ function registerIpc() {
       gateShowing = false; // from here a close hides again, which is what the dashboard expects
       mainWindow.loadFile(RENDERER_HTML);
       showDashboard();
+      // Bring the stack back when this sign-in follows a Log Out, which stops the
+      // services. Both calls are no-ops otherwise: `startService()` answers
+      // `{already:true}` for anything still running, and `startPriorityWatch()` clears
+      // its own timer before setting a new one.
+      autostartServices();
+      startPriorityWatch();
     }
     return res;
+  });
+
+  /**
+   * Log Out — end the session, stop the stack, and return to the gate.
+   *
+   * Reached from the sidebar's Log Out. Returns to the gate rather than exiting, so the
+   * next operator can sign in with a different address and key; `login()` re-reads `.env`
+   * and the role registry on every attempt, so a credential added since launch works here
+   * with no restart.
+   *
+   * Three things this deliberately is NOT:
+   *   - NOT `beginQuit()`. That sets the never-reset `quitting` / `isQuitting` flags and
+   *     ends in `app.exit(0)`. Reusing it would turn the dashboard's close button into a
+   *     quit for the rest of the process's life, and Log Out must not exit the app.
+   *   - NOT a way in from a locked screen: it only ever loads the GATE document. It is in
+   *     `ALWAYS_OPEN` because a session that lapses while the dashboard is open does not
+   *     re-lock the window, so refusing this channel would leave the operator with a Log
+   *     Out button that errors and no way to clear it.
+   *   - NOT asynchronous from the renderer's point of view. The document is destroyed by
+   *     the `loadFile` below, so the caller cannot rely on this reply arriving.
+   */
+  ipcMain.handle("auth:logout", async () => {
+    if (!auth.currentSession()) return { ok: true, already: true, state: auth.state() };
+    if (loggingOut) return { ok: true, already: true, state: auth.state() };
+    loggingOut = true;
+    try {
+      // Drain BEFORE swapping documents. The gate must not appear while services are still
+      // going down, or a fast re-login would start the stack on top of the teardown and the
+      // two would race.
+      await stopAllServices();
+      const state = auth.logout();
+      // Set the flag before the swap: the window's `close` handler reads it, and it is what
+      // makes a close while the gate is up quit rather than hide. `createWindow()` derives
+      // the same value from `currentSession()`, so a rebuilt window agrees.
+      gateShowing = true;
+      if (!mainWindow || mainWindow.isDestroyed()) createWindow();
+      else mainWindow.loadFile(GATE_HTML);
+      return { ok: true, state };
+    } finally {
+      loggingOut = false;
+    }
   });
 
   ipcMain.handle("svc:list", () => Promise.all(Object.keys(serviceDefs).map(serviceHealth)));
@@ -2830,17 +2943,10 @@ if (hasSingleInstanceLock) app.whenReady().then(() => {
   // cutoff it takes is the real app-start time, not module-load time.
   startNotificationProducers();
 
-  // Autostart the stack: webhook + runner (+ tunnel if configured).
-  // The MCP servers are NOT autostarted: the operator chat's MCP client spawns a
-  // child per server on first use, and starting them here as well would leave two
-  // processes for every server the chat touches. They stay manually startable from
-  // the Dashboard rail; set OPERATOR_AUTOSTART_MCP=true for the old behaviour.
-  if (process.env.OPERATOR_AUTOSTART !== "false") {
-    const auto = ["webhook", "runner"];
-    if (process.env.OPERATOR_AUTOSTART_MCP === "true") auto.push(...MCP_NAMES.map((n) => `mcp:${n}`));
-    if (serviceDefs.tunnel.args.length > 0) auto.push("tunnel");
-    for (const n of auto) startService(n);
-  }
+  // Autostart the stack: webhook + runner (+ tunnel if configured). Shared with the
+  // auth:login handler — logging out stops the services, so signing back in restarts
+  // exactly this set.
+  autostartServices();
 
   app.on("activate", () => {
     // Not `getAllWindows().length === 0`: closing the dashboard now hides it
