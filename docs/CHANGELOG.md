@@ -1,5 +1,38 @@
 # Changelog
 
+## [0.4.3-3] — 2026-09-26
+
+### Sign in to Dev Centre with a seat licence
+
+The sign-in screen now accepts a seat licence (`TA1…`) in the **Secret** field, alongside the
+email + secret it has always taken. Paste the licence and type the address it was issued to.
+
+The tier then comes from the licence rather than from the two lists the gate used before: the signed
+`email` claim inside the licence is matched against a **hidden list of admin addresses compiled into
+the app**. An address on that list signs in at **`tier_1`** (Key Manager and Accounts & Keys); anything
+else that verifies signs in at **`tier_2`**. A licence issued without an `email` claim is refused —
+re-sign it with `pkm claims set <registry> <seat> --email <address> --resign` and use the new key.
+
+The licence is verified locally against the key store, reaching the same verdict the webapp does for
+the same key.
+
+**Nothing that worked before changes.** `.env` and the role registry are checked *first*, so every
+existing password keeps working and a licence is only consulted when the address you type is in neither
+list. If the key store is missing or unreadable, the licence route is simply unavailable and the app
+behaves exactly as it did.
+
+Two limits worth knowing:
+
+- **A revoked seat keeps its current session until the deadline.** A licence is a private key and is
+  never stored, so it cannot be re-checked at the next launch the way a local credential is. Revocation
+  takes effect at the next sign-in.
+- **The admin list is hidden in the UI, not secret in the app.** Anyone holding the `.app` can read it.
+  It keeps *who else has admin* off the dashboard for a signed-in `tier_2` operator; it is not a
+  cryptographic control.
+
+One consequence to be deliberate about: `tier_1` includes the Key Manager, which can **mint seats**. A
+seat licence that signs in as an admin is therefore also a licence-minting credential.
+
 ## [0.4.3-2] — 2026-09-25
 
 ### Log Out in the Dev Centre

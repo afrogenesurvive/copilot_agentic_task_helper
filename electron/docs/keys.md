@@ -12,9 +12,13 @@ rings** that sign them.
 
 ## Why this matters
 
-A seat licence gates **webapp login** for one collaborator — it is not required to run this
-operator app. Revocation is read **live** by the webhook server on every login attempt, so a
-revoke you click here is enforced on that seat's next login with **no restart and no rebuild**.
+A seat licence gates **webapp login** for one collaborator, and it can also sign someone in to
+**this** app (paste it into the sign-in screen's Secret field — see the Claims section). It is never
+*required* here: the sign-in on launch takes an email + secret first, and a licence is only consulted
+when that address is in neither `.env` nor the role registry. Revocation is read **live** by the
+webhook server on every login attempt, so a revoke you click here is enforced on that seat's next
+webapp login with **no restart and no rebuild**; on the operator app it lands at the next **sign-in**,
+because a licence is a private key and is never stored.
 
 ## The header
 
@@ -147,7 +151,7 @@ it*. pkm supports two:
 
 | Claim | What it is |
 | --- | --- |
-| `email` | The mailbox the seat belongs to. Lower-cased and shape-validated — an identity label, never verified by delivery |
+| `email` | The mailbox the seat belongs to. Lower-cased and shape-validated — an identity label, never verified by delivery. It also decides the tier when a licence is used to sign in to Dev Centre: an address on the app's hidden admin list lands at `tier_1`, anything else at `tier_2`, and a key with **no** claim is refused |
 | `pwdv` | A **scrypt password verifier** (`scrypt$N$r$p$salt$hash`). The password itself is never stored, logged, exported or printed |
 
 Type a seat id into **Seat** and press **Show claims**. The panel shows the claim in **both** of the

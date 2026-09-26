@@ -57,7 +57,13 @@ check the ⚙️ Config tab is not showing that key as coming from `config.json`
 ## Buttons
 
 - **Refresh** — re-read config from disk.
-- **Raw JSON / Form view** — switch between the sectioned form and a full JSON editor.
+- **Raw JSON / Form view** — switch between the sectioned form and a full JSON editor. Note that the
+  Raw JSON view serialises **every** key present in `config.json` / `.env` / the built-in defaults,
+  not just the fields the form declares — which is why anything that must not be visible to an
+  operator at any tier is kept out of config entirely. `DEV_CENTRE_ADMINS` is one such key: it is
+  stripped from this view and refused on save/import. The Dev Centre tier_1 admin **email** list is
+  the other, and is a constant compiled into the app rather than a key here, so it never reaches this
+  editor at all.
 - **💾 Save** — **merges** the keys you changed into `config.json` (other keys are preserved;
   clearing a field to empty reverts it to `.env`/default). If you changed any LLM/provider **or
   usage-tracking** keys, the runner and webhook services restart automatically so the change is

@@ -80,12 +80,19 @@
           required
         />
 
-        <label class="gate__label" for="gate-secret">Secret</label>
+        <!-- "Secret or seat licence" rather than "Secret": a `TA1…` licence is a second
+             accepted credential, and a field that does not say so is one nobody tries.
+             The licence is only consulted when the address above is in neither `.env` nor
+             the role registry, so every existing password keeps working unchanged. -->
+        <label class="gate__label" for="gate-secret">Secret or seat licence</label>
         <input
           id="gate-secret"
           class="input gate__input"
           type="password"
           autocomplete="current-password"
+          spellcheck="false"
+          autocapitalize="off"
+          autocorrect="off"
           required
         />
 

@@ -15,19 +15,30 @@
  * log — which is what stops the next launch RESUMING the session — and drops the
  * in-memory session so the window can return to the gate for a different address.
  *
- * Everything here is pure filesystem + crypto: no pkm, no child process, no
+ * Everything here is pure filesystem + crypto: no `pkm` CLI, no child process, no
  * network. A broken or moved key store cannot lock the operator out of their own
- * desktop app, which is the whole reason the credentials live here rather than in
- * the seat ledger.
+ * desktop app, which is the whole reason the primary credentials live here rather
+ * than in the seat ledger.
  *
- * FAIL CLOSED, with one deliberate exception: a missing/corrupt registry or
- * `.env` means "no credentials", never "no gate". The only way in is a match
- * against `.env` admins or a registry user.
+ * A SEAT LICENCE is accepted as a SECOND way in (`licence-verifier.js`, a CJS port of
+ * the frontdesk verifier). It is consulted only when the typed address is in neither
+ * `.env` nor the role registry, so it is purely ADDITIVE — every existing credential
+ * keeps the exact semantics it had, including a `TA1…` stored as a plaintext secret.
+ * The cert's signed `email` claim then decides the role against the HIDDEN admin list
+ * in `dev-centre-admin-emails.js`: listed ⇒ `tier_1`, anything else ⇒ `tier_2`. That
+ * list is a source constant rather than a config key precisely so it reaches no config
+ * surface — including the Config tab's Raw JSON view, which renders every key.
  *
- * SECRETS ARE NEVER LOGGED OR RETURNED. The session log records the email, the
- * role, the deadline and a failure REASON (`unknown_email` | `bad_key` | …) — the
- * typed secret and the stored secret never reach a log line, an IPC payload or a
- * thrown error message.
+ * FAIL CLOSED, with one deliberate exception: a missing/corrupt registry or `.env`
+ * means "no credentials", never "no gate". Entry is a match against `.env` admins, a
+ * registry user, or a verified seat licence. A missing KEY STORE closes the licence
+ * path only — it cannot widen access, because it can only remove a way in that was
+ * never a local credential to begin with.
+ *
+ * SECRETS ARE NEVER LOGGED OR RETURNED. The session log records the email, the role,
+ * the deadline and a failure REASON (`unknown_email` | `bad_key` | …) — the typed
+ * secret, the stored secret and the licence string never reach a log line, an IPC
+ * payload or a thrown error message.
  */
 "use strict";
 
@@ -37,6 +48,8 @@ const path = require("path");
 
 const pwdv = require("./password-verifier");
 const roles = require("./dev-centre-roles");
+const adminEmails = require("./dev-centre-admin-emails");
+const licences = require("./licence-verifier");
 
 /** Session length when `DEV_CENTRE_SESSION_LIMIT` is absent or unusable. */
 const DEFAULT_SESSION_LIMIT_SECONDS = 43200; // 12 h
@@ -46,6 +59,33 @@ const ADMINS_KEY = "DEV_CENTRE_ADMINS";
 
 /** `.env` key holding the session length in SECONDS. */
 const SESSION_LIMIT_KEY = "DEV_CENTRE_SESSION_LIMIT";
+
+/**
+ * `source` prefix for a session opened with a seat licence, e.g. `licence:frontdesk-agent`.
+ * The registry id is not a secret and it is what makes a session log readable after the
+ * fact — the alternative, recording the licence, would put a private key in a log line.
+ */
+const LICENCE_SOURCE_PREFIX = "licence:";
+
+/**
+ * Operator-facing text for each `verifyLicenseKey()` failure. The raw code is appended
+ * in parentheses, so the message stays useful to a human without losing the exact reason
+ * for a bug report. Deliberately generic about WHO a licence belongs to: see the comment
+ * in `resolveLicenceSignIn()` about not echoing a cert's email onto a locked screen.
+ */
+const LICENCE_REASON_TEXT = {
+  malformed: "that is not a licence string",
+  malformed_cert: "that licence's certificate cannot be read",
+  app_mismatch: "that licence was issued for a different app, or a newer format than this build understands",
+  unknown_kid: "that licence was signed by a key this device's key store does not know",
+  retired_kid: "the master key that signed that licence has been retired",
+  revoked_seat: "that seat has been revoked",
+  bad_signature: "that licence's signature does not verify",
+  bad_seat_key: "that licence's seat key cannot be read",
+  key_mismatch: "that licence's seat key does not match its certificate",
+  expired: "that licence has expired",
+  no_enc_key: "that licence carries no encryption key",
+};
 
 /**
  * The session-log events that say something about the CURRENT session. `hydrate()`
@@ -340,6 +380,56 @@ function lastSessionRecord() {
 }
 
 /**
+ * Resume (or refuse) a session that was opened with a SEAT LICENCE.
+ *
+ * `credentialFor()` CANNOT be used here, and this is the subtle half of the licence
+ * feature: a licence sign-in happens precisely BECAUSE the address is in neither `.env`
+ * nor the role registry, so resolving it the way a local credential is resolved returns
+ * null and silently revokes EVERY licence session at the next launch. The session would
+ * appear to work, then vanish on restart — the kind of bug that reads as a flaky app.
+ *
+ * What can still be re-checked is the half that belongs to this app: a `tier_1` session is
+ * resumed only while the address is still in the hidden admin list, so deleting an entry
+ * takes effect at the next launch exactly as removing a `.env` admin does.
+ *
+ * The licence itself is NOT re-checked, because it is never stored (it is a secret — a
+ * private key). So revocation of a seat whose session is still live takes effect at the
+ * next SIGN-IN, not the next launch. That latency is deliberate and is documented in
+ * `docs/safe/licensing-and-login.md`; shortening it would mean either persisting a
+ * private key or shortening `DEV_CENTRE_SESSION_LIMIT` for licence sessions.
+ *
+ * @param {object} record - the last `login` row from the session log
+ * @returns {object} the state object (see `state()`)
+ */
+function hydrateLicenceSession(record) {
+  const wanted = pwdv.tryNormalizeEmail(record.email);
+  // Anything unrecognised is treated as the weaker role, never promoted: a hand-edited or
+  // partially-written log line must not be able to mint a tier_1 session.
+  const role = record.role === "tier_1" ? "tier_1" : "tier_2";
+  const source = typeof record.source === "string" && record.source ? record.source : "licence";
+
+  if (!wanted || (role === "tier_1" && !adminEmails.isTier1Email(wanted))) {
+    session = null;
+    logEvent("session_revoked", {
+      email: typeof record.email === "string" ? record.email : "",
+      role,
+      reason: "not_in_admin_list",
+      via: "licence",
+    });
+    return state();
+  }
+
+  if (record.expiresAt <= Date.now()) {
+    session = null;
+    logEvent("session_expired", { email: wanted, role, expiresAt: record.expiresAt, via: "licence" });
+    return state();
+  }
+
+  session = { email: wanted, role, expiresAt: record.expiresAt, source, via: "licence" };
+  return state();
+}
+
+/**
  * Load the persisted session at startup. The stored deadline decides, and the
  * email is re-resolved against the CURRENT credential sources — so removing an
  * admin from `.env`, deleting a registry user or retiering one takes effect on
@@ -366,6 +456,10 @@ function hydrate({ version } = {}) {
     return state();
   }
 
+  // A licence session has no local credential to re-resolve against — it is resumed from
+  // its own record, and the admin list is what can revoke its tier. See the function.
+  if (record.via === "licence") return hydrateLicenceSession(record);
+
   const credential = credentialFor(record.email);
   if (!credential) {
     session = null;
@@ -379,8 +473,80 @@ function hydrate({ version } = {}) {
     return state();
   }
 
-  session = { email: credential.email, role: credential.role, expiresAt: record.expiresAt, source: credential.source };
+  session = {
+    email: credential.email,
+    role: credential.role,
+    expiresAt: record.expiresAt,
+    source: credential.source,
+    via: "local",
+  };
   return state();
+}
+
+/**
+ * Resolve a sign-in from a SEAT LICENCE.
+ *
+ * The licence IS the credential. A full `TA1…` carries the seat's Ed25519 + X25519
+ * private seeds, so `verifyLicenseKey()`'s possession check (the derived public key must
+ * equal the one in the signed cert) is what proves the holder is the seat — no separate
+ * secret is needed and none is stored. Verification is delegated to `licence-verifier.js`
+ * so the gate reaches the *same* verdict the frontdesk webapp does for the same key.
+ *
+ * The role comes from the cert's signed `email` claim against the hidden admin list:
+ * listed ⇒ `tier_1`, anything else that verifies ⇒ `tier_2`.
+ *
+ * Why a claim-less licence is refused rather than defaulted: `cert.email` is absent on
+ * every seat issued before claims existed, and those keys still verify. Treating a
+ * missing claim as "trust whatever was typed" would turn the untrusted `Email` field
+ * into the identity, which is exactly what the claim exists to prevent.
+ *
+ * NEVER echoes the cert's email. `state()` deliberately hides identities while locked so
+ * the login screen cannot be used to enumerate who has access; an error naming the
+ * licence's real address would hand that back — and would let anyone holding a leaked
+ * licence string read its owner's address without decoding it.
+ *
+ * @returns {{ok: true, credential: object} | {ok: false, reason: string, detail: string}}
+ */
+function resolveLicenceSignIn(wanted, typed) {
+  const store = licences.pkmPaths();
+  const verdict = licences.verifyLicenseKey(typed, Date.now(), store);
+
+  if (!verdict.ok) {
+    return {
+      ok: false,
+      reason: "bad_licence",
+      detail: `${LICENCE_REASON_TEXT[verdict.reason] || "that licence could not be verified"} (${verdict.reason})`,
+    };
+  }
+
+  const certEmail = verdict.claims.email;
+  if (!certEmail) {
+    return {
+      ok: false,
+      reason: "licence_no_email",
+      detail:
+        "that licence carries no email claim, so there is nothing to match against the admin list — " +
+        "re-sign it with `pkm claims set <registry> <seat> --email <address> --resign` and use the NEW key",
+    };
+  }
+
+  if (certEmail !== wanted) {
+    return {
+      ok: false,
+      reason: "email_mismatch",
+      detail: "the address on that licence is not the address you typed — sign in with the address the licence names",
+    };
+  }
+
+  return {
+    ok: true,
+    credential: {
+      email: certEmail,
+      role: adminEmails.isTier1Email(certEmail) ? "tier_1" : "tier_2",
+      source: `${LICENCE_SOURCE_PREFIX}${store.registry}`,
+      via: "licence",
+    },
+  };
 }
 
 /**
@@ -390,17 +556,33 @@ function hydrate({ version } = {}) {
  * (the login screen says "no such user" vs "wrong secret"). That is a usability
  * trade-off on a single-user desktop app, not a public endpoint: the session log
  * is the authoritative record of which it was.
+ *
+ * TWO CREDENTIAL PATHS, and the order is load-bearing:
+ *
+ *   1. `.env` / role registry — checked FIRST, so an entry keeps the exact semantics it
+ *      has always had. A `TA1…` stored there as a plaintext secret therefore still works
+ *      even when the key store cannot be read.
+ *   2. a seat licence — consulted only when the address is in NEITHER source AND the
+ *      typed secret is licence-shaped (`looksLikeLicenseKey()`, a cheap prefix test kept
+ *      separate from verification).
+ *
+ * That ordering is what makes this change purely additive: nothing that signed in before
+ * signs in differently now, and a malformed licence is never compared as a password.
  */
 function login(email, secret) {
   const { admins, problems } = adminState();
   const registry = roles.listRoles(repoRoot());
+  const typed = String(secret ?? "");
+  const licenceShaped = licences.looksLikeLicenseKey(typed);
 
-  if (admins.size === 0 && registry.count === 0) {
+  if (admins.size === 0 && registry.count === 0 && !licenceShaped) {
     logEvent("denied", { email: String(email ?? "").slice(0, 254), reason: "no_admins_configured" });
     return {
       ok: false,
       reason: "no_admins_configured",
-      detail: `nothing is configured in ${ADMINS_KEY} (.env) and ${registry.path} has no users`,
+      detail:
+        `nothing is configured in ${ADMINS_KEY} (.env), ${registry.path} has no users, ` +
+        "and that does not look like a seat licence either",
     };
   }
 
@@ -411,7 +593,10 @@ function login(email, secret) {
   }
 
   const credential = credentialFor(wanted);
-  if (!credential) {
+
+  // Unknown address AND not licence-shaped ⇒ nothing to try. Bail before the licence
+  // branch so an unknown address still reports `unknown_email` rather than `bad_licence`.
+  if (!credential && !licenceShaped) {
     logEvent("denied", { email: wanted, reason: "unknown_email" });
     return {
       ok: false,
@@ -420,23 +605,43 @@ function login(email, secret) {
     };
   }
 
-  if (!verifySecret(credential.secret, secret)) {
-    logEvent("denied", { email: wanted, reason: "bad_key", role: credential.role, source: credential.source });
-    return { ok: false, reason: "bad_key", detail: "wrong secret for that address" };
+  let resolved;
+  if (credential) {
+    if (!verifySecret(credential.secret, typed)) {
+      logEvent("denied", { email: wanted, reason: "bad_key", role: credential.role, source: credential.source });
+      return { ok: false, reason: "bad_key", detail: "wrong secret for that address" };
+    }
+    resolved = credential;
+  } else {
+    const licence = resolveLicenceSignIn(wanted, typed);
+    if (!licence.ok) {
+      logEvent("denied", { email: wanted, reason: licence.reason, via: "licence" });
+      return { ok: false, reason: licence.reason, detail: licence.detail };
+    }
+    resolved = licence.credential;
   }
 
   const limitSeconds = sessionLimitSeconds();
   const expiresAt = Date.now() + limitSeconds * 1000;
-  session = { email: wanted, role: credential.role, expiresAt, source: credential.source };
-  logEvent("login", { email: wanted, role: credential.role, expiresAt, limitSeconds, source: credential.source });
+  const via = resolved.via === "licence" ? "licence" : "local";
+  session = { email: wanted, role: resolved.role, expiresAt, source: resolved.source, via };
+  logEvent("login", {
+    email: wanted,
+    role: resolved.role,
+    expiresAt,
+    limitSeconds,
+    source: resolved.source,
+    via,
+  });
 
   return {
     ok: true,
     email: wanted,
-    role: credential.role,
+    role: resolved.role,
     expiresAt,
     remainingMs: expiresAt - Date.now(),
     limitSeconds,
+    via,
     ...(problems.length ? { warnings: problems } : {}),
   };
 }
@@ -493,7 +698,13 @@ function state() {
 
   const admins = adminState();
   const registry = roles.listRoles(repoRoot());
-  const problems = [...admins.problems, ...(registry.error ? [`role registry unreadable: ${registry.error}`] : [])];
+  const licenceStore = licences.storeStatus();
+  const problems = [
+    ...admins.problems,
+    ...adminEmails.adminListProblems(),
+    ...licenceStore.problems,
+    ...(registry.error ? [`role registry unreadable: ${registry.error}`] : []),
+  ];
 
   // A user listed in both sources is a configuration conflict: `.env` wins (tier_1),
   // which is the opposite of what the registry entry would grant.
@@ -516,8 +727,18 @@ function state() {
     registryPath: registry.path,
     envPath: configModule().ENV_PATH,
     sessionLog: sessionLogPath(),
+    // The LICENCE path, reported as booleans and a registry id only. `licenceReady` says a
+    // master ring is readable; `licenceAdminsConfigured` says the hidden list names at
+    // least one address. Neither is the count or the contents — the whole point of the
+    // list living in source is that a locked renderer learns nothing from it.
+    licenceReady: licenceStore.ready,
+    licenceAdminsConfigured: adminEmails.hasTier1Emails(),
+    licenceRegistry: licenceStore.registry,
     problems,
-    needsSetup: parsed.size === 0 && registry.count === 0,
+    // A licence is a way in, so an install with no `.env` admins and no registry users is
+    // NOT unconfigured while the key store is readable — otherwise the gate would disable
+    // its own form and report "no credentials" to the one person holding a valid seat.
+    needsSetup: parsed.size === 0 && registry.count === 0 && !licenceStore.ready,
   };
 }
 
@@ -555,6 +776,7 @@ module.exports = {
   ADMINS_KEY,
   SESSION_LIMIT_KEY,
   DEFAULT_SESSION_LIMIT_SECONDS,
+  LICENCE_SOURCE_PREFIX,
   ALWAYS_OPEN,
   TIER_1_ONLY,
   configure,
@@ -563,6 +785,8 @@ module.exports = {
   parseAdmins,
   verifySecret,
   credentialFor,
+  resolveLicenceSignIn,
+  hydrateLicenceSession,
   sessionLimitSeconds,
   sessionLogPath,
   lastSessionRecord,

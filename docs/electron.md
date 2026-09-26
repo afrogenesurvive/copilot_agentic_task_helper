@@ -193,7 +193,12 @@ Two different things are licensed here, and they are deliberately independent:
   (`email:secret` pairs, always `tier_1`); everyone else is in the gitignored role registry
   `safe/dev-centre-roles.json`, managed with `node scripts/dev-centre-roles.mjs`, at `tier_2` —
   everything except **Key Manager** and **Accounts & Keys**. A secret may be plain text, or a
-  `scrypt$…` verifier minted by `pkm claims set … --password-stdin`. Sessions are wall-clock
+  `scrypt$…` verifier minted by `pkm claims set … --password-stdin`. A **seat licence** (`TA1…`) also
+  signs you in — but only when the address you type is in neither of those two lists, so every
+  existing entry keeps working exactly as before. The licence's signed `email` claim decides the tier
+  against a hidden admin list compiled into the app: an address on it lands at `tier_1`, anything else
+  that verifies at `tier_2`. The address you type must match the licence's own `email` claim, and a
+  licence issued without one is refused. Sessions are wall-clock
   (`DEV_CENTRE_SESSION_LIMIT`, 12 h default) and resume across launches while they are still valid.
   The sidebar's **Log Out** ends a session on demand: it stops the backend services this app started
   and returns to the sign-in screen, so the next person can sign in with their own address and key —
