@@ -130,12 +130,91 @@ function pkmPaths(env = process.env, registry) {
   };
 }
 
+// ── Embedded trust (for a build with no key store) ────────────────────────────
+
+/**
+ * Optional build-time copy of the ring and the seat blocklist.
+ *
+ * A packaged app on another machine has no `PKM_ROOT`, so `ring.json` is absent — and this
+ * module fails CLOSED on the ring, so no licence verifies and a licence-only admin can never
+ * sign in. The blocklist fails OPEN the other way: an absent file reads as "nothing is
+ * revoked", so revocation silently stops being enforced. Both are wrong for a release, and
+ * the fix is to bake the two files in.
+ *
+ * `scripts/dev-centre-trust.mjs` writes this file from the store. It is GITIGNORED (the
+ * blocklist is a list of seat identifiers, i.e. addresses) with a committed
+ * `dev-centre-trust.example.json` documenting the shape. The STORE always wins whenever it
+ * is readable — this is a fallback, never an override — and `storeStatus()` reports which one
+ * is in play, warning whenever the BLOCKLIST is served from here, because an embedded
+ * blocklist is stale by construction.
+ */
+const TRUST_FILE = path.join(__dirname, "dev-centre-trust.json");
+
+/** Per-file cache, so a caller that points at another file (a test) does not poison the real one. */
+const trustCache = new Map();
+
+/** The embedded trust, read once per file. A missing or corrupt file means "no embedded trust". */
+function loadTrust(file = TRUST_FILE) {
+  if (trustCache.has(file)) return trustCache.get(file);
+  let parsed = null;
+  try {
+    parsed = JSON.parse(fs.readFileSync(file, "utf8"));
+  } catch {
+    parsed = null;
+  }
+  const ring = Array.isArray(parsed?.ring)
+    ? parsed.ring.filter((k) => k && typeof k.kid === "string" && typeof k.publicKey === "string")
+    : [];
+  const revoked = Array.isArray(parsed?.revoked) ? parsed.revoked.filter((s) => typeof s === "string" && s) : [];
+  const trust = { stamp: typeof parsed?.stamp === "string" ? parsed.stamp : null, ring, revoked };
+  trustCache.set(file, trust);
+  return trust;
+}
+
+/** The ring exactly as the store has it — no fallback. */
+function loadRingFromStore(paths = pkmPaths()) {
+  const ring = readJson(paths.ringFile, { keys: [] });
+  return Array.isArray(ring?.keys) ? ring.keys : [];
+}
+
+/** Which ring to verify against, and where it came from. Store first, embedded second. */
+function ringSource(paths = pkmPaths(), trustFile = TRUST_FILE) {
+  const stored = loadRingFromStore(paths);
+  if (stored.length) return { keys: stored, source: "store" };
+  const embedded = loadTrust(trustFile).ring;
+  if (embedded.length) return { keys: embedded, source: "embedded" };
+  return { keys: [], source: "none" };
+}
+
+/**
+ * Which blocklist to enforce, and where it came from.
+ *
+ * A PRESENT file always wins, including an empty one — "the store says nothing is revoked"
+ * is a real answer. Only an absent or unreadable file falls back to the embedded copy.
+ *
+ * @returns {{seats: string[], problem: string|null, state: string, source: "store"|"embedded", note?: string}}
+ */
+function revokedSource(paths = pkmPaths(), trustFile = TRUST_FILE) {
+  const live = readRevoked(paths);
+  if (live.state === "present") return { ...live, source: "store" };
+  const trust = loadTrust(trustFile);
+  if (trust.revoked.length) {
+    return {
+      seats: trust.revoked,
+      state: "embedded",
+      source: "embedded",
+      problem: live.problem,
+      note: `revocation is enforced from the app's embedded blocklist (${trust.stamp || "no stamp"}) — run scripts/dev-centre-trust.mjs and rebuild to pick up new revocations`,
+    };
+  }
+  return { ...live, source: "store" };
+}
+
 // ── Store reads ───────────────────────────────────────────────────────────────
 
 /** The published master key ring ({ keys: [{ kid, publicKey, notAfter }] }). */
 function loadRing(paths = pkmPaths()) {
-  const ring = readJson(paths.ringFile, { keys: [] });
-  return ring && typeof ring === "object" ? ring : { keys: [] };
+  return { keys: ringSource(paths).keys };
 }
 
 /**
@@ -170,13 +249,16 @@ function readRevoked(paths = pkmPaths()) {
 }
 
 /**
- * The authoritative per-seat blocklist, read live on every verify — so a revoke performed
- * in the Key Manager takes effect on the seat's next sign-in, with no restart or rebuild.
+ * The authoritative per-seat blocklist. Read live on every verify while the store has one —
+ * so a revoke performed in the Key Manager takes effect on the seat's next sign-in, with no
+ * restart or rebuild — and falls back to the app's embedded copy when the store has none.
  *
- * Exactly as in `scripts/frontdesk-license.mjs`: absent or corrupt reads as `[]`.
+ * Absent AND no embedded copy still reads as `[]`, exactly as in
+ * `scripts/frontdesk-license.mjs`. `revokedSource()` is the one to ask about which of the
+ * two answered, and `storeStatus()` is where the operator is warned about it.
  */
 function loadRevokedSeats(paths = pkmPaths()) {
-  return readRevoked(paths).seats;
+  return revokedSource(paths).seats;
 }
 
 /** Look up a ring entry by kid. Returns null for an unknown kid. */
@@ -334,9 +416,9 @@ function verifyCert(certB64, sigB64, now = Date.now(), paths = pkmPaths()) {
  * @returns {{ready: boolean, registry: string, ringFile: string, revokedFile: string, reason: string|null, problems: string[]}}
  */
 function storeStatus(paths = pkmPaths()) {
-  const ring = loadRing(paths);
-  const keys = Array.isArray(ring.keys) ? ring.keys : [];
-  const revoked = readRevoked(paths);
+  const ring = ringSource(paths);
+  const keys = ring.keys;
+  const revoked = revokedSource(paths);
   const problems = [];
   let reason = null;
 
@@ -347,14 +429,23 @@ function storeStatus(paths = pkmPaths()) {
     if (fs.existsSync(paths.registriesDir)) {
       problems.push(`licence sign-in is unavailable: ${reason} (${paths.ringFile})`);
     }
+  } else if (ring.source === "embedded") {
+    problems.push(
+      `licence verification uses the app's EMBEDDED master ring (${loadTrust().stamp || "no stamp"}) — the key store at ${paths.ringFile} is not readable`,
+    );
   }
   if (revoked.problem) problems.push(revoked.problem);
+  if (revoked.note) problems.push(revoked.note);
   if (revoked.state === "absent" && keys.length) {
     problems.push(`no seat blocklist at ${paths.revokedFile} — nothing is currently revoked, so revocation is not enforced`);
   }
 
   return {
     ready: keys.length > 0,
+    // Where the trust came from, so `state()` (and the gate) can say it out loud.
+    source: ring.source,
+    blocklistSource: revoked.source,
+    embeddedStamp: loadTrust().stamp,
     registry: paths.registry,
     ringFile: paths.ringFile,
     revokedFile: paths.revokedFile,
@@ -368,6 +459,11 @@ module.exports = {
   DEFAULT_PKM_REPO,
   DEFAULT_PKM_REGISTRY,
   DEFAULT_PKM_APP_ID,
+  TRUST_FILE,
+  loadTrust,
+  ringSource,
+  revokedSource,
+  loadRingFromStore,
   pkmPaths,
   loadRing,
   loadRevokedSeats,

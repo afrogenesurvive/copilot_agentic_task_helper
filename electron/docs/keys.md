@@ -151,7 +151,7 @@ it*. pkm supports two:
 
 | Claim | What it is |
 | --- | --- |
-| `email` | The mailbox the seat belongs to. Lower-cased and shape-validated — an identity label, never verified by delivery. It also decides the tier when a licence is used to sign in to Dev Centre: an address on the app's hidden admin list lands at `tier_1`, anything else at `tier_2`, and a key with **no** claim is refused |
+| `email` | The mailbox the seat belongs to. Lower-cased and shape-validated — an identity label, never verified by delivery. It decides the tier in two places: a licence used to sign in to Dev Centre puts an address in `electron/src/main/dev-centre-admins.json` (the app's provisioned tier_1 list, compiled in) at `tier_1` and anything else at `tier_2`, and a key with **no** claim is refused. A licence stored as a Dev Centre *credential* (in `.env` or in that list) is verified on every sign-in **and** every launch, so a revocation or an expiry applies to it too — and its claim must equal the address it is stored under |
 | `pwdv` | A **scrypt password verifier** (`scrypt$N$r$p$salt$hash`). The password itself is never stored, logged, exported or printed |
 
 Type a seat id into **Seat** and press **Show claims**. The panel shows the claim in **both** of the

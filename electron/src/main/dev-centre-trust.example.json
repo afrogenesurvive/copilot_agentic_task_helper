@@ -1,0 +1,10 @@
+{
+  "stamp": "1970-01-01",
+  "note": "SHAPE ONLY — the real electron/src/main/dev-centre-trust.json is gitignored and is written by `node scripts/dev-centre-trust.mjs` (npm run trust:bake) from the key store before a release build. Copy this file over it only if you want to hand-maintain it.",
+  "ring": [
+    { "kid": "mk-0000-00", "publicKey": "PLACEHOLDER_ed25519_public_key_base64url", "notAfter": null }
+  ],
+  "revoked": [
+    "seat-sub-or-address@example.com"
+  ]
+}

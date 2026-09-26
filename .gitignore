@@ -24,6 +24,11 @@ tokens/
 dist/
 build/
 
+# ── Baked licence trust (master ring public keys + revoked seat subs) ──
+# Written by scripts/dev-centre-trust.mjs (npm run trust:bake) before a release build and
+# bundled into the app from electron/src/. The committed shape is dev-centre-trust.example.json.
+electron/src/main/dev-centre-trust.json
+
 # ── Transcription Agent Service (self-contained, gitignored) ──
 transcription-agent/
 .next/

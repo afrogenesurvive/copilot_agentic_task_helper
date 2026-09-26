@@ -6,7 +6,9 @@ The Config tab edits the app's plain-JSON configuration. There are two storage l
 - **`.env`** — used as a fallback when `config.json` is absent. Pressing **Save** writes a
   `config.json` from the values you changed.
 - Run `npm run config:init` (`scripts/config-from-env.mjs`) to (re)create `config.json` by
-  mirroring every `.env` key. It is merge-safe and leaves `.env` untouched as the fallback.
+  mirroring every `.env` key **except the gate-owned ones** (`shared/config-redaction.cjs` — i.e.
+  `DEV_CENTRE_ADMINS`): it reports each key it skips, and removes a stale copy already sitting in
+  `config.json`. It is merge-safe and leaves `.env` untouched as the fallback.
 
 The header shows which source is active: `✅ config.json present` or
 `⚠️ no config.json … falling back to .env`.
@@ -61,7 +63,8 @@ check the ⚙️ Config tab is not showing that key as coming from `config.json`
   Raw JSON view serialises **every** key present in `config.json` / `.env` / the built-in defaults,
   not just the fields the form declares — which is why anything that must not be visible to an
   operator at any tier is kept out of config entirely. `DEV_CENTRE_ADMINS` is one such key: it is
-  stripped from this view and refused on save/import. The Dev Centre tier_1 admin **email** list is
+  stripped from this view and refused on save/import, and `npm run config:init` skips it (and removes
+  a stale copy), so no route through this tab can put it in `config.json`. The Dev Centre tier_1 admin **email** list is
   the other, and is a constant compiled into the app rather than a key here, so it never reaches this
   editor at all.
 - **💾 Save** — **merges** the keys you changed into `config.json` (other keys are preserved;

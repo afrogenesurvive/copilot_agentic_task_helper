@@ -118,7 +118,8 @@ A repo-root `config.json` (plain JSON) is the primary config source; `.env` is u
 Manage it from the **⚙️ Config** tab — a sectioned field editor with per-key source badges
 (`config.json` / `.env` / default), secret show/hide, and Save that **merges** just the keys you change
 (other keys are preserved; clearing a field reverts it to `.env`/default). A **Raw JSON** toggle keeps the
-full editor. `npm run config:init` seeds `config.json` from `.env`.
+full editor. `npm run config:init` seeds `config.json` from `.env`, skipping the gate-owned keys
+(`shared/config-redaction.cjs`) so the Dev Centre admin list stays in `.env` only.
 
 ## LLM providers
 
@@ -189,16 +190,18 @@ spinning forever. Streamed output (live logs, script output, chat steps) is neve
 
 Two different things are licensed here, and they are deliberately independent:
 
-- **This app** is gated by a **sign-in** on launch. Admins are `DEV_CENTRE_ADMINS` in `.env`
-  (`email:secret` pairs, always `tier_1`); everyone else is in the gitignored role registry
-  `safe/dev-centre-roles.json`, managed with `node scripts/dev-centre-roles.mjs`, at `tier_2` —
-  everything except **Key Manager** and **Accounts & Keys**. A secret may be plain text, or a
-  `scrypt$…` verifier minted by `pkm claims set … --password-stdin`. A **seat licence** (`TA1…`) also
-  signs you in — but only when the address you type is in neither of those two lists, so every
-  existing entry keeps working exactly as before. The licence's signed `email` claim decides the tier
-  against a hidden admin list compiled into the app: an address on it lands at `tier_1`, anything else
-  that verifies at `tier_2`. The address you type must match the licence's own `email` claim, and a
-  licence issued without one is refused. Sessions are wall-clock
+- **This app** is gated by a **sign-in** on launch. Admins come from three places: `DEV_CENTRE_ADMINS`
+  in `.env` (`email:secret` pairs, always `tier_1`), the repo-provisioned
+  `electron/src/main/dev-centre-admins.json` compiled into the app (`node scripts/dev-centre-admins.mjs`;
+  an entry with `"verifier": null` is licence-only, i.e. no stored secret at all — and it is the only
+  admin source a build has, since `.env` is not packaged), and the gitignored role registry
+  `safe/dev-centre-roles.json` at `tier_2` — everything except **Key Manager** and **Accounts & Keys**.
+  A secret may be plain text, a `scrypt$…` verifier minted by `pkm claims set … --password-stdin`, or a
+  **seat licence** (`TA1…`), which is now **verified** wherever it is stored: signature, expiry, a retired
+  signing key, the seat blocklist and the cert's `email` claim (which must equal the address it is stored
+  under) all apply, so a revoked or expired seat is refused even if the string matches. A licence also
+  signs you in on its own, when the address is in none of the three sources — the claim then decides the
+  tier against the provisioned list, and a licence without one is refused. Sessions are wall-clock
   (`DEV_CENTRE_SESSION_LIMIT`, 12 h default) and resume across launches while they are still valid.
   The sidebar's **Log Out** ends a session on demand: it stops the backend services this app started
   and returns to the sign-in screen, so the next person can sign in with their own address and key —

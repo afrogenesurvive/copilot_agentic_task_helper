@@ -1,0 +1,8 @@
+{
+  "stamp": "2026-09-26",
+  "note": "Dev Centre tier_1 admins. `verifier` is a scrypt$... verifier minted by scripts/dev-centre-admins.mjs (NEVER a plaintext secret, and NEVER a TA1... licence — this file is committed and ships inside the app). `verifier: null` means licence-only: the address is tier_1, and the only credential is the seat licence, which is verified against the key store on every sign-in (so revocation and expiry apply). Read the header of dev-centre-admins.js before editing.",
+  "admins": [
+    { "email": "a@b.com", "verifier": null },
+    { "email": "e@f.com", "verifier": null }
+  ]
+}

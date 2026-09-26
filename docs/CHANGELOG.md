@@ -1,5 +1,61 @@
 # Changelog
 
+## [0.4.3-5] — 2026-09-26
+
+### A seat licence is now checked, and admins can be provisioned before a build
+
+Two changes to what sits behind the Dev Centre sign-in.
+
+**A licence stored as an admin credential is now verified, not just compared.** If an admin entry in
+`.env` (or in the new provisioned list) has a `TA1…` licence as its secret, the app now checks that
+licence properly — signature, expiry, retired signing key, the seat blocklist and the `email` claim —
+before accepting it. Previously the entry was compared as a plain string, so a **revoked** seat still
+signed in. It no longer does, and the same check re-runs at every launch, so revoking a seat while the
+app is closed ends the session rather than being inherited for the rest of the 12 hours.
+
+Passwords and `scrypt$…` verifiers are unaffected — nothing can revoke a password, so there is nothing
+to check. Only licences have validity.
+
+**Admins can be provisioned in the repo, so a build has one.** `.env` is gitignored and is not part of
+a packaged app, which left a released build with no admin at all. A new list —
+`electron/src/main/dev-centre-admins.json`, managed with `node scripts/dev-centre-admins.mjs` — is
+compiled into the app, and holds an address plus either a `scrypt$…` verifier or nothing at all:
+
+```
+node scripts/dev-centre-admins.mjs add you@example.com --licence-only
+```
+
+A `"verifier": null` entry is **licence-only**: no secret is stored anywhere, the address is an admin,
+and the only way in is a seat licence, verified against the key store. A plaintext password is refused
+(that file is committed and ships inside the app), and so is a stored licence.
+
+`.env` and the provisioned list are combined, and a `.env` entry wins — so a local entry still
+overrides a provisioned one.
+
+**A release build can now carry its own key material.** `npm run trust:bake` copies the master ring's
+public keys and the seat blocklist into the app. Without it, a build on a machine with no key store
+could not verify a licence at all, and — because an absent blocklist reads as "nothing is revoked" —
+would have silently stopped enforcing revocation. `npm run trust:check` fails when the baked copy is
+missing or stale, so run it before a release build that must verify licences offline.
+
+One consequence to plan for: if the only admin is a licence whose seat is revoked or expired, nobody
+can sign in until that seat is fixed or another credential is added. Add a second admin, or a
+`scrypt$…` verifier, before revoking the seat you sign in with.
+
+## [0.4.3-4] — 2026-09-26
+
+### `npm run config:init` no longer copies the Dev Centre admin list
+
+The command the docs suggest for seeding `config.json` from `.env` mirrored **every** key — including the
+Dev Centre admin list, which is deliberately kept out of config so it cannot show up in the Config tab's
+Raw JSON view for an operator who is not an admin. It now skips that key, reports each one it skipped,
+and **removes** a stale copy from `config.json` rather than leaving it behind.
+
+Two things underneath: the strip/refuse rules moved into one shared module (`shared/config-redaction.cjs`)
+so the app and the command line cannot disagree about which keys are gate-owned, and the wiring check now
+verifies each config surface individually instead of only grepping the source for the key name — dropping
+a strip call from one handler, or adding a new surface that never strips, used to pass silently.
+
 ## [0.4.3-3] — 2026-09-26
 
 ### Sign in to Dev Centre with a seat licence

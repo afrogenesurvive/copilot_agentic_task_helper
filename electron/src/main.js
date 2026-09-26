@@ -221,6 +221,11 @@ function readDoc(file) {
 
 // ── Config loader (config.json first, .env fallback) ──
 const config = require("../../shared/config-loader.cjs");
+// Gate-owned keys that must never reach a config surface. The BEHAVIOUR lives in this
+// module so `scripts/config-from-env.mjs` shares one implementation; main.js keeps its
+// own literal (below, at the IPC registration) because that is what
+// `scripts/check-licence-wiring.mjs` greps for, and the check asserts the two agree.
+const configRedaction = require("../../shared/config-redaction.cjs");
 config.loadEnvInto(process.env);
 
 let mainWindow = null; // hoisted so applyTheme() can reference it at module load
@@ -2099,15 +2104,15 @@ function registerIpc() {
   // default in `dev-centre-auth`'s lookup. The key is therefore removed from every
   // config surface and refused on the way in. The Config tab never declared the field;
   // the renderer is not the enforcement point, this is.
+  //
+  // This literal is the grep anchor `scripts/check-licence-wiring.mjs` asserts on, and the
+  // same script asserts it matches `shared/config-redaction.cjs` — which owns the strip /
+  // refuse ALGORITHM so `npm run config:init` cannot drift from this file. The literal is
+  // passed in (rather than relying on that module's default) so the surfaces below are
+  // governed by the very list the check guards.
   const REDACTED_CONFIG_KEYS = new Set(["DEV_CENTRE_ADMINS"]);
-  /** Strip gate-owned keys out of a flat key→value map of any shape. */
-  const redactConfig = (values) => {
-    const out = {};
-    for (const [k, v] of Object.entries(values || {})) {
-      if (!REDACTED_CONFIG_KEYS.has(k)) out[k] = v;
-    }
-    return out;
-  };
+  const redactConfig = (values) => configRedaction.redactConfig(values, REDACTED_CONFIG_KEYS);
+  const blockedKeys = (items) => configRedaction.blockedKeys(items, REDACTED_CONFIG_KEYS);
 
   ipcMain.handle("config:get", async () => {
     const eff = config.readEffective();
@@ -2137,7 +2142,7 @@ function registerIpc() {
     const payload = values || {};
     // Refused loudly rather than dropped silently: a no-op would look like the save
     // worked, and the operator would have no idea their credential never changed.
-    const blocked = Object.keys(payload).filter((k) => REDACTED_CONFIG_KEYS.has(k));
+    const blocked = blockedKeys(payload);
     if (blocked.length) {
       return { ok: false, error: `${blocked.join(", ")} cannot be set from the app — edit .env` };
     }
@@ -2165,13 +2170,11 @@ function registerIpc() {
     return { ...res, restarted, provider: process.env.LLM_PROVIDER || "deepseek" };
   });
   ipcMain.handle("config:export", () => {
-    // The export is a JSON *string* of everything in config.json, so the gate-owned
-    // keys have to be deleted from the parsed object rather than filtered out of a map.
+    // The export is a JSON *string* of everything in config.json, so the gate-owned keys
+    // have to be stripped from the parsed object rather than filtered out of a map.
     let json = config.exportConfig();
     try {
-      const parsed = JSON.parse(json);
-      for (const key of REDACTED_CONFIG_KEYS) delete parsed[key];
-      json = JSON.stringify(parsed, null, 2);
+      json = JSON.stringify(redactConfig(JSON.parse(json)), null, 2);
     } catch {
       /* not JSON, or nothing to export — hand back exactly what we were given */
     }
@@ -2187,7 +2190,7 @@ function registerIpc() {
     // admin list would install it with higher precedence than the built-in default.
     try {
       const parsed = typeof raw === "string" ? JSON.parse(raw) : raw;
-      const blocked = Object.keys(parsed || {}).filter((k) => REDACTED_CONFIG_KEYS.has(k));
+      const blocked = blockedKeys(parsed);
       if (blocked.length) {
         return { ok: false, error: `${blocked.join(", ")} cannot be set from the app — edit .env` };
       }

@@ -25,9 +25,11 @@
  * `.env` nor the role registry, so it is purely ADDITIVE — every existing credential
  * keeps the exact semantics it had, including a `TA1…` stored as a plaintext secret.
  * The cert's signed `email` claim then decides the role against the HIDDEN admin list
- * in `dev-centre-admin-emails.js`: listed ⇒ `tier_1`, anything else ⇒ `tier_2`. That
- * list is a source constant rather than a config key precisely so it reaches no config
- * surface — including the Config tab's Raw JSON view, which renders every key.
+ * in `dev-centre-admins.json` (loaded by `dev-centre-admins.js`): listed ⇒ `tier_1`,
+ * anything else ⇒ `tier_2`. That list is compiled into the app rather than being a config
+ * key precisely so it reaches no config surface — including the Config tab's Raw JSON view,
+ * which renders every key. It is also the only admin source a BUILD has: `.env` is
+ * gitignored and is not packaged.
  *
  * FAIL CLOSED, with one deliberate exception: a missing/corrupt registry or `.env`
  * means "no credentials", never "no gate". Entry is a match against `.env` admins, a
@@ -48,7 +50,7 @@ const path = require("path");
 
 const pwdv = require("./password-verifier");
 const roles = require("./dev-centre-roles");
-const adminEmails = require("./dev-centre-admin-emails");
+const adminAdmins = require("./dev-centre-admins");
 const licences = require("./licence-verifier");
 
 /** Session length when `DEV_CENTRE_SESSION_LIMIT` is absent or unusable. */
@@ -268,11 +270,42 @@ function parseAdmins(raw) {
   return { admins, problems };
 }
 
-/** The configured admins, plus any parse complaints. Never leaves this module verbatim. */
+/**
+ * The configured admins, plus any parse complaints and the per-address source.
+ *
+ * TWO SOURCES, deliberately UNIONED rather than first-wins: `.env` is the local override
+ * (gitignored, and NOT packaged) and the provisioned list is compiled into the app — so a
+ * build with no `.env` still has admins, while an operator can still override locally.
+ * `.env` WINS on a clash, which keeps every existing `.env` entry's meaning; a *different*
+ * secret for the same address is reported rather than resolved silently.
+ *
+ * Complaints are ADDRESS-FREE: `state()` hands them to the locked login screen, so naming
+ * an address there would let anyone at that screen enumerate who has admin.
+ *
+ * @returns {{admins: Map<string,string>, sources: Map<string,string>, problems: string[], source: string|null}}
+ */
 function adminState() {
   const raw = readSetting(ADMINS_KEY, "");
-  const { admins, problems } = parseAdmins(raw.value);
-  return { admins, problems, source: raw.source };
+  const { admins: fromEnv, problems } = parseAdmins(raw.value);
+
+  const admins = adminAdmins.adminCredentials(); // provisioned (compiled in) first…
+  const sources = new Map();
+  for (const email of admins.keys()) sources.set(email, adminAdmins.SOURCE_LABEL);
+
+  const conflicts = [];
+  for (const [email, secret] of fromEnv) {
+    // …then `.env`, so the operator's local entry always wins.
+    if (admins.has(email) && admins.get(email) !== secret) {
+      const position = adminAdmins.TIER_1_ADMINS.findIndex((a) => a.email === email) + 1;
+      conflicts.push(
+        `provisioned admin entry #${position} is also in .env with a different secret — the .env entry wins`,
+      );
+    }
+    admins.set(email, secret);
+    sources.set(email, `.env ${ADMINS_KEY}`);
+  }
+
+  return { admins, sources, problems: [...problems, ...conflicts], source: raw.source };
 }
 
 // ── Credentials ───────────────────────────────────────────────────────────────
@@ -299,6 +332,72 @@ function verifySecret(stored, typed) {
 }
 
 /**
+ * Is a stored credential still VALID, as opposed to merely correct?
+ *
+ * Only a LICENCE-shaped credential has a notion of validity: a licence carries an expiry,
+ * is signed by a ring key that can be retired, and its seat can be revoked. A password or a
+ * `scrypt$…` verifier has none of that — nothing can revoke it, so there is nothing to
+ * check. This is what makes "revoked" mean something for an entry in `.env` or in the
+ * provisioned list, which used to be compared as a bare string and never verified.
+ *
+ * Separate from `verifyCredential()` so `hydrate()` can re-check validity WITHOUT repeating
+ * the possession compare — a resumed session holds no typed secret to compare against.
+ *
+ * @returns {{ok: true} | {ok: false, reason: string, detail: string}}
+ */
+function licenceValidity(credential, now = Date.now()) {
+  const stored = String(credential?.secret ?? "");
+  if (!licences.looksLikeLicenseKey(stored)) return { ok: true };
+
+  const verdict = licences.verifyLicenseKey(stored, now, licences.pkmPaths());
+  if (!verdict.ok) {
+    return {
+      ok: false,
+      reason: verdict.reason,
+      detail: `${LICENCE_REASON_TEXT[verdict.reason] || "that licence could not be verified"} (${verdict.reason})`,
+    };
+  }
+
+  const claim = verdict.claims.email;
+  if (!claim) {
+    return {
+      ok: false,
+      reason: "licence_no_email",
+      detail:
+        "that licence carries no email claim, so it cannot be matched to the address it is stored under — " +
+        "re-sign it with `pkm claims set <registry> <seat> --email <address> --resign`",
+    };
+  }
+  if (claim !== credential.email) {
+    return {
+      ok: false,
+      reason: "email_mismatch",
+      detail: "the address on that licence is not the address it is stored under — correct the entry, or use the licence's own address",
+    };
+  }
+  return { ok: true };
+}
+
+/**
+ * Verify a LOCAL credential: validity first, then possession.
+ *
+ * Validity first is the important half — a revoked or expired licence must fail even when
+ * the operator types it perfectly, which is exactly what a bare `verifySecret()` cannot
+ * see. A non-licence credential skips straight to the compare, so plaintext and `scrypt$…`
+ * entries keep the semantics they have always had.
+ *
+ * @returns {{ok: true} | {ok: false, reason: string, detail: string, via?: string}}
+ */
+function verifyCredential(credential, typed, now = Date.now()) {
+  const validity = licenceValidity(credential, now);
+  if (!validity.ok) return { ...validity, via: "licence" };
+  if (!verifySecret(credential?.secret, typed)) {
+    return { ok: false, reason: "bad_key", detail: "wrong secret for that address" };
+  }
+  return { ok: true };
+}
+
+/**
  * Where a given email's credential lives, and at what role. `.env` admins win
  * over the registry — a conflict is reported as a problem rather than resolved
  * silently in either direction.
@@ -307,9 +406,11 @@ function credentialFor(email) {
   const wanted = pwdv.tryNormalizeEmail(email);
   if (!wanted) return null;
 
-  const { admins } = adminState();
+  const { admins, sources } = adminState();
   if (admins.has(wanted)) {
-    return { email: wanted, role: "tier_1", secret: admins.get(wanted), source: ".env DEV_CENTRE_ADMINS" };
+    // `.env` or the compiled provisioned list — `sources` says which one, and the session
+    // log records it, so "which list let them in" is answerable after the fact.
+    return { email: wanted, role: "tier_1", secret: admins.get(wanted), source: sources.get(wanted) || `.env ${ADMINS_KEY}` };
   }
 
   const user = roles.getUser(wanted, repoRoot());
@@ -408,7 +509,7 @@ function hydrateLicenceSession(record) {
   const role = record.role === "tier_1" ? "tier_1" : "tier_2";
   const source = typeof record.source === "string" && record.source ? record.source : "licence";
 
-  if (!wanted || (role === "tier_1" && !adminEmails.isTier1Email(wanted))) {
+  if (!wanted || (role === "tier_1" && !adminAdmins.isTier1Email(wanted))) {
     session = null;
     logEvent("session_revoked", {
       email: typeof record.email === "string" ? record.email : "",
@@ -470,6 +571,17 @@ function hydrate({ version } = {}) {
   if (record.expiresAt <= Date.now()) {
     session = null;
     logEvent("session_expired", { email: record.email, role: credential.role, expiresAt: record.expiresAt });
+    return state();
+  }
+
+  // A licence-valued credential is RE-VERIFIED at every launch, so a revocation (or an
+  // expiry, or a retired signing key) that happened while the app was closed ends the
+  // resumed session instead of being inherited for the rest of the 12 hours. A password or
+  // verifier has no such state, so this is a no-op for one.
+  const validity = licenceValidity(credential);
+  if (!validity.ok) {
+    session = null;
+    logEvent("session_revoked", { email: record.email, reason: validity.reason, source: credential.source });
     return state();
   }
 
@@ -542,7 +654,7 @@ function resolveLicenceSignIn(wanted, typed) {
     ok: true,
     credential: {
       email: certEmail,
-      role: adminEmails.isTier1Email(certEmail) ? "tier_1" : "tier_2",
+      role: adminAdmins.isTier1Email(certEmail) ? "tier_1" : "tier_2",
       source: `${LICENCE_SOURCE_PREFIX}${store.registry}`,
       via: "licence",
     },
@@ -559,15 +671,19 @@ function resolveLicenceSignIn(wanted, typed) {
  *
  * TWO CREDENTIAL PATHS, and the order is load-bearing:
  *
- *   1. `.env` / role registry — checked FIRST, so an entry keeps the exact semantics it
- *      has always had. A `TA1…` stored there as a plaintext secret therefore still works
- *      even when the key store cannot be read.
- *   2. a seat licence — consulted only when the address is in NEITHER source AND the
+ *   1. `.env`, the provisioned list (`dev-centre-admins.json`) and the role registry —
+ *      checked FIRST. A `TA1…` stored in one of them is now VERIFIED (validity, then the
+ *      typed value), so revocation, expiry, a retired signing key and the cert's `email`
+ *      claim all apply to an admin entry too. A plaintext or `scrypt$…` entry is unchanged:
+ *      nothing can revoke it, so there is nothing to check.
+ *   2. a seat licence — consulted only when the address is in NONE of those sources AND the
  *      typed secret is licence-shaped (`looksLikeLicenseKey()`, a cheap prefix test kept
  *      separate from verification).
  *
- * That ordering is what makes this change purely additive: nothing that signed in before
- * signs in differently now, and a malformed licence is never compared as a password.
+ * The ordering keeps the licence route additive. The one deliberate exception is a
+ * licence-VALUED entry in a local source: it used to be compared as a bare string, so it
+ * signed in however the seat's state had changed. It is verified now, and a revoked or
+ * expired seat is refused — which is the entire point of storing one there.
  */
 function login(email, secret) {
   const { admins, problems } = adminState();
@@ -607,9 +723,18 @@ function login(email, secret) {
 
   let resolved;
   if (credential) {
-    if (!verifySecret(credential.secret, typed)) {
-      logEvent("denied", { email: wanted, reason: "bad_key", role: credential.role, source: credential.source });
-      return { ok: false, reason: "bad_key", detail: "wrong secret for that address" };
+    // Validity FIRST (a revoked or expired licence must fail even when typed perfectly),
+    // then possession. See verifyCredential().
+    const check = verifyCredential(credential, typed);
+    if (!check.ok) {
+      logEvent("denied", {
+        email: wanted,
+        reason: check.reason,
+        role: credential.role,
+        source: credential.source,
+        ...(check.via ? { via: check.via } : {}),
+      });
+      return { ok: false, reason: check.reason, detail: check.detail };
     }
     resolved = credential;
   } else {
@@ -701,17 +826,22 @@ function state() {
   const licenceStore = licences.storeStatus();
   const problems = [
     ...admins.problems,
-    ...adminEmails.adminListProblems(),
+    ...adminAdmins.adminListProblems(),
     ...licenceStore.problems,
     ...(registry.error ? [`role registry unreadable: ${registry.error}`] : []),
   ];
 
-  // A user listed in both sources is a configuration conflict: `.env` wins (tier_1),
-  // which is the opposite of what the registry entry would grant.
-  const { admins: parsed } = admins;
-  for (const user of registry.users) {
-    if (parsed.has(user.email)) problems.push(`${user.email} is in both ${ADMINS_KEY} and the role registry — the .env admin entry wins (tier_1)`);
+  // A user listed in both an admin source and the role registry is a configuration
+  // conflict: the admin entry wins (tier_1), the opposite of what the registry entry would
+  // grant. Reported WITHOUT the address, and once — `problems` is rendered by gate.js while
+  // the app is LOCKED, so naming the address there would let anyone at that screen
+  // enumerate who has admin.
+  const { admins: parsed, sources } = admins;
+  const overlaps = registry.users.filter((user) => parsed.has(user.email)).length;
+  if (overlaps) {
+    problems.push(`${overlaps} role-registry user(s) are also admins in ${ADMINS_KEY} — the admin entry wins (tier_1)`);
   }
+  const sourceList = [...sources.values()];
 
   return {
     locked,
@@ -723,17 +853,26 @@ function state() {
     roles: roles.ROLES,
     adminsConfigured: parsed.size > 0,
     adminCount: parsed.size,
+    // Which source each admin came from, as COUNTS (never the addresses), plus the stamp on
+    // the provisioned list — so "why is this build un-sign-in-able?" has an answer that does
+    // not require reading the asar.
+    adminSources: {
+      env: sourceList.filter((s) => s.startsWith(".env ")).length,
+      provisioned: sourceList.filter((s) => s === adminAdmins.SOURCE_LABEL).length,
+    },
+    adminListStamp: adminAdmins.ADMIN_LIST_UPDATED,
     registryCount: registry.count,
     registryPath: registry.path,
     envPath: configModule().ENV_PATH,
     sessionLog: sessionLogPath(),
     // The LICENCE path, reported as booleans and a registry id only. `licenceReady` says a
-    // master ring is readable; `licenceAdminsConfigured` says the hidden list names at
-    // least one address. Neither is the count or the contents — the whole point of the
-    // list living in source is that a locked renderer learns nothing from it.
+    // master ring is readable; `licenceAdminsConfigured` says the provisioned list names at
+    // least one address. Neither is the count or the contents — the whole point of the list
+    // being compiled in is that a locked renderer learns nothing from it.
     licenceReady: licenceStore.ready,
-    licenceAdminsConfigured: adminEmails.hasTier1Emails(),
+    licenceAdminsConfigured: adminAdmins.hasTier1Emails(),
     licenceRegistry: licenceStore.registry,
+    licenceSource: licenceStore.source,
     problems,
     // A licence is a way in, so an install with no `.env` admins and no registry users is
     // NOT unconfigured while the key store is readable — otherwise the gate would disable
@@ -783,7 +922,10 @@ module.exports = {
   repoRoot,
   readSetting,
   parseAdmins,
+  adminState,
   verifySecret,
+  licenceValidity,
+  verifyCredential,
   credentialFor,
   resolveLicenceSignIn,
   hydrateLicenceSession,
