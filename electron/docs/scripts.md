@@ -31,8 +31,9 @@ subscripts when the bit is missing — it falls back to `bash <script>`.
 | `github_backup.py`      | copied from `github_total_export_python`                      | python3 (stdlib only) + `git`; `GITHUB_TOKEN` (+ `GITHUB_USER`, optional `GITHUB_REPOS`) in ⚙️ Config     |
 
 **Disk cleanup** — `master_cleanup.sh` plus one card per subscript (`misc_cache_clear.sh`,
-`runtime_cache_cleanup.sh`, `pkg_mgmt_cache_cleanup.sh`, `code_agent_chat_cache_cleanup.sh`,
-`xcode_cache_cleanup.sh`, `app_cache_cleanup.sh`, `git-gc-all.sh`). Copied flat from
+`runtime_cache_cleanup.sh`, `pkg_mgmt_cache_cleanup.sh`, `pkg_cache_cleanup.sh`,
+`code_agent_chat_cache_cleanup.sh`, `xcode_cache_cleanup.sh`, `app_cache_cleanup.sh`,
+`git-gc-all.sh`) — nine cards, listed in run order. Copied flat from
 `disk_cleanup_scripts/cleanup_scripts/` — they must stay in the same folder, because
 `master_cleanup.sh` resolves its subscripts relative to its own path (`BASH_SOURCE`).
 

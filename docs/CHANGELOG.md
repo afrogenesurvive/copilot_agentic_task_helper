@@ -1,5 +1,23 @@
 # Changelog
 
+## [0.4.5-1] — 2026-10-03
+
+### Disk cleanup gains a package-cache card; the master is now eight steps
+
+The disk-cleanup set behind the 📜 Scripts tab was re-synced to `disk_cleanup_scripts` 0.2.0.
+
+- **New card — `pkg_cache_cleanup.sh`.** Clears the user-level language / package-manager caches:
+  pip, uv, poetry, pipx, pip-tools, pre-commit, the conda `pkgs` cache and the Homebrew cache. Each
+  tool is asked to clean itself when it is installed; otherwise its cache directory is emptied.
+  Everything it touches is re-downloaded on demand.
+- **Deliberately never touched:** Hugging Face model/dataset data, `~/.cache/torch`,
+  `~/.cache/triton`, poetry virtualenvs, pipx and uv installed tools, and conda environments — only
+  the conda `pkgs` cache is cleaned. `brew cleanup` also removes old versions of installed formulae,
+  so the space it reports freeing is a lower bound.
+- **Run order is now** misc → runtime → pkg_mgmt → pkg_cache → code_agent → xcode → app_cache →
+  git-gc (slowest last), and the new card ships with **Dry run** pre-checked like the rest, so a real
+  delete is still two deliberate actions.
+
 ## [0.4.3-5] — 2026-09-26
 
 ### A seat licence is now checked, and admins can be provisioned before a build
