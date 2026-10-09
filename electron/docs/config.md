@@ -71,14 +71,24 @@ check the ⚙️ Config tab is not showing that key as coming from `config.json`
   clearing a field to empty reverts it to `.env`/default). If you changed any LLM/provider **or
   usage-tracking** keys, the runner and webhook services restart automatically so the change is
   live; the 💬 Chat tab picks LLM changes up immediately.
-- **📤 Export** — downloads the current config as `config.json`.
-- **📥 Import** — loads a JSON file you pick and writes it to `config.json`.
+- **📤 Export** — downloads the **merged** configuration as `config.json`: the values in
+  `config.json`, with `.env` supplying the keys `config.json` does not define. That is the whole
+  effective config, so keys that only ever lived in `.env` — the usual case for a token you never
+  mirrored across — now travel with the file. `DEV_CENTRE_ADMINS` is stripped before it is written.
+- **📥 Import** — loads a JSON file you pick and **merges** it into `config.json`. Only the keys the
+  file carries are written; a key it omits keeps whatever it already had; an empty string means
+  "revert to `.env`/default", exactly as Save. If the file changes an LLM/provider **or**
+  usage-tracking key, the runner and webhook restart automatically.
 
 ## Notes
 
 - Saving **merges** — only keys you actually change are updated, so other settings (including
   other providers' keys) are preserved. Clearing a field to empty removes it from `config.json`,
   falling back to `.env` or the built-in default.
+- **Import merges too** (changed 2026-10-08). It used to write the file wholesale, which silently
+  deleted every setting the file did not mention — including ones an export could not have carried
+  because they only lived in `.env`. A file that adds one provider key no longer takes the others
+  away. `DEV_CENTRE_ADMINS` is still refused outright rather than merged.
 - Validation is light: e.g. saving an LLM provider with no API key succeeds but warns that calls
   will fail until the key is added.
 - Config here is the **local** operator config. Netlify-hosted settings for the webapp are

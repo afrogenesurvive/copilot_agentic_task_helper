@@ -1,6 +1,6 @@
 {
   "name": "dev-centre",
-  "version": "0.4.5",
+  "version": "0.4.6",
   "private": true,
   "description": "Dev Centre — desktop control plane for the frontdesk v2 stack and the local agent tooling: queues, logs, sessions, licences, and the MCP tools, from one macOS app",
   "main": "src/main.js",
@@ -9,7 +9,7 @@
     "dev": "electron .",
     "make:icon": "electron ../scripts/make-icon.mjs",
     "postinstall": "node ../scripts/patch-electron-app-name.mjs",
-    "dist:mac": "electron-builder --mac",
+    "dist:mac": "node ../scripts/check-build-preflight.mjs && rm -rf dist && electron-builder --mac",
     "dist:mac-dir": "electron-builder --mac dir"
   },
   "dependencies": {

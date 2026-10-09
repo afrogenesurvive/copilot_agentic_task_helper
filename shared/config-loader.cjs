@@ -332,14 +332,30 @@ function setKey(key, value) {
   }
 }
 
-/** Export the effective config as a pretty JSON string. */
+/**
+ * Export the effective config as a pretty JSON string.
+ *
+ * The MERGED runtime view (config.json over .env), NOT `readEffective()`'s single
+ * winning source: with a config.json present, keys that live only in `.env` — the ones an
+ * operator typically never mirrored across — would otherwise be silently left out, and
+ * those are exactly the ones a restore needs.
+ */
 function exportConfig() {
-  return JSON.stringify(readEffective().values, null, 2);
+  return JSON.stringify(readRuntimeValues().values, null, 2);
 }
 
 /**
- * Import a JSON config string: parse, validate, save as config.json, and
- * apply it to the target env (overwrites).
+ * Import a JSON config string: parse, validate, MERGE it into config.json, and apply what
+ * the file carries to the target env.
+ *
+ * MERGE, not replace (changed 2026-10-08). The old behaviour wrote the file wholesale, so
+ * importing a config that omitted a key silently deleted it — including keys an export
+ * could never have carried because they only ever lived in `.env`. A file that adds a
+ * provider key now arrives without taking the other settings away; a key already in
+ * config.json that the file does not mention keeps its value.
+ *
+ * Empty strings are skipped, exactly as mergeConfig() does, so `""` keeps meaning
+ * "revert to .env / default" rather than "set it to empty".
  */
 function importConfig(raw, target = process.env) {
   let parsed;
@@ -351,9 +367,21 @@ function importConfig(raw, target = process.env) {
   if (!parsed || typeof parsed !== "object" || Array.isArray(parsed)) {
     return { ok: false, error: "config must be a flat JSON object of key/value pairs" };
   }
-  saveConfig(parsed);
-  applyValues(parsed, target);
-  return { ok: true, source: "config.json", path: CONFIG_PATH, count: Object.keys(parsed).length };
+  const res = mergeConfig(parsed);
+  if (!res.ok) return res;
+  const applied = {};
+  for (const [k, v] of Object.entries(parsed)) {
+    if (v === undefined || v === null || v === "") continue;
+    applied[k] = String(v);
+  }
+  applyValues(applied, target);
+  return {
+    ok: true,
+    source: "config.json",
+    path: CONFIG_PATH,
+    count: Object.keys(parsed).length,
+    changed: res.changed,
+  };
 }
 
 module.exports = {

@@ -108,10 +108,28 @@ if (!hasSingleInstanceLock) {
 }
 
 // ── Paths ──
-const ROOT = app.isPackaged ? path.join(process.resourcesPath, "..", "..") : path.resolve(__dirname, "..", "..");
-// In dev, electron/ is directly under the repo root; packaged, extraResources
-// carry the repo pieces into resourcesPath.
-const REPO = app.isPackaged ? path.join(process.resourcesPath) : ROOT;
+// The repo root is RESOLVED, not assumed. In dev it is the tree this file lives in;
+// packaged, `process.resourcesPath` is the BUNDLE (the app runs from /Applications), so the
+// working copy comes from DEV_CENTRE_REPO, a pointer in userData, or the bundle's own
+// location — and if none of those is valid the operator is asked to pick the folder once.
+// See main/repo-root.js. Its sentinel when unresolved joins safely but holds nothing, so
+// every path constant below can still be built before the app is ready; the picker in
+// `whenReady` is what guarantees a real one.
+const repoRoot = require("./main/repo-root");
+const REPO = repoRoot.resolveRepoRoot();
+const REPO_RESOLVED = repoRoot.isResolved();
+// Exported so every child process AND every later dynamic import agrees on the root. The
+// services are spawned with `cwd: REPO`, but they also derive their own logs/ and safe/
+// paths from `__dirname` — which only lines up when they are the repo's own files.
+if (REPO_RESOLVED) process.env.DEV_CENTRE_REPO = REPO;
+
+// ── Child-process runtime (which `node`, and what PATH) ──
+// A double-clicked app inherits launchd's PATH, so nvm/Homebrew tools are invisible there and
+// a bare `node` spawn fails with ENOENT. `NODE` is the resolved interpreter; children get the
+// repaired PATH from `runtime.childEnv()`. See main/runtime.js.
+const runtime = require("./main/runtime");
+const NODE = runtime.nodeCommand();
+
 const RENDERER_HTML = path.join(__dirname, "renderer", "index.html");
 // The menu-bar popover's own document. Separate from the dashboard on purpose:
 // it loads four pills and a short list, not the 27-file renderer (see the CSP
@@ -220,12 +238,19 @@ function readDoc(file) {
 }
 
 // ── Config loader (config.json first, .env fallback) ──
-const config = require("../../shared/config-loader.cjs");
+// Loaded FROM THE RESOLVED REPO, not relative to this file. The loader derives its own
+// config.json / .env from `__dirname/..`, so WHICH COPY is loaded decides which config is
+// read: `../../shared/…` lands on the STAGED copy inside Contents/Resources in a packaged
+// app, and reading that instead of the repo is the bug this resolution exists to fix. Both
+// files go through one helper so they cannot point at different trees.
+const sharedFrom = (name) =>
+  REPO_RESOLVED ? path.join(REPO, "shared", name) : path.join(__dirname, "..", "..", "shared", name);
+const config = require(sharedFrom("config-loader.cjs"));
 // Gate-owned keys that must never reach a config surface. The BEHAVIOUR lives in this
 // module so `scripts/config-from-env.mjs` shares one implementation; main.js keeps its
 // own literal (below, at the IPC registration) because that is what
 // `scripts/check-licence-wiring.mjs` greps for, and the check asserts the two agree.
-const configRedaction = require("../../shared/config-redaction.cjs");
+const configRedaction = require(sharedFrom("config-redaction.cjs"));
 config.loadEnvInto(process.env);
 
 let mainWindow = null; // hoisted so applyTheme() can reference it at module load
@@ -332,12 +357,12 @@ const API_TOKEN = process.env.WEBHOOK_API_TOKEN || "";
 
 // ── Service manager ──────────────────────────────────────────────────────────
 const serviceDefs = {
-  webhook: { label: "Webhook server", cmd: "node", args: ["mcp/webhook-server/index.js"], cwd: REPO, port: WEBHOOK_PORT },
+  webhook: { label: "Webhook server", cmd: NODE.cmd, args: ["mcp/webhook-server/index.js"], cwd: REPO, port: WEBHOOK_PORT },
   // `pidFile` lets serviceHealth() see a runner that was started from its own terminal
   // (`npm run runner:start`) instead of assuming anything this app did not spawn is
   // down — which is what would make a bulk start spawn a SECOND runner competing for
   // the same queue.
-  runner: { label: "Agent runner", cmd: "node", args: ["mcp/agent-runner/index.js"], cwd: REPO, pidFile: path.join(REPO, "mcp", "agent-runner", ".runner.pid") },
+  runner: { label: "Agent runner", cmd: NODE.cmd, args: ["mcp/agent-runner/index.js"], cwd: REPO, pidFile: path.join(REPO, "mcp", "agent-runner", ".runner.pid") },
   tunnel: {
     label: "Cloudflare tunnel",
     cmd: "cloudflared",
@@ -359,7 +384,7 @@ const serviceDefs = {
 // NOT autostarted (see the autostart block) to avoid a second process per server.
 const MCP_NAMES = ["trello", "gmail", "drive", "calendar", "photos", "sheets", "web-search", "whatsapp", "netlify"];
 for (const n of MCP_NAMES) {
-  serviceDefs[`mcp:${n}`] = { label: `MCP ${n}`, cmd: "node", args: [`mcp/${n}/index.js`], cwd: REPO };
+  serviceDefs[`mcp:${n}`] = { label: `MCP ${n}`, cmd: NODE.cmd, args: [`mcp/${n}/index.js`], cwd: REPO };
 }
 
 const running = {}; // name -> { proc, out: [] (ring buffer) }
@@ -373,7 +398,9 @@ function startService(name, opts = {}) {
 
   const child = spawn(def.cmd, def.args, {
     cwd: def.cwd || REPO,
-    env: opts.env ? { ...process.env, ...opts.env } : process.env,
+    // NODE.env carries ELECTRON_RUN_AS_NODE when the Electron binary stands in for node;
+    // childEnv() adds the repaired PATH. Per-seat credentials (opts.env) still win.
+    env: runtime.childEnv({ ...NODE.env, ...(opts.env || {}) }),
     // Own process group per service so a quit/stop can kill the whole tree (negative pid).
     detached: process.platform !== "win32",
   });
@@ -663,9 +690,11 @@ const SCRIPT_RUNNERS = {
   ".sh": ["bash"],
   ".command": ["bash"],
   ".bash": ["bash"],
-  ".mjs": ["node"],
-  ".js": ["node"],
-  ".cjs": ["node"],
+  // The resolved interpreter (main/runtime.js), not the literal "node": a Finder launch has
+  // no node on PATH, and the Electron-as-Node fallback needs its own env (see the spawns).
+  ".mjs": [NODE.cmd],
+  ".js": [NODE.cmd],
+  ".cjs": [NODE.cmd],
   ".py": ["python3"],
 };
 const scriptRuns = {}; // runId -> { runId, script, proc, out: [], startedAt }
@@ -960,7 +989,7 @@ async function probeTools() {
         res(false);
       }
     });
-  const [awsB, nodeB, pyB] = await Promise.all([exists("aws"), exists("node"), exists("python3")]);
+  const [awsB, pyB] = await Promise.all([exists("aws"), exists("python3")]);
   let awsVersion = "";
   if (awsB) {
     try {
@@ -980,7 +1009,12 @@ async function probeTools() {
   return {
     aws: awsB,
     awsVersion,
-    node: nodeB,
+    // `node: true` means "the Scripts tab can run .mjs/.js/.cjs", which main/runtime.js
+    // guarantees: a real node when one is installed, otherwise the Electron binary running
+    // as Node. `nodeCmd` is what to quote in a bug report and `childPath` is the PATH a
+    // script will actually receive.
+    node: true,
+    ...runtime.runtimeInfo(),
     python3: pyB,
     awsCreds: !!(process.env.AWS_ACCESS_KEY_ID || process.env.AWS_SECRET_ACCESS_KEY),
     awsProfile: process.env.AWS_PROFILE || "",
@@ -1045,7 +1079,7 @@ function runUserScript(scriptName, payload) {
   const runId = `run-${Date.now()}-${Math.floor(Math.random() * 1e4)}`;
   const child = spawn(runner[0], [...runner.slice(1), full, ...args], {
     cwd: REPO,
-    env: process.env,
+    env: runtime.childEnv(NODE.env),
     // Own process group so quitting can kill the script AND the commands it ran.
     detached: process.platform !== "win32",
   });
@@ -1177,6 +1211,8 @@ async function mcpClient() {
     mod.configure({
       repo: REPO,
       version: app.getVersion(),
+      // The interpreter every MCP server child is spawned with — see main/runtime.js.
+      node: { cmd: NODE.cmd, env: NODE.env },
       onLog: (message, level) =>
         liveLog.addLog({
           source: "electron",
@@ -1781,7 +1817,7 @@ function runScriptCapture(cmd, args, timeoutMs = 60000) {
   return new Promise((resolve) => {
     let child;
     try {
-      child = spawn(cmd, args, { cwd: REPO, env: process.env });
+      child = spawn(cmd, args, { cwd: REPO, env: runtime.childEnv(NODE.env) });
     } catch (err) {
       return resolve({ ok: false, code: -1, output: `spawn failed: ${err.message}` });
     }
@@ -1811,7 +1847,7 @@ function runScriptCapture(cmd, args, timeoutMs = 60000) {
 async function reregisterWebhooks() {
   const steps = [];
   for (const s of WEBHOOK_SETUP_SCRIPTS) {
-    const r = await runScriptCapture("node", [s.file]);
+    const r = await runScriptCapture(NODE.cmd, [s.file]);
     const output = String(r.output || "").trim().slice(-3000);
     steps.push({ label: s.label, ok: !!r.ok, code: r.code ?? null, output, error: r.error || "" });
     liveLog.addLog({
@@ -2170,8 +2206,10 @@ function registerIpc() {
     return { ...res, restarted, provider: process.env.LLM_PROVIDER || "deepseek" };
   });
   ipcMain.handle("config:export", () => {
-    // The export is a JSON *string* of everything in config.json, so the gate-owned keys
-    // have to be stripped from the parsed object rather than filtered out of a map.
+    // The export payload is now the MERGED view (config.json over .env — see
+    // config-loader's exportConfig), so it carries keys that only ever live in .env, and
+    // that includes DEV_CENTRE_ADMINS. The strip below is therefore LOAD-BEARING, not
+    // defence in depth: remove it and the gate's admin list goes out in the file.
     let json = config.exportConfig();
     try {
       json = JSON.stringify(redactConfig(JSON.parse(json)), null, 2);
@@ -2185,11 +2223,12 @@ function registerIpc() {
       json,
     };
   });
-  ipcMain.handle("config:import", (_e, raw) => {
+  ipcMain.handle("config:import", async (_e, raw) => {
     // The other way into config.json, and the same escalation: an import carrying the
     // admin list would install it with higher precedence than the built-in default.
+    let parsed = null;
     try {
-      const parsed = typeof raw === "string" ? JSON.parse(raw) : raw;
+      parsed = typeof raw === "string" ? JSON.parse(raw) : raw;
       const blocked = blockedKeys(parsed);
       if (blocked.length) {
         return { ok: false, error: `${blocked.join(", ")} cannot be set from the app — edit .env` };
@@ -2197,7 +2236,18 @@ function registerIpc() {
     } catch {
       /* not JSON: let importConfig() report the parse failure in its own words */
     }
-    return config.importConfig(raw);
+    const res = config.importConfig(raw);
+    if (!res.ok) return res;
+    // The import MERGES (config-loader's importConfig), so it can change the LLM provider or
+    // the usage-tracking keys — which the spawned runner and webhook read only at startup.
+    // Restart them here exactly as config:save does, or the change would look applied and not be.
+    const restarted = [];
+    if (parsed && Object.keys(parsed).some((k) => RESTART_KEYS.has(k))) {
+      for (const name of ["runner", "webhook"]) {
+        if (await restartService(name)) restarted.push(name);
+      }
+    }
+    return { ...res, restarted };
   });
 
   // Usage (DS-mon LLM token usage + DeepSeek credit balance)
@@ -2395,6 +2445,69 @@ function showDashboard() {
   mainWindow.show();
   if (process.platform === "darwin") app.focus({ steal: true });
   mainWindow.focus();
+}
+
+/**
+ * Ask for the repo folder — the packaged app's only setup step.
+ *
+ * Shown when main/repo-root.js found nothing valid: /Applications is not inside the repo,
+ * and its `repo.json` may be absent (first run) or stale (the checkout was moved or
+ * renamed). The answer is remembered, then the app RELAUNCHES — `REPO` is a module-level
+ * constant that dozens of path constants are built from, so re-resolving from a clean start
+ * is both simpler and safer than mutating them in place.
+ *
+ * Two attempts, because picking the wrong folder is an ordinary mistake; after that the app
+ * says what it needs and exits, rather than opening a window whose every panel would be
+ * empty. Deliberately no renderer involvement: a dialog needs no IPC channel, so the gate
+ * and the `ALWAYS_OPEN` channel list are untouched.
+ */
+async function promptForRepoRoot() {
+  for (let attempt = 0; attempt < 2; attempt += 1) {
+    const picked = await dialog.showOpenDialog({
+      title: "Choose the Dev Centre repo",
+      message: "Dev Centre runs against its own repository. Choose the copilot_agentic_task_helper folder.",
+      buttonLabel: "Use this folder",
+      defaultPath: app.getPath("home"),
+      properties: ["openDirectory"],
+    });
+    if (picked.canceled || !picked.filePaths || !picked.filePaths.length) break;
+
+    const verdict = repoRoot.validateRepoRoot(picked.filePaths[0]);
+    if (!verdict.ok) {
+      await dialog.showMessageBox({
+        type: "warning",
+        message: "That is not the Dev Centre repo",
+        detail:
+          `${verdict.reason}\n\nExpected the folder containing package.json ("name": ` +
+          `"${repoRoot.EXPECTED_PACKAGE_NAME}") plus shared/config-loader.cjs and ` +
+          `mcp/webhook-server/index.js.`,
+        buttons: ["Try again"],
+      });
+      continue;
+    }
+
+    const saved = repoRoot.writeRepoPointer(verdict.dir);
+    if (!saved.ok) {
+      dialog.showErrorBox(
+        "Could not remember that folder",
+        `${saved.error}\n\nThe app needs to write ${repoRoot.pointerPath()} so it can find the repo next launch.`
+      );
+      app.exit(1);
+      return;
+    }
+    console.log(`[operator] repo root set to ${verdict.dir} — relaunching with it`);
+    app.relaunch();
+    app.exit(0);
+    return;
+  }
+
+  dialog.showErrorBox(
+    "Dev Centre needs its repository",
+    "Dev Centre reads its configuration, credentials and services from a local checkout of " +
+      "copilot_agentic_task_helper.\n\nPick that folder to continue, or set DEV_CENTRE_REPO to " +
+      "its path and open the app again."
+  );
+  app.exit(1);
 }
 
 function createWindow() {
@@ -2876,6 +2989,14 @@ async function spawnMcpForSeat(sub) {
 // Skipped entirely by the LOSING instance of a double launch: it must not create a
 // window, register IPC handlers, or start a single service (see the lock above).
 if (hasSingleInstanceLock) app.whenReady().then(() => {
+  // The repo comes FIRST: without it there is no config, no credentials and no services to
+  // start, so the operator picks the folder (once) and the app relaunches against it. Until
+  // then every `path.join(REPO, …)` constant above is the sentinel repo-root.js returned.
+  if (!REPO_RESOLVED) {
+    void promptForRepoRoot();
+    return;
+  }
+
   // The About panel reads from the bundle, which in dev is Electron's own — so
   // state the real identity explicitly rather than inheriting "Electron".
   app.setAboutPanelOptions({

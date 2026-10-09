@@ -73,13 +73,17 @@ electron/
 ## Build (dmg/zip)
 
 ```bash
-npm run electron:build   # = electron-builder --mac
+npm run electron:build   # preflight, then electron-builder --mac
 ```
 
-[`npm run electron:build`](../package.json#L48) = [`electron-builder --mac`](../electron/package.json#L1) (the `dist:mac` script).
+[`npm run electron:build`](../package.json#L48) = [`electron-builder --mac`](../electron/package.json#L1) (the `dist:mac` script), which runs [`scripts/check-build-preflight.mjs`](../scripts/check-build-preflight.mjs#L1) first.
 
-Packaged apps read the repo pieces (scripts, shared, mcp, webapp) from `extraResources`, but
-`.env`/`config.json`/`safe`/`logs/` are read from the live repo — the primary flow is dev (`npm start`).
+Packaged apps read their code from `extraResources` (scripts, shared, mcp, webapp) but resolve the
+**repo root at launch** ([`electron/src/main/repo-root.js`](../electron/src/main/repo-root.js#L1)):
+`DEV_CENTRE_REPO`, else a pointer in `~/Library/Application Support/Dev Centre/repo.json`, else an
+upward search from the bundle. Copied to `/Applications`, the first launch asks for the folder once,
+remembers it, and relaunches — so `config.json`, `.env`, `safe/`, `logs/` and `node_modules` all stay
+in the checkout and stay shared with the CLI tooling. See `electron/docs/local-build.md`.
 
 ## App identity (dock icon + name)
 

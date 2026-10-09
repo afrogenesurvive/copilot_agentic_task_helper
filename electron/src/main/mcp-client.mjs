@@ -82,20 +82,24 @@ const IDLE_MS = (() => {
   return 10 * 60 * 1000; // children are idle REST wrappers; don't hold them forever
 })();
 
-let ctx = { repo: null, onLog: null, version: "0.0.0" };
+let ctx = { repo: null, onLog: null, version: "0.0.0", node: null };
 
 /** @type {Map<string, {server:string, client?:object, transport?:object, pid?:number|null, connecting?:Promise<any>|null, tools?:Array|null, lastUsed?:number, idleTimer?:any, closing?:boolean}>} */
 const conns = new Map();
 
 /**
  * Wire the client to the host app. Call once, before the first tool call.
- * @param {{repo:string, version?:string, onLog?:function}} opts
+ * @param {{repo:string, version?:string, onLog?:function, node?:{cmd:string, env:object}}} opts
+ *   `node` is main/runtime.js's answer to "what runs a server" — a real node when one is
+ *   installed, otherwise the Electron binary with ELECTRON_RUN_AS_NODE=1. Passed in rather
+ *   than guessed here, because this module has no idea whether it is packaged.
  */
 export function configure(opts = {}) {
   ctx = {
     repo: opts.repo || ctx.repo,
     onLog: typeof opts.onLog === "function" ? opts.onLog : ctx.onLog,
     version: opts.version || ctx.version,
+    node: opts.node || ctx.node,
   };
   return { idleMs: IDLE_MS, servers: MCP_SERVERS };
 }
@@ -152,11 +156,14 @@ function pipeStderr(server, stream) {
 }
 
 async function connect(server, entry) {
+  // `ctx.node` is main/runtime.js's resolved interpreter (a real node, else Electron-as-Node),
+  // with `env` carrying ELECTRON_RUN_AS_NODE when that fallback is in use. `MCP_NODE_BIN`
+  // stays as the explicit escape hatch for a hand-run server.
   const transport = new StdioClientTransport({
-    command: process.env.MCP_NODE_BIN || "node",
+    command: ctx.node?.cmd || process.env.MCP_NODE_BIN || "node",
     args: [path.join(ctx.repo, "mcp", server, "index.js")],
     cwd: ctx.repo,
-    env: { ...process.env },
+    env: { ...process.env, ...(ctx.node?.env || {}) },
     stderr: "pipe",
   });
   // Attach before connect(): the transport returns the PassThrough immediately so

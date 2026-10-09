@@ -1,5 +1,32 @@
 # Changelog
 
+## [0.4.6-1] — 2026-10-08
+
+### A built Dev Centre now finds the repo it runs against
+
+The packaged app used to look for its configuration inside the app bundle, so a build could not read
+`config.json`, could not sign anyone in, and could not start a single service. It now resolves the
+checkout at launch.
+
+- **First launch asks for the folder once.** Copy `Dev Centre.app` to `/Applications`, open it, and pick
+  the `copilot_agentic_task_helper` folder. The choice is remembered — in
+  `~/Library/Application Support/Dev Centre/repo.json` — and the app relaunches against it. Moving or
+  renaming the checkout simply brings the dialog back, and `DEV_CENTRE_REPO` overrides it for a launch
+  from a terminal.
+- **Double-clicking the app works with no Node on PATH.** The app resolves an interpreter itself — a real
+  `node` from nvm or Homebrew when there is one, otherwise its own runtime — and repairs the PATH its
+  services and helper scripts inherit. `NODE_BIN` overrides the choice.
+- **Configuration and credentials stay in the checkout.** `config.json`, `.env`, `safe/`, `logs/` and
+  `node_modules` keep living in the repo and stay shared with the CLI tooling, so replacing the `.app`
+  never touches your settings.
+- **Config export is complete, and import no longer destroys settings.** Export writes the merged view, so
+  values that only ever lived in `.env` now travel with the file. Import **merges** into `config.json`
+  instead of replacing it — a file that sets one provider key no longer deletes everything it does not
+  mention — and the runner and webhook restart automatically when the change needs it.
+- **Building got safer.** `npm run electron:build` refuses to pack when the icon, the Electron
+  dependencies or a config source is missing, and every build starts from a clean output directory. The
+  new **Local build** page in the Guide covers the whole flow.
+
 ## [0.4.5-1] — 2026-10-03
 
 ### Disk cleanup gains a package-cache card; the master is now eight steps
