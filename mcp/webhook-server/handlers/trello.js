@@ -312,9 +312,9 @@ export function trelloHandler(req, res) {
     enqueueEvent(event, "priority");
     console.log(`   ✅ [TRELLO] Authorized frontdesk → priority queue (auto-answer)`);
   } else {
-    enqueueEvent(event, "misc_notifications");
-    dispatch(event);
-    console.log(`   📋 [TRELLO] Event → misc_notifications (tool dispatch → priority)`);
+    const outcome = dispatch(event);
+    if (!outcome.suppressed) enqueueEvent(event, outcome.routedTo || "misc_notifications");
+    console.log(`   📋 [TRELLO] Event → ${outcome.routedTo || "misc_notifications"}${outcome.suppressed ? " (suppressed)" : ""}`);
   }
 
   res.status(200).json({ status: "received" });

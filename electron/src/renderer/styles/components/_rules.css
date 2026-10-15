@@ -1,0 +1,124 @@
+/* Rules (webhook → tool / queue routing) */
+.rule-card {
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  padding: 10px 12px;
+  margin-bottom: 10px;
+  background: var(--surface);
+}
+.rule-head {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-wrap: wrap;
+}
+.rule-actions {
+  margin-left: auto;
+  display: flex;
+  gap: 6px;
+}
+.rule-actions button,
+.rule-form-actions button,
+.rule-add-cond,
+.rule-add-param {
+  font-size: 12px;
+}
+.rule-conds-preview {
+  margin-top: 8px;
+  color: var(--text-muted);
+  font-size: 12px;
+}
+.rule-conds-preview code {
+  background: var(--surface-hover);
+  padding: 1px 6px;
+  border-radius: var(--radius-sm);
+  margin-right: 4px;
+}
+.rule-form {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  margin-top: 8px;
+}
+.rule-row {
+  display: flex;
+  gap: 14px;
+  flex-wrap: wrap;
+  align-items: flex-end;
+}
+.rule-field {
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+  font-size: 12px;
+  color: var(--text-muted);
+}
+.rule-field input,
+.rule-field select {
+  min-width: 200px;
+}
+.rule-check {
+  flex-direction: row;
+  align-items: center;
+  gap: 6px;
+  color: var(--text);
+}
+.rule-sub {
+  font-weight: 600;
+  font-size: 12px;
+  margin-top: 4px;
+  color: var(--text-muted);
+  text-transform: uppercase;
+  letter-spacing: 0.03em;
+}
+.rule-cond {
+  display: flex;
+  gap: 6px;
+  align-items: center;
+  margin-bottom: 4px;
+}
+.rule-cond input[data-cond-path] {
+  min-width: 200px;
+}
+.rule-cond input[data-cond-value] {
+  min-width: 160px;
+}
+.rule-param {
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+  margin-bottom: 4px;
+}
+.rule-form-actions {
+  display: flex;
+  gap: 8px;
+  margin-top: 6px;
+}
+.rule-test-result {
+  margin: 12px 0;
+}
+.rule-test-row {
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  padding: 8px 10px;
+  margin-bottom: 6px;
+}
+.rule-test-row.match {
+  border-color: var(--color-green);
+}
+.rule-test-row pre {
+  margin: 6px 0 0;
+}
+.rule-conditions {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+.rule-params {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+.rule-card.editing {
+  border-color: var(--accent-border);
+}

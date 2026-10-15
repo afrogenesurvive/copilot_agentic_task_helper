@@ -83,6 +83,7 @@
         config: refreshConfig,
         tools: refreshTools,
         scripts: refreshScripts,
+        rules: refreshRules,
         appearance: refreshAppearance,
         about: refreshAbout,
         chat: refreshChatSessions,
@@ -793,6 +794,8 @@
       return;
     }
     for (const item of view.slice(0, QUEUE_ROW_LIMIT)) {
+      const wrap = document.createElement("div");
+      wrap.className = "qitem-wrap";
       const div = document.createElement("div");
       div.className = "qitem" + (item.cleared ? " cleared" : "");
       const label = item.data?.rule || `${item.source}/${item.type}`;
@@ -804,9 +807,22 @@
         <span class="qtype">${esc(queueTypeLabel(item))}</span>
         <span class="qdesc">${esc(label)} ${esc(desc)}</span>
         <span class="qmeta">${fmt(item.queuedAt)}</span>
+        <span class="q-fold" aria-hidden="true">▸</span>
         <button data-clear="${item.id}" data-q="${queue}" ${item.cleared ? "disabled" : ""}>clear</button>
       `;
-      el.appendChild(div);
+      const detail = document.createElement("div");
+      detail.className = "q-detail";
+      detail.hidden = true;
+      detail.innerHTML = `<pre>${esc(pretty(item))}</pre>`;
+      div.addEventListener("click", (e) => {
+        if (e.target.closest("[data-clear]")) return;
+        detail.hidden = !detail.hidden;
+        const fold = div.querySelector(".q-fold");
+        if (fold) fold.textContent = detail.hidden ? "▸" : "▾";
+      });
+      wrap.appendChild(div);
+      wrap.appendChild(detail);
+      el.appendChild(wrap);
     }
     if (view.length > QUEUE_ROW_LIMIT) {
       // Say so rather than cutting the list off — the old version sliced at 60 and
@@ -876,12 +892,12 @@
     const time = new Date(e.ts).toLocaleTimeString();
     const src = `${esc(e.source || "?")}${e.subSource ? "/" + esc(e.subSource) : ""}`;
     const hasData = e.data !== undefined;
-    return `<div class="log-row level-${esc(e.level || "info")}" data-idx="${idx}">
+    return `<div class="log-row level-${esc(e.level || "info")}${hasData ? " log-row--expandable" : ""}" data-idx="${idx}">
       <span class="log-time">${time}</span>
       <span class="log-level">${esc(e.level || "info")}</span>
       <span class="log-src">${src}</span>
       <span class="log-msg">${esc(e.message || "")}</span>
-      ${hasData ? `<button class="log-fold" data-idx="${idx}">▸</button>` : ""}
+      ${hasData ? `<span class="log-fold" aria-hidden="true">▸</span>` : ""}
     </div>${hasData ? `<div class="log-detail" data-idx="${idx}" hidden><pre>${esc(pretty(e.data))}</pre></div>` : ""}`;
   }
 
@@ -892,13 +908,13 @@
     const list = pool.filter(logMatchesFilters);
     const shown = logState.day ? list.slice(-3000) : list.slice(-500);
     box.innerHTML = shown.map((e, i) => logRowHTML(e, i)).join("") || '<div class="empty">No matching log entries.</div>';
-    box.querySelectorAll(".log-fold").forEach((btn) =>
-      btn.addEventListener("click", () => {
-        const detail = box.querySelector(`.log-detail[data-idx="${btn.dataset.idx}"]`);
-        if (detail) {
-          detail.hidden = !detail.hidden;
-          btn.textContent = detail.hidden ? "▸" : "▾";
-        }
+    box.querySelectorAll(".log-row--expandable").forEach((row) =>
+      row.addEventListener("click", () => {
+        const detail = box.querySelector(`.log-detail[data-idx="${row.dataset.idx}"]`);
+        if (!detail) return;
+        detail.hidden = !detail.hidden;
+        const fold = row.querySelector(".log-fold");
+        if (fold) fold.textContent = detail.hidden ? "▸" : "▾";
       }),
     );
     if ($("log-f-autoscroll").checked) box.scrollTop = box.scrollHeight;
@@ -4181,6 +4197,412 @@
   });
   $("scripts-refresh").addEventListener("click", refreshScripts);
 
+  // ── Rules (webhook → tool / queue routing) ──
+  const rulesState = { rules: [], tools: [], editing: new Set(), drafts: {} };
+
+  const RULES_FIELDS = {
+    gmail: ["data.from", "data.to", "data.subject", "data.snippet", "data.direction", "data.date", "data.emailAddress", "data.historyId", "data.messageId"],
+    trello: ["data.card.name", "data.card.id", "data.list.name", "data.list.id", "data.board.name", "data.text", "data.checklist.name", "data.checkItem.name", "data.checkItem.state", "card.name", "list.name", "board.name"],
+    drive: ["data.channelId", "data.resourceId", "data.resourceState", "data.changed", "data.changeCount", "data.fileId", "data.name", "data.mimeType", "data.removed"],
+    calendar: ["data.channelId", "data.resourceId", "data.resourceState", "data.eventCount", "data.changeType", "data.summary", "data.start", "data.end", "data.status"],
+    whatsapp: ["data.from", "data.to", "data.waId", "data.name", "data.type", "data.text", "data.messageId", "data.phoneNumberId"],
+  };
+  const RULES_EVENT_TYPES = {
+    gmail: ["new_message"],
+    trello: ["createCard", "updateCard", "commentCard", "updateCheckItemStateOnCard"],
+    drive: ["change", "sync"],
+    calendar: ["change", "sync"],
+    whatsapp: ["new_message"],
+  };
+  const RULES_SOURCES = Object.keys(RULES_EVENT_TYPES);
+  const RULES_ACTIONS = [
+    { value: "tool", label: "Run a tool" },
+    { value: "route", label: "Route to queue" },
+    { value: "suppress", label: "Suppress" },
+  ];
+  const RULES_OPS = ["contains", "equals", "regex", "exists"];
+
+  const blankCondition = () => ({ path: "", op: "contains", value: "" });
+  const conditionsToArray = (cond) =>
+    Object.entries(cond || {}).map(([path, c]) => {
+      const op = Object.keys(c || {})[0] || "contains";
+      return { path, op, value: c && c[op] !== undefined ? c[op] : "" };
+    });
+
+  const ruleParamFieldOptions = (source) =>
+    (RULES_FIELDS[source] || []).map((f) => `<option value="{{event.${f}}}"></option>`).join("");
+  const ruleCondFieldOptions = (source) =>
+    (RULES_FIELDS[source] || []).map((f) => `<option value="${escAttr(f)}"></option>`).join("");
+
+  function ruleDraftByKey(key, index) {
+    if (!rulesState.drafts[key]) {
+      const base = index !== null && rulesState.rules[index] ? rulesState.rules[index] : null;
+      rulesState.drafts[key] = {
+        name: base?.name || "",
+        enabled: base ? base.enabled !== false : true,
+        source: base?.match?.source || "gmail",
+        type: base?.match?.type || "",
+        action: base?.action || "tool",
+        queue: base?.queue || "priority",
+        tool: base?.tool || "",
+        params: { ...(base?.params || {}) },
+        conditions: conditionsToArray(base?.match?.conditions || {}),
+      };
+    }
+    return rulesState.drafts[key];
+  }
+
+  const ruleToolByName = (name) => rulesState.tools.find((t) => t.name === name) || null;
+
+  function ruleConditionsHTML(key, draft) {
+    const rows = draft.conditions.length ? draft.conditions : [blankCondition()];
+    return `<div class="rule-conditions">
+      <datalist id="rcf-${escAttr(key)}">${ruleCondFieldOptions(draft.source)}</datalist>
+      ${rows
+        .map(
+          (c, ci) => `<div class="rule-cond">
+            <input data-cond-path="${ci}" list="rcf-${escAttr(key)}" value="${escAttr(c.path)}" placeholder="data.from" spellcheck="false"/>
+            <select data-cond-op="${ci}">${RULES_OPS.map((o) => `<option value="${o}" ${o === c.op ? "selected" : ""}>${o}</option>`).join("")}</select>
+            <input data-cond-value="${ci}" value="${escAttr(String(c.value ?? ""))}" placeholder="value" spellcheck="false"/>
+            <button type="button" data-conddel="${ci}">✕</button>
+          </div>`,
+        )
+        .join("")}
+      <button type="button" class="rule-add-cond" data-addcond>+ condition</button>
+    </div>`;
+  }
+
+  function ruleParamsHTML(key, draft) {
+    const tool = ruleToolByName(draft.tool);
+    const schemaKeys = Object.keys(tool?.inputSchema?.properties || {});
+    const extra = Object.keys(draft.params || {}).filter((k) => !schemaKeys.includes(k));
+    const keys = [...schemaKeys, ...extra];
+    const required = new Set(tool?.inputSchema?.required || []);
+    return `<div class="rule-params">
+      <datalist id="rpf-${escAttr(key)}">${ruleParamFieldOptions(draft.source)}</datalist>
+      ${keys
+        .map((k) => {
+          const req = required.has(k) ? '<span class="cfg-required">required</span>' : "";
+          const desc = tool?.inputSchema?.properties?.[k]?.description || "";
+          return `<div class="rule-param">
+            <span class="script-label" title="${escAttr(desc)}">${esc(k)} ${req}</span>
+            <input data-rp="${escAttr(k)}" list="rpf-${escAttr(key)}" value="${escAttr(String((draft.params || {})[k] ?? ""))}" placeholder="${escAttr(desc || "{{event.data.field}} or literal")}" spellcheck="false"/>
+          </div>`;
+        })
+        .join("")}
+      <button type="button" class="rule-add-param" data-addparam>+ Add param</button>
+    </div>`;
+  }
+
+  function editorHTML(key, index) {
+    const draft = ruleDraftByKey(key, index);
+    return `<div class="rule-card editing" data-rule="${escAttr(key)}">
+      <div class="rule-head"><strong class="script-name">${index === null ? "New rule" : `Edit: ${esc(draft.name || "(unnamed)")}`}</strong></div>
+      <div class="rule-form">
+        <div class="rule-row">
+          <label class="rule-field">Name <input data-rname value="${escAttr(draft.name)}" placeholder="e.g. Scotia alert → card" spellcheck="false"/></label>
+          <label class="rule-field rule-check"><input type="checkbox" data-renabled ${draft.enabled ? "checked" : ""}/><span>Enabled</span></label>
+        </div>
+        <div class="rule-row">
+          <label class="rule-field">Source <select data-rsource>${RULES_SOURCES.map((s) => `<option value="${s}" ${s === draft.source ? "selected" : ""}>${s}</option>`).join("")}</select></label>
+          <label class="rule-field">Type <select data-rtype>${(RULES_EVENT_TYPES[draft.source] || []).map((t) => `<option value="${t}" ${t === draft.type ? "selected" : ""}>${t}</option>`).join("")}</select></label>
+        </div>
+        <div class="rule-row">
+          <label class="rule-field">Action <select data-raction>${RULES_ACTIONS.map((a) => `<option value="${a.value}" ${a.value === draft.action ? "selected" : ""}>${a.label}</option>`).join("")}</select></label>
+          <label class="rule-field">Tool <select data-rtool>${rulesState.tools.map((t) => `<option value="${escAttr(t.name)}" ${t.name === draft.tool ? "selected" : ""}>${esc(t.name)}</option>`).join("")}</select></label>
+        </div>
+        <div class="rule-row">
+          <label class="rule-field">Queue <select data-rqueue>${["priority", "misc_notifications"].map((q) => `<option value="${q}" ${q === draft.queue ? "selected" : ""}>${q}</option>`).join("")}</select></label>
+        </div>
+        <div class="rule-sub">Conditions (all must match)</div>
+        ${ruleConditionsHTML(key, draft)}
+        <div class="rule-sub">Tool params (use {{event.data.field}} for values)</div>
+        ${ruleParamsHTML(key, draft)}
+        <div class="rule-form-actions">
+          <button data-rule-save="${escAttr(key)}">Save</button>
+          <button data-rule-cancel="${escAttr(key)}">Cancel</button>
+          <button data-rule-test="${escAttr(key)}">Test this rule…</button>
+        </div>
+      </div>
+    </div>`;
+  }
+
+  function ruleCardHTML(r, i) {
+    if (rulesState.editing.has(String(i))) return editorHTML(String(i), i);
+    const cond = conditionsToArray(r.match?.conditions || {});
+    const actionLabel = (RULES_ACTIONS.find((a) => a.value === r.action) || {}).label || r.action;
+    const target = r.action === "route" ? ` → ${esc(r.queue)}` : r.action === "tool" ? ` → ${esc(r.tool)}` : "";
+    return `<div class="rule-card" data-rule="${escAttr(String(i))}">
+      <div class="rule-head">
+        <strong class="script-name">${esc(r.name || "(unnamed)")}</strong>
+        <span class="tag ${r.enabled ? "valid" : "expired"}">${r.enabled ? "on" : "off"}</span>
+        <span class="tag">${esc(r.match?.source || "?")}/${esc(r.match?.type || "?")}</span>
+        <span class="tag">${esc(actionLabel)}${target}</span>
+        <div class="rule-actions">
+          <button data-rule-edit="${escAttr(String(i))}">Edit</button>
+          <button data-rule-del="${escAttr(String(i))}">Delete</button>
+        </div>
+      </div>
+      ${cond.length ? `<div class="rule-conds-preview">${cond.map((c) => `<code>${esc(c.path)} ${esc(c.op)} ${esc(String(c.value))}</code>`).join(" · ")}</div>` : ""}
+    </div>`;
+  }
+
+  function renderRulesList() {
+    const box = $("rules-list");
+    if (!box) return;
+    const items = rulesState.rules.map((r, i) => ruleCardHTML(r, i));
+    if (rulesState.editing.has("new")) items.push(editorHTML("new", null));
+    box.innerHTML = items.length ? items.join("") : '<div class="empty">No rules yet — click "+ New rule".</div>';
+    bindRuleCards(box);
+  }
+
+  function readDraftFromCard(card) {
+    const d = {};
+    d.name = card.querySelector("[data-rname]")?.value || "";
+    d.enabled = card.querySelector("[data-renabled]")?.checked !== false;
+    d.source = card.querySelector("[data-rsource]")?.value || "gmail";
+    d.type = card.querySelector("[data-rtype]")?.value || "";
+    d.action = card.querySelector("[data-raction]")?.value || "tool";
+    d.queue = card.querySelector("[data-rqueue]")?.value || "priority";
+    d.tool = card.querySelector("[data-rtool]")?.value || "";
+    const params = {};
+    card.querySelectorAll("[data-rp]").forEach((el) => {
+      if (el.value !== "") params[el.dataset.rp] = el.value;
+    });
+    d.params = params;
+    const conditions = [];
+    card.querySelectorAll("[data-cond-path]").forEach((el) => {
+      const ci = el.dataset.condPath;
+      const path = el.value.trim();
+      if (!path) return;
+      const op = card.querySelector(`[data-cond-op="${ci}"]`)?.value || "contains";
+      const val = card.querySelector(`[data-cond-value="${ci}"]`)?.value || "";
+      conditions.push({ path, op, value: val });
+    });
+    d.conditions = conditions;
+    return d;
+  }
+
+  function syncDraftFromCard(key) {
+    const card = document.querySelector(`.rule-card[data-rule="${key}"]`);
+    if (!card) return null;
+    Object.assign(ruleDraftByKey(key, key === "new" ? null : Number(key)), readDraftFromCard(card));
+    return rulesState.drafts[key];
+  }
+
+  function draftToRule(d) {
+    const conditions = {};
+    for (const c of d.conditions || []) {
+      if (!c.path) continue;
+      conditions[c.path] = c.op === "exists" ? { exists: c.value !== "false" } : { [c.op]: c.value };
+    }
+    const rule = {
+      name: d.name,
+      enabled: d.enabled !== false,
+      match: { source: d.source, type: d.type || undefined, conditions },
+    };
+    const action = d.action || "tool";
+    if (action === "route") {
+      rule.action = "route";
+      rule.queue = d.queue || "priority";
+    } else if (action === "suppress") {
+      rule.action = "suppress";
+    } else {
+      rule.tool = d.tool;
+      rule.params = d.params || {};
+    }
+    return rule;
+  }
+
+  function bindRuleCards(box) {
+    box.querySelectorAll("[data-rule-edit]").forEach((b) =>
+      b.addEventListener("click", () => {
+        rulesState.editing.add(b.dataset.ruleEdit);
+        renderRulesList();
+      }),
+    );
+    box.querySelectorAll("[data-rule-del]").forEach((b) => b.addEventListener("click", () => deleteRule(b.dataset.ruleDel)));
+    box.querySelectorAll("[data-rule-save]").forEach((b) => b.addEventListener("click", () => saveRuleCard(b.dataset.ruleSave)));
+    box.querySelectorAll("[data-rule-cancel]").forEach((b) =>
+      b.addEventListener("click", () => {
+        const k = b.dataset.ruleCancel;
+        rulesState.editing.delete(k);
+        delete rulesState.drafts[k];
+        renderRulesList();
+      }),
+    );
+    box.querySelectorAll("[data-rule-test]").forEach((b) => b.addEventListener("click", () => testRuleCard(b.dataset.ruleTest)));
+    box.querySelectorAll("[data-addcond]").forEach((b) => b.addEventListener("click", () => addConditionRow(b.closest(".rule-card")?.dataset.rule)));
+    box.querySelectorAll("[data-conddel]").forEach((b) => b.addEventListener("click", () => removeConditionRow(b.closest(".rule-card")?.dataset.rule, b.dataset.conddel)));
+    box.querySelectorAll("[data-addparam]").forEach((b) => b.addEventListener("click", () => addParamRow(b.closest(".rule-card")?.dataset.rule)));
+    box.querySelectorAll("[data-rsource]").forEach((sel) =>
+      sel.addEventListener("change", () => {
+        const card = sel.closest(".rule-card");
+        if (!card) return;
+        const key = card.dataset.rule;
+        const src = sel.value;
+        const typeSel = card.querySelector("[data-rtype]");
+        if (typeSel) typeSel.innerHTML = (RULES_EVENT_TYPES[src] || []).map((t) => `<option value="${escAttr(t)}">${esc(t)}</option>`).join("");
+        const condDl = document.getElementById(`rcf-${key}`);
+        if (condDl) condDl.innerHTML = ruleCondFieldOptions(src);
+        const paramDl = document.getElementById(`rpf-${key}`);
+        if (paramDl) paramDl.innerHTML = ruleParamFieldOptions(src);
+      }),
+    );
+    // Switching tool re-renders the params section against the new tool's schema.
+    box.querySelectorAll("[data-rtool]").forEach((sel) =>
+      sel.addEventListener("change", () => {
+        const card = sel.closest(".rule-card");
+        if (!card) return;
+        syncDraftFromCard(card.dataset.rule);
+        renderRulesList();
+      }),
+    );
+  }
+
+  async function refreshRules() {
+    const [listRes, toolsRes] = await Promise.all([api.rulesList(), api.rulesTools()]);
+    if (!listRes || listRes.status !== 200) {
+      const box = $("rules-list");
+      if (box) box.innerHTML = `<div class="empty">${esc((listRes?.json?.error) || "failed to list rules")}</div>`;
+      return;
+    }
+    rulesState.rules = (listRes.json && listRes.json.rules) || [];
+    rulesState.tools = (toolsRes && toolsRes.json && toolsRes.json.tools) || [];
+    renderRulesList();
+  }
+
+  async function saveRuleCard(key) {
+    const card = document.querySelector(`.rule-card[data-rule="${key}"]`);
+    if (!card) return;
+    const d = readDraftFromCard(card);
+    if (!d.name.trim()) {
+      toast("Rule needs a name", "warn");
+      return;
+    }
+    const rule = draftToRule(d);
+    const index = key === "new" ? rulesState.rules.length : Number(key);
+    const res = await api.rulesUpsert(index, rule);
+    if (!res || res.status !== 200) {
+      toast((res?.json?.error) || "save failed", "err");
+      return;
+    }
+    rulesState.editing.delete(key);
+    delete rulesState.drafts[key];
+    toast("Rule saved", "ok");
+    await refreshRules();
+  }
+
+  async function deleteRule(key) {
+    const res = await api.rulesDelete(Number(key));
+    if (!res || res.status !== 200) {
+      toast((res?.json?.error) || "delete failed", "err");
+      return;
+    }
+    toast("Rule deleted", "ok");
+    await refreshRules();
+  }
+
+  function addConditionRow(key) {
+    if (!key) return;
+    const draft = syncDraftFromCard(key) || ruleDraftByKey(key, key === "new" ? null : Number(key));
+    draft.conditions.push(blankCondition());
+    renderRulesList();
+  }
+
+  function removeConditionRow(key, ci) {
+    if (!key) return;
+    const draft = syncDraftFromCard(key);
+    if (draft) draft.conditions.splice(Number(ci), 1);
+    renderRulesList();
+  }
+
+  async function addParamRow(key) {
+    if (!key) return;
+    syncDraftFromCard(key);
+    const name = await askText({ title: "Add param", label: "Parameter name", value: "" });
+    if (!name || !name.trim()) return;
+    const draft = ruleDraftByKey(key, key === "new" ? null : Number(key));
+    draft.params[name.trim()] = draft.params[name.trim()] ?? "";
+    renderRulesList();
+  }
+
+  async function promptForEvent() {
+    const raw = await askText({
+      title: "Test rules",
+      label: "Event JSON (single line)",
+      desc: 'Example: {"source":"gmail","type":"new_message","data":{"from":"alerts@scotiabank.com","subject":"Debit Card purchase"}}',
+      placeholder: '{"source":"gmail","type":"new_message","data":{}}',
+    });
+    if (raw === null) return null;
+    try {
+      return JSON.parse(raw);
+    } catch (e) {
+      toast("Invalid JSON: " + e.message, "err");
+      return null;
+    }
+  }
+
+  function renderRulesTestResult(json) {
+    const el = $("rules-test-result");
+    if (!el) return;
+    const results = (json && json.results) || [];
+    el.innerHTML = `<div class="rule-test-result">
+      <div class="rule-sub">Test results</div>
+      ${results.length
+        ? results
+            .map(
+              (r) => `<div class="rule-test-row ${r.matched ? "match" : ""}">
+                <code>#${r.index}</code> <strong>${esc(r.name || "(unnamed)")}</strong>
+                ${r.matched ? `<span class="tag valid">matched</span> <span class="tag">${esc(r.action)}${r.action === "tool" ? " → " + esc(r.tool) : r.action === "route" ? " → " + esc(r.queue) : ""}</span>` : '<span class="tag expired">no match</span>'}
+                ${r.matched ? `<pre class="log-box">${esc(JSON.stringify(r.params, null, 1))}</pre>` : ""}
+              </div>`,
+            )
+            .join("")
+        : '<div class="empty">No rules to test.</div>'}
+      <button data-testclose>Close</button>
+    </div>`;
+    el.querySelector("[data-testclose]")?.addEventListener("click", () => {
+      el.innerHTML = "";
+    });
+  }
+
+  async function testRuleCard(key) {
+    const card = document.querySelector(`.rule-card[data-rule="${key}"]`);
+    if (card) syncDraftFromCard(key);
+    const event = await promptForEvent();
+    if (!event) return;
+    const index = key === "new" ? undefined : Number(key);
+    const res = await api.rulesTest({ event, index });
+    if (!res || res.status !== 200) {
+      toast((res?.json?.error) || "test failed", "err");
+      return;
+    }
+    renderRulesTestResult(res.json);
+  }
+
+  async function testAllRules() {
+    const event = await promptForEvent();
+    if (!event) return;
+    const res = await api.rulesTest({ event });
+    if (!res || res.status !== 200) {
+      toast((res?.json?.error) || "test failed", "err");
+      return;
+    }
+    renderRulesTestResult(res.json);
+  }
+
+  $("rules-new").addEventListener("click", () => {
+    rulesState.editing.add("new");
+    renderRulesList();
+  });
+  $("rules-reload").addEventListener("click", async () => {
+    const res = await api.rulesReload();
+    if (res && res.status === 200) toast("Rules reloaded", "ok");
+    await refreshRules();
+  });
+  $("rules-test").addEventListener("click", testAllRules);
+
   // ── Queue: collapse / filter / sort ──
   function bindQueueControls() {
     for (const q of Object.keys(QUEUE_IDS)) {
@@ -4608,6 +5030,7 @@
     if (active("about")) guarded("about", refreshAbout);
     if (active("chat")) guarded("chat", refreshChatSessions);
     if (active("scripts")) guarded("scripts", refreshScripts);
+    if (active("rules")) guarded("rules", refreshRules);
     // Keep the key-store pill honest without spawning the CLI again — the probe
     // reuses its cached liveness verdict inside that window.
     if (active("licenses")) guarded("keys", () => loadCaps());

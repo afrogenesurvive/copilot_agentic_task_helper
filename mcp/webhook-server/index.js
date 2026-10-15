@@ -59,6 +59,8 @@ import {
   markClearedByNumber,
 } from "./lib/event-queue.js";
 import { allTools } from "../../shared/tool-manifest.js";
+import { reloadRules, evaluateRule, interpolate } from "./lib/tool-dispatch.js";
+import { EXECUTABLE_TOOLS, AGENT_LOG_TOOL } from "../../shared/executable-tools.mjs";
 import {
   verifyLogin,
   getSession,
@@ -458,24 +460,171 @@ app.get("/api/tasks", (_req, res) => {
   }
 });
 
-// GET /api/rules — Tool dispatch rules (enabled only)
+// ── Rules (webhook → tool / queue routing) ──────────────────────────────────
+// Storage lives under safe/webhook-tool-rules.json (local-only, gitignored).
+// Writes are atomic (temp + rename) so dispatch() never reads a half-written
+// file, and every mutation reloads the in-memory copy immediately.
+
+const RULES_FILE = path.resolve(__dirname, "..", "..", "safe", "webhook-tool-rules.json");
+
+function readRulesFile() {
+  if (!fs.existsSync(RULES_FILE)) return { rules: [] };
+  return JSON.parse(fs.readFileSync(RULES_FILE, "utf8"));
+}
+
+function writeRulesFile(parsed) {
+  const tmp = `${RULES_FILE}.tmp`;
+  fs.writeFileSync(tmp, JSON.stringify(parsed, null, 2) + "\n", "utf8");
+  fs.renameSync(tmp, RULES_FILE);
+  reloadRules();
+}
+
+/** Full rule object for the API — the file shape plus a stable index. */
+function ruleToApi(rule, index) {
+  return {
+    index,
+    name: rule.name || "",
+    enabled: rule.enabled !== false,
+    action: rule.action || "tool",
+    queue: rule.queue || null,
+    match: rule.match || { source: null, type: null, conditions: {} },
+    tool: rule.tool || null,
+    params: rule.params || {},
+  };
+}
+
+/** Deep-interpolate {{event.*}} placeholders for the test endpoint. */
+function interpolateParams(params, event) {
+  const out = {};
+  for (const [k, v] of Object.entries(params || {})) {
+    if (typeof v === "string") out[k] = interpolate(v, event);
+    else if (Array.isArray(v)) out[k] = v.map((x) => (typeof x === "string" ? interpolate(x, event) : x));
+    else if (v && typeof v === "object") out[k] = interpolateParams(v, event);
+    else out[k] = v;
+  }
+  return out;
+}
+
+// GET /api/rules — full rule list (operator-facing, token-gated)
 app.get("/api/rules", (_req, res) => {
   try {
-    const rulesPath = path.resolve(__dirname, "..", "..", "safe", "webhook-tool-rules.json");
-    if (!fs.existsSync(rulesPath)) {
-      return res.json({ rules: [] });
+    const parsed = readRulesFile();
+    res.json({ rules: (parsed.rules || []).map(ruleToApi) });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// GET /api/rules/tools — tools the runner can execute + the agent_log pseudo-tool
+app.get("/api/rules/tools", (_req, res) => {
+  const byName = new Map(allTools.map((t) => [t.name, t]));
+  const tools = [...EXECUTABLE_TOOLS, AGENT_LOG_TOOL].map((name) => {
+    const def = byName.get(name);
+    return {
+      name,
+      description:
+        def?.description ||
+        (name === AGENT_LOG_TOOL ? "Hand the model a free-form instruction instead of calling a specific tool." : ""),
+      inputSchema:
+        def?.inputSchema ||
+        {
+          type: "object",
+          properties: { message: { type: "string", description: "Instruction text for the agent." } },
+        },
+    };
+  });
+  res.json({ tools });
+});
+
+// PUT /api/rules — replace the whole list (body: { rules: [...] })
+app.put("/api/rules", (req, res) => {
+  try {
+    const rules = req.body?.rules;
+    if (!Array.isArray(rules)) return res.status(400).json({ error: "Body must be { rules: [...] }" });
+    const current = readRulesFile();
+    writeRulesFile({ ...current, rules });
+    res.json({ ok: true, count: rules.length });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// POST /api/rules/:index — upsert one rule (replace at index, or append)
+app.post("/api/rules/:index", (req, res) => {
+  try {
+    const parsed = readRulesFile();
+    const list = parsed.rules || [];
+    const i = Number(req.params.index);
+    if (!Number.isInteger(i) || i < 0) return res.status(400).json({ error: "index must be a non-negative integer" });
+    if (i >= list.length) list.push(req.body || {});
+    else list[i] = req.body || {};
+    parsed.rules = list;
+    writeRulesFile(parsed);
+    res.json({ ok: true, index: Math.min(i, list.length - 1) });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// DELETE /api/rules/:index — remove one rule
+app.delete("/api/rules/:index", (req, res) => {
+  try {
+    const parsed = readRulesFile();
+    const list = parsed.rules || [];
+    const i = Number(req.params.index);
+    if (!Number.isInteger(i) || i < 0 || i >= list.length) {
+      return res.status(404).json({ error: `No rule at index ${req.params.index}` });
     }
-    const raw = fs.readFileSync(rulesPath, "utf8");
-    const parsed = JSON.parse(raw);
-    const rules = (parsed.rules || []).map((r) => ({
-      name: r.name,
-      enabled: r.enabled,
-      source: r.match?.source,
-      type: r.match?.type,
-      conditions: r.match?.conditions || null,
-      tool: r.tool,
-    }));
-    res.json({ rules });
+    list.splice(i, 1);
+    parsed.rules = list;
+    writeRulesFile(parsed);
+    res.json({ ok: true });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// POST /api/rules/reload — re-read the file into the in-memory dispatcher
+app.post("/api/rules/reload", (_req, res) => {
+  try {
+    const count = reloadRules();
+    res.json({ ok: true, count });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// POST /api/rules/test — preview what a rule (or all rules) would do for an event
+app.post("/api/rules/test", (req, res) => {
+  try {
+    const { event, index } = req.body || {};
+    if (!event || typeof event !== "object" || !event.source || !event.type) {
+      return res.status(400).json({ error: "Body must include an event object with `source` and `type`." });
+    }
+    const all = readRulesFile().rules || [];
+    let candidates = all;
+    if (index !== undefined && index !== null && index !== "") {
+      const i = Number(index);
+      if (!Number.isInteger(i) || i < 0 || i >= all.length) {
+        return res.status(404).json({ error: `No rule at index ${index}` });
+      }
+      candidates = [all[i]];
+    }
+    const results = candidates.map((rule, idx) => {
+      const matched = evaluateRule(rule, event);
+      const action = rule.action || "tool";
+      const resolved = index !== undefined && index !== null && index !== "" ? Number(index) : idx;
+      return {
+        index: resolved,
+        name: rule.name || "",
+        matched,
+        action,
+        queue: rule.queue || null,
+        tool: rule.tool || null,
+        params: matched ? interpolateParams(rule.params || {}, event) : null,
+      };
+    });
+    res.json({ results });
   } catch (err) {
     res.status(500).json({ error: err.message });
   }

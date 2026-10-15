@@ -121,6 +121,14 @@ contextBridge.exposeInMainWorld("api", {
   whatsapp: (action, params) => ipcRenderer.invoke("tools:whatsapp", action, params),
   netlify: (action, params) => ipcRenderer.invoke("tools:netlify", action, params),
   openExternal: (url) => ipcRenderer.invoke("open:external", url),
+  // Rules (webhook → tool / queue routing)
+  rulesList: () => ipcRenderer.invoke("rules:list"),
+  rulesTools: () => ipcRenderer.invoke("rules:tools"),
+  rulesSave: (rules) => ipcRenderer.invoke("rules:save", rules),
+  rulesUpsert: (index, rule) => ipcRenderer.invoke("rules:upsert", index, rule),
+  rulesDelete: (index) => ipcRenderer.invoke("rules:delete", index),
+  rulesReload: () => ipcRenderer.invoke("rules:reload"),
+  rulesTest: (payload) => ipcRenderer.invoke("rules:test", payload),
   // Scripts (scripts/user runner — manual run only)
   scriptsList: () => ipcRenderer.invoke("scripts:list"),
   // payload: legacy string (raw args) OR { values, extra } from a form-manifest card

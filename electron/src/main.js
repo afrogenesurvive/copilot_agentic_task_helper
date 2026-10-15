@@ -2015,6 +2015,57 @@ function registerIpc() {
     }
   });
 
+  // Rules (webhook → tool / queue routing — operator-editable via the Rules tab)
+  ipcMain.handle("rules:list", async () => {
+    try {
+      return await webhookApi("/api/rules");
+    } catch {
+      return { status: 0, json: { error: "webhook server not reachable" } };
+    }
+  });
+  ipcMain.handle("rules:tools", async () => {
+    try {
+      return await webhookApi("/api/rules/tools");
+    } catch {
+      return { status: 0, json: { error: "webhook server not reachable" } };
+    }
+  });
+  ipcMain.handle("rules:save", async (_e, rules) => {
+    try {
+      return await webhookApi("/api/rules", "PUT", { rules });
+    } catch {
+      return { status: 0, json: { error: "webhook server not reachable" } };
+    }
+  });
+  ipcMain.handle("rules:upsert", async (_e, index, rule) => {
+    try {
+      return await webhookApi(`/api/rules/${index}`, "POST", rule);
+    } catch {
+      return { status: 0, json: { error: "webhook server not reachable" } };
+    }
+  });
+  ipcMain.handle("rules:delete", async (_e, index) => {
+    try {
+      return await webhookApi(`/api/rules/${index}`, "DELETE");
+    } catch {
+      return { status: 0, json: { error: "webhook server not reachable" } };
+    }
+  });
+  ipcMain.handle("rules:reload", async () => {
+    try {
+      return await webhookApi("/api/rules/reload", "POST");
+    } catch {
+      return { status: 0, json: { error: "webhook server not reachable" } };
+    }
+  });
+  ipcMain.handle("rules:test", async (_e, payload) => {
+    try {
+      return await webhookApi("/api/rules/test", "POST", payload);
+    } catch {
+      return { status: 0, json: { error: "webhook server not reachable" } };
+    }
+  });
+
   ipcMain.handle("health", async () => {
     try {
       const res = await fetch(`http://localhost:${WEBHOOK_PORT}/health`, { signal: AbortSignal.timeout(2000) });

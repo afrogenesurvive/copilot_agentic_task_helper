@@ -16,6 +16,7 @@ import { getSeatAccounts } from "../../scripts/frontdesk-accounts.mjs";
 import { searchDuckDuckGo, fetchPage } from "../../shared/web-tools.mjs";
 import { sanitizeObject } from "../../scripts/sanitize.stub.mjs";
 import { normalizeTrelloArgs } from "../../shared/trello-boards.mjs";
+import { EXECUTABLE_TOOLS } from "../../shared/executable-tools.mjs";
 import fs from "fs";
 import path from "path";
 import { fileURLToPath } from "url";
@@ -475,6 +476,17 @@ const HANDLERS = {
   whatsapp_mark_read: (args) => whatsappMarkRead(args),
   frontdesk_reply: (args, ctx) => frontdeskReply(resolveReplySeat(ctx, args), args.text),
 };
+
+// Keep shared/executable-tools.mjs in sync — the rules UI's tool dropdown reads
+// that list, so a mismatch would offer tools that cannot run (or hide ones that
+// can). Warn-only: execution always follows HANDLERS.
+const _missingTools = EXECUTABLE_TOOLS.filter((t) => !(t in HANDLERS));
+const _extraTools = Object.keys(HANDLERS).filter((t) => !EXECUTABLE_TOOLS.includes(t));
+if (_missingTools.length || _extraTools.length) {
+  console.warn(
+    `   ⚠️ [EXECUTOR] executable-tools drift — missing: ${_missingTools.join(", ") || "none"} | extra: ${_extraTools.join(", ") || "none"}`,
+  );
+}
 
 /**
  * Execute a tool call chosen by the model.

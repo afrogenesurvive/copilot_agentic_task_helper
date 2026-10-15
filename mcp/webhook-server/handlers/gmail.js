@@ -227,12 +227,12 @@ export async function gmailHandler(req, res) {
     ),
   };
 
-  enqueueEvent(event, "misc_notifications");
-
-  // Check if any tool dispatch rules match (matched rules → priority queue)
-  dispatch(event);
-
-  console.log(`   📧 [GMAIL] Event → misc_notifications (tool dispatch → priority)`);
+  // Route via dispatch(): a matching rule may escalate to priority (tool call),
+  // reroute the raw event (route action) or drop it (suppress). Otherwise the
+  // raw event lands in misc_notifications as before.
+  const outcome = dispatch(event);
+  if (!outcome.suppressed) enqueueEvent(event, outcome.routedTo || "misc_notifications");
+  console.log(`   📧 [GMAIL] Event → ${outcome.routedTo || "misc_notifications"}${outcome.suppressed ? " (suppressed)" : ""}`);
 
   res.status(200).json({ status: "received" });
 }

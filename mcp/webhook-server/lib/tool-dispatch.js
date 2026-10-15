@@ -37,6 +37,17 @@ function loadRules() {
   }
 }
 
+/** Re-read the rules file into memory (used by POST /api/rules/reload). */
+export function reloadRules() {
+  loadRules();
+  return rules.length;
+}
+
+/** The in-memory rules (enabled-only, matching loadRules' filter). */
+export function getRules() {
+  return rules;
+}
+
 /**
  * Resolve a dotted path like "data.card.name" from an object.
  * Used to extract values from webhook events for rule matching and template interpolation.
@@ -70,11 +81,39 @@ function matchCondition(value, condition) {
 /**
  * Interpolate {{event.data.field}} placeholders in a template string.
  */
-function interpolate(template, event) {
+export function interpolate(template, event) {
   return template.replace(/\{\{event\.([^}]+)\}\}/g, (match, path) => {
     const value = resolvePath(event, path);
     return value !== undefined ? String(value) : match;
   });
+}
+
+/**
+ * Does a single rule match an event? Pure — no side effects.
+ */
+export function evaluateRule(rule, event) {
+  if (rule.match?.source && rule.match.source !== event.source) return false;
+  if (rule.match?.type && rule.match.type !== event.type) return false;
+  if (rule.match?.conditions) {
+    for (const [fieldPath, condition] of Object.entries(rule.match.conditions)) {
+      if (!matchCondition(resolvePath(event, fieldPath), condition)) return false;
+    }
+  }
+  return true;
+}
+
+/**
+ * Interpolate a rule's params against an event (pure — no enqueue). Used by the
+ * rules UI's test endpoint to preview a rule without side effects.
+ */
+export function buildParams(rule, event) {
+  const params = {};
+  if (rule.params) {
+    for (const [key, value] of Object.entries(rule.params)) {
+      params[key] = typeof value === "string" ? interpolate(value, event) : value;
+    }
+  }
+  return params;
 }
 
 /**
@@ -85,36 +124,49 @@ function interpolate(template, event) {
 export function dispatch(event) {
   if (rules.length === 0) loadRules();
 
-  let matched = false;
-  // console.log("DEBUG - tool call dispatch", event);
+  // Outcome the handlers use to decide queue placement:
+  //   matched    — at least one tool rule fired (pending_tool_call enqueued)
+  //   routedTo   — a `route` rule wants the raw event in this queue (no tool)
+  //   suppressed — a `suppress` rule matched: the handler must NOT enqueue
+  const outcome = { matched: false, routedTo: null, suppressed: false };
 
   for (const rule of rules) {
-    // Check source
-    if (rule.match.source && rule.match.source !== event.source) continue;
-    if (rule.match.type && rule.match.type !== event.type) continue;
+    if (!evaluateRule(rule, event)) continue;
 
-    // Check conditions
-    if (rule.match.conditions) {
-      let conditionsMet = true;
-      for (const [fieldPath, condition] of Object.entries(rule.match.conditions)) {
-        const value = resolvePath(event, fieldPath);
-        if (!matchCondition(value, condition)) {
-          conditionsMet = false;
-          break;
-        }
-      }
-      if (!conditionsMet) continue;
+    const action = rule.action || "tool";
+
+    // Suppress: drop the event entirely — but never silently (audit line).
+    if (action === "suppress") {
+      outcome.suppressed = true;
+      logEvent({
+        source: "webhook",
+        subSource: "tool-dispatch",
+        level: "info",
+        message: `rule "${rule.name}" suppressed ${event.source}/${event.type}`,
+        data: { rule: rule.name, eventSource: event.source, eventType: event.type },
+      });
+      console.log(`   🤖 [TOOL] Rule "${rule.name}" → suppress (${event.source}/${event.type})`);
+      return outcome;
     }
 
-    // Rule matched — enqueue the tool call (interpolated params are sanitized)
-    const params = {};
-    if (rule.params) {
-      for (const [key, value] of Object.entries(rule.params)) {
-        params[key] = typeof value === "string" ? sanitizeObject(interpolate(value, event), { auditSource: "tool-dispatch/interpolate" }) : value;
-      }
+    // Route: send the RAW event to a named queue (no tool attached).
+    if (action === "route") {
+      const queue = rule.queue || "priority";
+      outcome.routedTo = queue;
+      outcome.matched = true;
+      logEvent({
+        source: "webhook",
+        subSource: "tool-dispatch",
+        level: "info",
+        message: `rule "${rule.name}" routed ${event.source}/${event.type} → ${queue}`,
+        data: { rule: rule.name, queue, eventSource: event.source, eventType: event.type },
+      });
+      console.log(`   🤖 [TOOL] Rule "${rule.name}" → route → ${queue}`);
+      continue;
     }
 
-    // Route to PRIORITY queue — matched rules need agent attention
+    // Tool (default): enqueue a pending_tool_call with interpolated params.
+    const params = buildParams(rule, event);
     enqueueEvent(
       {
         source: "tool_dispatch",
@@ -131,14 +183,14 @@ export function dispatch(event) {
 
     console.log(`   🤖 [TOOL] Rule "${rule.name}" → ${rule.tool}`);
     logEvent({ source: "webhook", subSource: "tool-dispatch", level: "info", message: `rule "${rule.name}" → ${rule.tool}`, data: { rule: rule.name, tool: rule.tool, eventSource: event.source, eventType: event.type } });
-    matched = true;
+    outcome.matched = true;
   }
 
-  if (!matched) {
+  if (!outcome.matched && !outcome.suppressed) {
     console.log(`   🤖 [TOOL] No rules matched for ${event.source}/${event.type}`);
   }
 
-  return matched;
+  return outcome;
 }
 
 // Load rules on module init

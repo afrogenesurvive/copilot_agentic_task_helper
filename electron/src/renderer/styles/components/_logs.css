@@ -96,6 +96,10 @@
   background: var(--surface-hover);
 }
 
+.log-row--expandable {
+  cursor: pointer;
+}
+
 .log-time {
   color: var(--text-muted);
   flex-shrink: 0;
@@ -146,7 +150,7 @@
   font-size: 0.85rem;
 }
 
-.log-fold:hover:not(:disabled) {
+.log-fold:hover {
   background: none;
   border: none;
   color: var(--accent);

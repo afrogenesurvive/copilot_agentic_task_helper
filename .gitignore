@@ -8,6 +8,7 @@ yarn-error.log*
 .env
 .env.bak-*
 config.json
+config.json.bak-*
 .env.local
 .env.*.local
 webapp/.env

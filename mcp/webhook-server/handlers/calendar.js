@@ -566,9 +566,9 @@ export async function calendarPushHandler(req, res) {
     ),
   };
 
-  enqueueEvent(event, "misc_notifications");
-  dispatch(event);
-  console.log(`   📅 [CALENDAR] Event → misc_notifications (tool dispatch → priority)`);
+  const outcome = dispatch(event);
+  if (!outcome.suppressed) enqueueEvent(event, outcome.routedTo || "misc_notifications");
+  console.log(`   📅 [CALENDAR] Event → ${outcome.routedTo || "misc_notifications"}${outcome.suppressed ? " (suppressed)" : ""}`);
 
   res.status(200).json({ status: "received" });
 }

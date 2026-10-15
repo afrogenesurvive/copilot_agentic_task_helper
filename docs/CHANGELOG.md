@@ -1,5 +1,26 @@
 # Changelog
 
+## [0.4.6-2] — 2026-10-15
+
+### Webhook → tool rules are now editable from the dashboard
+
+The pipeline that turns an incoming webhook into an action — a tool call, a queue reroute, or a
+silent drop — was a hand-edited JSON file with fixed routing. It is now configurable from a new
+**🔗 Rules** tab, and routing honours three explicit actions.
+
+- **`action` field** on each rule: `tool` (the old behaviour — enqueue a pending tool call with
+  `{{event.*}}`-interpolated params), `route` (send the raw event to `priority` or `misc_notifications`
+  with no tool), or `suppress` (drop the event; every suppression is logged, never silent).
+- **New Rules tab** — list rules, edit the source/type + field conditions (`contains` / `equals` /
+  `regex` / `exists`), pick a tool (only the ones the runner can actually execute, plus the
+  `agent_log` free-text instruction), fill a generated param form, and dry-run a rule against a pasted
+  event. Changes are written to `safe/webhook-tool-rules.json` and applied immediately.
+- **Operator endpoints** for the same surface: `GET /api/rules`, `GET /api/rules/tools`,
+  `PUT /api/rules`, `POST /api/rules/:index`, `DELETE /api/rules/:index`, `POST /api/rules/reload`,
+  `POST /api/rules/test` — all token-gated.
+- The shared `shared/executable-tools.mjs` list is the single source of truth for what the runner can
+  execute; the runner warns at startup if its handler table ever drifts from it.
+
 ## [0.4.6-1] — 2026-10-08
 
 ### A built Dev Centre now finds the repo it runs against

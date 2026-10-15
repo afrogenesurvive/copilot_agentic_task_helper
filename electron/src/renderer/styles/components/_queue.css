@@ -65,6 +65,38 @@
   opacity: 0.45;
 }
 
+/* Click-to-expand detail rows (queue only — Accounts reuses `.qitem` without a
+   wrapper, so these are scoped under `.q-body` to leave that tab untouched). */
+.q-body .qitem-wrap {
+  margin-bottom: 6px;
+}
+
+.q-body .qitem-wrap:last-child {
+  margin-bottom: 0;
+}
+
+.q-body .qitem {
+  margin-bottom: 0;
+  cursor: pointer;
+}
+
+.qitem .q-fold {
+  color: var(--text-muted);
+  font-size: 0.8rem;
+  flex: 0 0 auto;
+}
+
+.qitem:hover .q-fold {
+  color: var(--accent);
+}
+
+.q-body .q-detail pre {
+  margin: 2px 0 6px 22px;
+  color: var(--text-muted);
+  max-height: 240px;
+  overflow-y: auto;
+}
+
 .qitem button {
   font-size: 0.8rem;
   padding: 3px 8px;

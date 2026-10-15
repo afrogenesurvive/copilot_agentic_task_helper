@@ -185,8 +185,8 @@ export async function whatsappHandler(req, res) {
             { auditSource: "webhook/whatsapp" },
           ),
         };
-        enqueueEvent(event, "misc_notifications");
-        dispatch(event);
+        const outcome = dispatch(event);
+        if (!outcome.suppressed) enqueueEvent(event, outcome.routedTo || "misc_notifications");
         processed++;
         console.log(`   💬 [WHATSAPP] ← from ${clean.from || "?"}: "${String(clean.text || clean.type || "").slice(0, 60)}"`);
       }

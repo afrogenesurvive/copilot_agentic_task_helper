@@ -33,6 +33,7 @@
     <link rel="stylesheet" href="styles/components/_config.css" />
     <link rel="stylesheet" href="styles/components/_tools.css" />
     <link rel="stylesheet" href="styles/components/_scripts.css" />
+    <link rel="stylesheet" href="styles/components/_rules.css" />
     <link rel="stylesheet" href="styles/components/_chat.css" />
     <link rel="stylesheet" href="styles/components/_usage.css" />
     <link rel="stylesheet" href="styles/components/_appearance-panel.css" />
@@ -97,6 +98,9 @@
             </button>
             <button data-tab="scripts" class="sidebar-btn">
               <span data-icon="terminal"></span><span class="sidebar-btn__label">Scripts</span><span class="sidebar-btn__dot" aria-hidden="true"></span>
+            </button>
+            <button data-tab="rules" class="sidebar-btn">
+              <span data-icon="link"></span><span class="sidebar-btn__label">Rules</span>
             </button>
             <button data-tab="chat" class="sidebar-btn">
               <span data-icon="chat"></span><span class="sidebar-btn__label">Chat</span><span class="sidebar-btn__dot" aria-hidden="true"></span>
@@ -647,6 +651,30 @@
             <code>["--dry-run","-i","i-0abc123"]</code> or plain space-separated values.
           </p>
           <div id="scripts-list"><div class="loading-block"><span class="spin"></span><span>Loading…</span></div></div>
+        </div>
+      </section>
+
+      <!-- Rules (webhook → tool / queue routing) -->
+      <section id="tab-rules" class="tab">
+        <div class="panel">
+          <div class="panel__header">
+            <h3 class="panel__title"><span data-icon="link"></span>Rules (webhook → tool)</h3>
+            <div class="panel__actions">
+              <button id="rules-new">+ New rule</button>
+              <button id="rules-reload">Reload</button>
+              <button id="rules-test">Test…</button>
+            </div>
+          </div>
+          <p class="hint">
+            Connect incoming webhook events to a tool call (with interpolated
+            <code>{{event.data.field}}</code> params), reroute them to the
+            <code>priority</code> queue, or suppress them. Matches on
+            <code>source</code>/<code>type</code> plus field conditions. Changes
+            are written to <code>safe/webhook-tool-rules.json</code> and applied
+            immediately.
+          </p>
+          <div id="rules-test-result"></div>
+          <div id="rules-list"><div class="loading-block"><span class="spin"></span><span>Loading…</span></div></div>
         </div>
       </section>
 

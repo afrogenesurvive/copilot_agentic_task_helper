@@ -39,6 +39,7 @@ the old behaviour.
 | ⚙️ Config | Sectioned field editor with per-key source badges, secret show/hide, Save (edited keys only), Export / Import, Raw JSON toggle |
 | 🧰 Tools | Shared tool manifest (grouped per server, incl. Netlify) + Trello/Gmail/WhatsApp/Netlify quick actions |
 | 📜 Scripts | Run vetted helper scripts under `scripts/user/` (and the gitignored `scripts/user/safe/`), with generated forms from a `<script>.params.json` sidecar |
+| 🔗 Rules | Author the webhook → tool pipeline: match source/type + conditions, then run a tool (params interpolate `{{event.*}}`), route the event to a queue, or suppress it — saved to `safe/webhook-tool-rules.json` and applied immediately |
 | 🎨 Appearance | Light / Dark / System theme, accent color (ten presets + custom), font-size preset and sidebar width (`APPEARANCE_THEME`, `APPEARANCE_ACCENT_COLOR`, `APPEARANCE_FONT_SIZE` — native chrome + dashboard; width is a local preference) |
 | ℹ️ About | App name + version (About) + a Guide sub-tab |
 | ⏻ Quit (bottom) | Quits the app — main `before-quit` stops all backend services |
@@ -55,7 +56,7 @@ electron/
   src/main/mcp-policy.mjs  operator-chat tool policy (read / approve / never)
   src/preload.js        contextBridge → window.api
   src/renderer/         index.html + tray.html, tokens.js, icons.js, app.js/tray.js (vanilla, no build step)
-  src/renderer/styles/  the design system — 22 stylesheets, linked in cascade order (+ `tray.css` for the panel)
+  src/renderer/styles/  the design system — 23 stylesheets, linked in cascade order (+ `tray.css` for the panel)
   README.md
 ```
 
@@ -178,6 +179,14 @@ requests, with tool activity shown inline as chips and result bubbles:
 - Runs executables under the operator scripts folder (bash/node/python3) — manual only.
 - A `<script>.params.json` sidecar generates a typed form (text / number / checkbox / dropdown / file
   picker); scripts without one keep the raw args box. See [`electron/docs/scripts.md`](../electron/docs/scripts.md).
+
+## Rules tab
+
+The **🔗 Rules** tab authors the webhook → action pipeline: a rule matches a `source`/`type` and any
+number of field conditions (`contains` / `equals` / `regex` / `exists`), then does one of three things —
+run a tool (params interpolate `{{event.*}}`), route the event to a queue, or suppress it. Rules live in
+`safe/webhook-tool-rules.json` and apply immediately after saving. See
+[`electron/docs/rules.md`](../electron/docs/rules.md).
 
 ## Loading & errors
 
