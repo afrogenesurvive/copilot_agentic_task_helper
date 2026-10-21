@@ -1,5 +1,17 @@
 # Changelog
 
+## [0.4.7-1] — 2026-10-21
+
+### Dependency security pass and Electron upgrade
+
+- Upgraded the Google SDK and `express` across the server packages, clearing the critical
+  `proxy-addr` advisory and every high-severity advisory repo-wide; `npm audit` is now clean across
+  the webhook server and every MCP server.
+- Upgraded the desktop shell to **Electron 43** and **electron-builder 26**, so the app now runs on a
+  current Electron with a newer bundled Node. Full `dist:mac` build verified (`.app` + `.dmg` + `.zip`).
+- Removed an unused OAuth dependency.
+- Accepted risk: one build-time-only moderate advisory (`sprintf-js`, no patched version published).
+
 ## [0.4.6-2] — 2026-10-15
 
 ### Webhook → tool rules are now editable from the dashboard

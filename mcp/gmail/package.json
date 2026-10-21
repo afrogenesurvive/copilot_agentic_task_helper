@@ -11,10 +11,14 @@
   "dependencies": {
     "@hono/node-server": "^1.0.0",
     "@modelcontextprotocol/sdk": "^1.0.0",
-    "googleapis": "^144.0.0",
-    "google-auth-library": "^9.0.0",
+    "googleapis": "^187.0.0",
+    "google-auth-library": "^11.0.0",
     "cors": "^2.8.5",
     "dotenv": "^16.4.0",
     "node-fetch": "^3.3.2"
+  },
+  "overrides": {
+    "qs": "^6.16.0",
+    "proxy-addr": "^2.0.8"
   }
 }

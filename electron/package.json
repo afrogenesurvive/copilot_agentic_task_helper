@@ -1,6 +1,6 @@
 {
   "name": "dev-centre",
-  "version": "0.4.6",
+  "version": "0.4.7",
   "private": true,
   "description": "Dev Centre — desktop control plane for the frontdesk v2 stack and the local agent tooling: queues, logs, sessions, licences, and the MCP tools, from one macOS app",
   "main": "src/main.js",
@@ -16,13 +16,19 @@
     "@modelcontextprotocol/sdk": "^1.30.0"
   },
   "devDependencies": {
-    "electron": "^33.4.11",
-    "electron-builder": "^25.0.0"
+    "electron": "^43.7.0",
+    "electron-builder": "^26.15.3"
   },
   "build": {
     "appId": "com.devcentre.app",
     "productName": "Dev Centre",
     "icon": "assets/icon.png",
+    "publish": {
+      "provider": "github",
+      "owner": "afrogenesurvive",
+      "repo": "copilot_agentic_task_helper",
+      "releaseType": "release"
+    },
     "mac": {
       "category": "public.app-category.productivity",
       "icon": "assets/icon.icns",

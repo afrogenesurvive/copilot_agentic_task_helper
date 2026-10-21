@@ -12,5 +12,9 @@
     "@modelcontextprotocol/sdk": "^1.0.0",
     "cheerio": "^1.0.0-rc.12",
     "dotenv": "^16.4.0"
+  },
+  "overrides": {
+    "qs": "^6.16.0",
+    "proxy-addr": "^2.0.8"
   }
 }

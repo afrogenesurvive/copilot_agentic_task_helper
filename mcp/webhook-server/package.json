@@ -12,12 +12,16 @@
     "update:endpoint": "node scripts/update-push-endpoint.js"
   },
   "dependencies": {
-    "express": "^4.21.0",
-    "googleapis": "^144.0.0",
-    "google-auth-library": "^9.0.0",
+    "express": "^4.22.3",
+    "googleapis": "^187.0.0",
+    "google-auth-library": "^11.0.0",
     "node-fetch": "^3.3.2",
     "dotenv": "^16.4.0",
     "cors": "^2.8.5",
     "express-rate-limit": "^7.0.0"
+  },
+  "overrides": {
+    "qs": "^6.16.0",
+    "proxy-addr": "^2.0.8"
   }
 }

@@ -25,9 +25,11 @@ would produce an app that starts blank — a missing icon, an uninstalled `elect
 no `config.json`/`.env`. It warns (without failing) when the baked licence trust is stale or when the
 build would have no usable local password.
 
-`dist:mac` also clears `electron/dist` before packing. A build over a previous run's output fails in
-electron-builder's update-info step (`TypeError: Cannot read properties of null (reading 'provider')`),
-which looks alarming but is only stale state — the clean build is the fix, so it is automatic.
+`dist:mac` also clears `electron/dist` before packing, and `electron/package.json` carries the
+`build.publish` (GitHub) block that electron-builder 26 requires to generate the `latest-mac.yml`
+update metadata for the `zip` target — without it the build dies in the update-info step with
+`TypeError: Cannot read properties of null (reading 'provider')`. A build over a previous run's output
+was the older cause of that same error, so the clean build is automatic too.
 
 Output: `electron/dist/mac-arm64/Dev Centre.app`, plus a `.dmg` and a `.zip`.
 
@@ -104,7 +106,7 @@ folder again.
 | Sign-in refuses a licence with `revoked_seat` / `unknown_kid` | The baked trust is stale: `npm run trust:bake`, then rebuild. |
 | Dashboard is empty, Config says "no config.json" | The app resolved a different folder than you expect: check `repo.json` (above), or `DEV_CENTRE_REPO` if you launched from a terminal. |
 | Gatekeeper refuses to open it | Only affects a *copied/downloaded* copy — a locally built app has no quarantine attribute, so double-click works even though `spctl` rejects the self-signed bundle (see above). If you zipped and moved it: right-click → **Open**, or `xattr -dr com.apple.quarantine "/Applications/Dev Centre.app"`. |
-| A rebuild fails with `Cannot read properties of null (reading 'provider')` | Stale `electron/dist`. `npm run electron:build` clears it automatically; a bare `electron-builder --mac` does not. |
+| A rebuild fails with `Cannot read properties of null (reading 'provider')` | electron-builder 26 needs the `build.publish` block (present in `electron/package.json`) to generate `latest-mac.yml`. A stale `electron/dist` was the older cause; `npm run electron:build` clears it automatically. |
 
 ## Notes
 

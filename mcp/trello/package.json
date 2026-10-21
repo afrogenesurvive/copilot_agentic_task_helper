@@ -14,5 +14,9 @@
     "cors": "^2.8.5",
     "dotenv": "^16.4.0",
     "node-fetch": "^3.3.2"
+  },
+  "overrides": {
+    "qs": "^6.16.0",
+    "proxy-addr": "^2.0.8"
   }
 }

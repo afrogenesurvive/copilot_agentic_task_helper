@@ -1,6 +1,6 @@
 {
   "name": "copilot_agentic_task_helper",
-  "version": "0.4.6",
+  "version": "0.4.7",
   "private": true,
   "description": "Remote Collaborator Chat — Trello-powered chat interface for GitHub Copilot agent interactions",
   "scripts": {
@@ -47,9 +47,12 @@
     "electron:build": "cd electron && npm run dist:mac"
   },
   "dependencies": {
-    "@google-cloud/local-auth": "^3.0.1",
-    "express": "^4.21.0",
-    "googleapis": "^144.0.0",
+    "express": "^4.22.3",
+    "google-auth-library": "^11.0.0",
+    "googleapis": "^187.0.0",
     "node-fetch": "^3.3.2"
+  },
+  "overrides": {
+    "qs": "^6.16.0"
   }
 }

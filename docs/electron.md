@@ -48,7 +48,7 @@ the old behaviour.
 
 ```
 electron/
-  package.json          (electron ^33, electron-builder)
+  package.json          (electron ^43, electron-builder ^26)
   assets/               app icon + tray template (generated — see make:icon)
   src/main.js           main process: service manager, IPC, tray + menu-bar panel, notifications, tools
   src/main/oauth.js     loopback Google OAuth (operator remint + bind account → seat)
@@ -258,5 +258,5 @@ Two different things are licensed here, and they are deliberately independent:
 - **Log Out is not Quit.** It stops the backend services and returns to the sign-in screen, but leaves the
   app and the menu-bar panel running; Quit exits the app entirely.
 - If `electron --version` reports `Electron failed to install correctly`, reinstall:
-  `cd electron && rm -rf node_modules/electron && npm install electron@33.4.11` (decline npx's
+  `cd electron && rm -rf node_modules/electron && npm install electron@43.7.0` (decline npx's
   offer to fetch a different version and use `./node_modules/.bin/electron`).
