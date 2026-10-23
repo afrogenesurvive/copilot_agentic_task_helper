@@ -102,6 +102,11 @@ export function buildEventContext(event) {
   if (event.data?.rule) {
     lines.push(`Matched rule: "${safeValue(event.data.rule, "event.rule")}"`);
     lines.push(`Requested tool: ${safeValue(event.data.tool, "event.tool")}`);
+    // agent_log is the one tool the runner does NOT execute deterministically —
+    // its message is the instruction the model must act on, so surface it.
+    if (event.data.tool === "agent_log" && event.data.params?.message) {
+      lines.push(`Instruction: "${safeValue(event.data.params.message, "event.instruction").slice(0, 1000)}"`);
+    }
   }
 
   if (event.data?.originalEvent?.data?.card?.id) {

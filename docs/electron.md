@@ -184,9 +184,10 @@ requests, with tool activity shown inline as chips and result bubbles:
 
 The **🔗 Rules** tab authors the webhook → action pipeline: a rule matches a `source`/`type` and any
 number of field conditions (`contains` / `equals` / `regex` / `exists`), then does one of three things —
-run a tool (params interpolate `{{event.*}}`), route the event to a queue, or suppress it. Rules live in
-`safe/webhook-tool-rules.json` and apply immediately after saving. See
-[`electron/docs/rules.md`](../electron/docs/rules.md).
+run a tool (params interpolate `{{event.*}}`), route the event to a queue, or suppress it. A rule with
+no conditions matches every event of that source/type, and tool actions run deterministically (the
+agent runner executes the configured tool directly). Rules live in `safe/webhook-tool-rules.json` and
+apply immediately after saving. See [`electron/docs/rules.md`](../electron/docs/rules.md).
 
 ## Loading & errors
 

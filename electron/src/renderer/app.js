@@ -4255,7 +4255,13 @@
   const ruleToolByName = (name) => rulesState.tools.find((t) => t.name === name) || null;
 
   function ruleConditionsHTML(key, draft) {
-    const rows = draft.conditions.length ? draft.conditions : [blankCondition()];
+    if (!draft.conditions.length) {
+      return `<div class="rule-conditions rule-conditions-empty">
+        <span class="rule-any">No conditions — matches every ${esc(draft.source)}/${esc(draft.type || "*")} event.</span>
+        <button type="button" class="rule-add-cond" data-addcond>+ condition</button>
+      </div>`;
+    }
+    const rows = draft.conditions;
     return `<div class="rule-conditions">
       <datalist id="rcf-${escAttr(key)}">${ruleCondFieldOptions(draft.source)}</datalist>
       ${rows
@@ -4296,6 +4302,14 @@
 
   function editorHTML(key, index) {
     const draft = ruleDraftByKey(key, index);
+    const toolField =
+      draft.action === "tool"
+        ? `<label class="rule-field">Tool <select data-rtool>${rulesState.tools.map((t) => `<option value="${escAttr(t.name)}" ${t.name === draft.tool ? "selected" : ""}>${esc(t.name)}</option>`).join("")}</select></label>`
+        : "";
+    const queueField =
+      draft.action === "route"
+        ? `<label class="rule-field">Queue <select data-rqueue>${["priority", "misc_notifications"].map((q) => `<option value="${q}" ${q === draft.queue ? "selected" : ""}>${q}</option>`).join("")}</select></label>`
+        : "";
     return `<div class="rule-card editing" data-rule="${escAttr(key)}">
       <div class="rule-head"><strong class="script-name">${index === null ? "New rule" : `Edit: ${esc(draft.name || "(unnamed)")}`}</strong></div>
       <div class="rule-form">
@@ -4309,15 +4323,12 @@
         </div>
         <div class="rule-row">
           <label class="rule-field">Action <select data-raction>${RULES_ACTIONS.map((a) => `<option value="${a.value}" ${a.value === draft.action ? "selected" : ""}>${a.label}</option>`).join("")}</select></label>
-          <label class="rule-field">Tool <select data-rtool>${rulesState.tools.map((t) => `<option value="${escAttr(t.name)}" ${t.name === draft.tool ? "selected" : ""}>${esc(t.name)}</option>`).join("")}</select></label>
+          ${toolField}
         </div>
-        <div class="rule-row">
-          <label class="rule-field">Queue <select data-rqueue>${["priority", "misc_notifications"].map((q) => `<option value="${q}" ${q === draft.queue ? "selected" : ""}>${q}</option>`).join("")}</select></label>
-        </div>
-        <div class="rule-sub">Conditions (all must match)</div>
+        ${queueField ? `<div class="rule-row">${queueField}</div>` : ""}
+        <div class="rule-sub">${draft.conditions.length ? "Conditions (all must match)" : "Conditions"}</div>
         ${ruleConditionsHTML(key, draft)}
-        <div class="rule-sub">Tool params (use {{event.data.field}} for values)</div>
-        ${ruleParamsHTML(key, draft)}
+        ${draft.action === "tool" ? `<div class="rule-sub">Tool params (use {{event.data.field}} for values)</div>${ruleParamsHTML(key, draft)}` : ""}
         <div class="rule-form-actions">
           <button data-rule-save="${escAttr(key)}">Save</button>
           <button data-rule-cancel="${escAttr(key)}">Cancel</button>
@@ -4399,8 +4410,9 @@
     const rule = {
       name: d.name,
       enabled: d.enabled !== false,
-      match: { source: d.source, type: d.type || undefined, conditions },
+      match: { source: d.source, type: d.type || undefined },
     };
+    if (Object.keys(conditions).length) rule.match.conditions = conditions;
     const action = d.action || "tool";
     if (action === "route") {
       rule.action = "route";
@@ -4458,18 +4470,31 @@
         renderRulesList();
       }),
     );
+    // Switching action shows/hides the tool/queue/params fields for that action.
+    box.querySelectorAll("[data-raction]").forEach((sel) =>
+      sel.addEventListener("change", () => {
+        const card = sel.closest(".rule-card");
+        if (!card) return;
+        syncDraftFromCard(card.dataset.rule);
+        renderRulesList();
+      }),
+    );
   }
 
   async function refreshRules() {
     const [listRes, toolsRes] = await Promise.all([api.rulesList(), api.rulesTools()]);
     if (!listRes || listRes.status !== 200) {
-      const box = $("rules-list");
-      if (box) box.innerHTML = `<div class="empty">${esc((listRes?.json?.error) || "failed to list rules")}</div>`;
+      if (rulesState.editing.size === 0) {
+        const box = $("rules-list");
+        if (box) box.innerHTML = `<div class="empty">${esc((listRes?.json?.error) || "failed to list rules")}</div>`;
+      }
       return;
     }
     rulesState.rules = (listRes.json && listRes.json.rules) || [];
     rulesState.tools = (toolsRes && toolsRes.json && toolsRes.json.tools) || [];
-    renderRulesList();
+    // A live editor is rendered from its in-progress draft; re-rendering here
+    // would clobber any fields typed since the last sync (see bindRuleCards).
+    if (rulesState.editing.size === 0) renderRulesList();
   }
 
   async function saveRuleCard(key) {

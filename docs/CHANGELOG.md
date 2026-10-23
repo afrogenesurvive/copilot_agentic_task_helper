@@ -1,5 +1,15 @@
 # Changelog
 
+## [0.4.8-1] — 2026-10-22
+
+### Rules tab fixes + deterministic rule actions
+
+- Fixed the Rules editor: fields no longer reset while editing, and the Tool/Queue/params controls
+  now appear only for the action they belong to.
+- A rule with no conditions now matches every event of its source/type.
+- Rule tool actions now run exactly as configured — the agent runner executes the matched rule's tool
+  directly instead of leaving the choice to the model.
+
 ## [0.4.7-1] — 2026-10-21
 
 ### Dependency security pass and Electron upgrade

@@ -131,6 +131,55 @@ function printTaskState(label) {
 const FALLBACK_REPLY =
   "Sorry — I hit a problem handling that message on my side. A team member will pick it up and follow up with you shortly.";
 
+/**
+ * Execute a matched rule's tool directly (no LLM re-decision).
+ *
+ * Tool-dispatch events already carry pre-interpolated params, so this runs the
+ * operator's configured action exactly as written. Failures are dead-lettered and
+ * cleared like the model path, so a bad rule can't block the queue forever.
+ */
+async function runRuleAction(event, eventId, seqNo, eventType, isFrontdesk, seat) {
+  const tool = event.data.tool;
+  const params = event.data.params || {};
+
+  console.log(`\n   ╔══════════════════════════════════════════════╗`);
+  console.log(`   ║      ⚡ RULE ACTION (deterministic)            ║`);
+  console.log(`   ╚══════════════════════════════════════════════╝`);
+  console.log(`   🎯 [RUNNER] ${tool}`);
+  console.log(`   📝 [RUNNER] Params: ${JSON.stringify(params)}`);
+
+  const result = await executeToolCall(tool, params, { isFrontdesk, sub: seat });
+
+  logAction({
+    eventId,
+    seqNo,
+    eventType,
+    toolName: tool,
+    toolArgs: params,
+    toolResult: result.ok ? "success" : "failed",
+    error: result.error || null,
+    action: result.ok ? "processed" : "failed",
+  });
+
+  if (result.ok) {
+    console.log(`   ✅ [RUNNER] Rule action "${tool}" succeeded`);
+    await markCleared(eventId);
+    return;
+  }
+
+  console.error(`   ❌ [RUNNER] Rule action "${tool}" failed: ${result.error}`);
+  appendDeadLetter({
+    eventId,
+    seqNo,
+    eventType,
+    isFrontdesk: !!isFrontdesk,
+    seat,
+    reason: result.error || "rule tool failed",
+    data: event.data ?? null,
+  });
+  await markCleared(eventId, { failed: true, lastError: String(result.error || "failed").slice(0, 500) });
+}
+
 async function processEvent(event) {
   const eventId = event.id;
   const seqNo = event.seqNo;
@@ -162,6 +211,23 @@ async function processEvent(event) {
   }
 
   const seat = event.data?.sub || null;
+
+  // Deterministic rule execution: a matched webhook rule (tool action) already
+  // carries the exact tool + interpolated params it wants. Run it directly rather
+  // than asking the LLM to re-decide — the model used to substitute its own tool
+  // (e.g. a read) and the configured action never fired. `agent_log` is the
+  // exception: it is a free-text instruction, so it keeps going to the model below.
+  if (
+    event.source === "tool_dispatch" &&
+    event.type === "pending_tool_call" &&
+    event.data?.tool &&
+    event.data.tool !== "agent_log"
+  ) {
+    await runRuleAction(event, eventId, seqNo, eventType, isFrontdesk, seat);
+    printQueueState("after");
+    return;
+  }
+
   // A frontdesk question normally needs two turns (read the data, then reply with
   // it) and may need a third after a failed tool. Everything else is decided in a
   // single turn, exactly as before.

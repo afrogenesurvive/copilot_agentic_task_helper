@@ -114,6 +114,13 @@
   flex-direction: column;
   gap: 4px;
 }
+.rule-conditions-empty {
+  gap: 6px;
+}
+.rule-any {
+  color: var(--text-muted);
+  font-size: 12px;
+}
 .rule-params {
   display: flex;
   flex-direction: column;
