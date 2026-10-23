@@ -2617,10 +2617,14 @@
       return;
     }
     const data = Array.isArray(res.result) ? res.result : [res.result];
-    box.innerHTML = data
-      .slice(0, 20)
-      .map((r) => `• ${esc(r.name || r.id || JSON.stringify(r).slice(0, 80))}${r.url ? ` — ${esc(r.url)}` : ""}`)
-      .join("<br/>") || "(empty)";
+    box.innerHTML =
+      data
+        .map((r) => {
+          const name = r.name ? esc(r.name) : esc(r.id || JSON.stringify(r).slice(0, 80));
+          const meta = [r.id && r.id !== r.name ? `id: ${r.id}` : "", r.url ? r.url : ""].filter(Boolean).join(" · ");
+          return `<div class="qitem"><div class="qitem-title">${name}</div>${meta ? `<div class="qitem-meta">${esc(meta)}</div>` : ""}</div>`;
+        })
+        .join("") || "(empty)";
   }
 
   document.querySelector('[data-act="boards"]').addEventListener("click", () => runTrello("list_boards"));
@@ -2639,9 +2643,24 @@
     });
     const box = $("gmail-result");
     if (!res) return;
-    box.innerHTML = res.ok
-      ? (res.result || []).map((m) => `• ${esc(m.id)}`).join("<br/>") || "(empty)"
-      : `<div class="empty">Error: ${esc(res.error)}</div>`;
+    if (!res.ok) {
+      box.innerHTML = `<div class="empty">Error: ${esc(res.error)}</div>`;
+      return;
+    }
+    box.innerHTML =
+      (res.result || [])
+        .map((m) => {
+          const subject = m.subject ? esc(m.subject) : "<em>(no subject)</em>";
+          const meta = [
+            m.id ? `id: ${esc(m.id)}` : "",
+            m.from ? esc(m.from) : "",
+            m.date ? esc(m.date) : "",
+          ]
+            .filter(Boolean)
+            .join(" · ");
+          return `<div class="qitem"><div class="qitem-title">${subject}</div><div class="qitem-meta">${meta}</div></div>`;
+        })
+        .join("") || "(empty)";
   });
 
   // WhatsApp quick actions — status + list_numbers let you discover & copy the
@@ -3590,6 +3609,7 @@
     { file: "config.md", title: "⚙️ Config" },
     { file: "usage.md", title: "📈 Usage" },
     { file: "tools.md", title: "🧰 Tools" },
+    { file: "rules.md", title: "🔗 Rules" },
     { file: "whatsapp.md", title: "💬 WhatsApp" },
     { file: "scripts.md", title: "📜 Scripts" },
     { file: "chat.md", title: "💬 Chat" },

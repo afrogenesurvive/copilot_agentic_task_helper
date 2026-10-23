@@ -1252,7 +1252,7 @@ async function trelloAction(action, params = {}) {
   let url, method = "GET", body;
   switch (action) {
     case "list_boards":
-      url = `${base}/members/me/boards?fields=name,id,url&${qs()}`;
+      url = `${base}/members/me/boards?fields=name,id,url&limit=1000&${qs()}`;
       break;
     case "list_lists":
       url = `${base}/boards/${params.boardId}/lists?fields=name,id&${qs()}`;
@@ -1291,7 +1291,33 @@ async function gmailAction(action, params = {}) {
     const gmail = google.gmail({ version: "v1", auth: oauth });
     if (action === "list_messages") {
       const res = await gmail.users.messages.list({ userId: "me", q: params.q || "", maxResults: params.maxResults || 10 });
-      return { ok: true, result: res.data.messages || [] };
+      const messages = res.data.messages || [];
+      const enriched = await Promise.all(
+        messages.map(async (m) => {
+          try {
+            const msg = await gmail.users.messages.get({
+              userId: "me",
+              id: m.id,
+              format: "metadata",
+              metadataHeaders: ["From", "To", "Subject", "Date"],
+            });
+            const headers = {};
+            for (const h of msg.data.payload?.headers || []) headers[h.name.toLowerCase()] = h.value;
+            return {
+              id: m.id,
+              threadId: m.threadId,
+              from: headers.from || "",
+              to: headers.to || "",
+              subject: headers.subject || "",
+              date: headers.date || "",
+              snippet: msg.data.snippet || "",
+            };
+          } catch {
+            return { id: m.id, threadId: m.threadId };
+          }
+        }),
+      );
+      return { ok: true, result: enriched };
     }
     if (action === "get_message") {
       const res = await gmail.users.messages.get({ userId: "me", id: params.id, format: "metadata", metadataHeaders: ["From", "To", "Subject", "Date"] });

@@ -22,11 +22,12 @@ operator chat advertise, so what you see here is what the agent can actually cal
 Four small experiment panels:
 
 - **Trello**
-  - **Boards** — list the boards on the account.
-  - **Lists (of a board)** — prompts for a board ID, then lists its lists.
-  - **Cards (of a list)** — prompts for a list ID, then lists its cards.
+  - **Boards** — lists every board on the account (name + ID + URL).
+  - **Lists (of a board)** — prompts for a board ID, then lists its lists **with their IDs**
+    (copy a list's `id:` into the Cards prompt below).
+  - **Cards (of a list)** — prompts for a list ID, then lists its cards (name + ID + URL).
 - **Gmail**
-  - **Recent messages** — lists the 10 most recent message IDs.
+  - **Recent messages** — lists the 10 most recent messages with subject, sender, date and message ID.
 - **WhatsApp**
   - **Status** — connectivity + the active "from" number's Cloud API status.
   - **Numbers (copy IDs)** — every number on the WABA, so you can copy the test/live IDs into
@@ -36,7 +37,7 @@ Four small experiment panels:
   - **Env vars** — lists them all, or prompts for one name and fetches just that variable.
   - **Deploys** — recent deploys with state, branch and commit.
 
-Results print below the buttons (first ~20 items).
+Results print below the buttons in a scrollable box, showing every item the API returned.
 
 ## Notes
 

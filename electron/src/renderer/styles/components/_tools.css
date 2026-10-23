@@ -91,4 +91,34 @@
   color: var(--text-muted);
   max-height: 220px;
   overflow-y: auto;
+  background: var(--surface-hover);
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  padding: 8px 10px;
+}
+
+.qresult:empty {
+  display: none;
+}
+
+.qresult .qitem {
+  padding: 5px 0;
+  border-bottom: 1px dashed var(--border);
+}
+
+.qresult .qitem:last-child {
+  border-bottom: none;
+}
+
+.qresult .qitem-title {
+  color: var(--text);
+  font-weight: 600;
+  line-height: 1.4;
+}
+
+.qresult .qitem-meta {
+  color: var(--text-muted);
+  font-size: 0.8rem;
+  margin-top: 2px;
+  overflow-wrap: anywhere;
 }

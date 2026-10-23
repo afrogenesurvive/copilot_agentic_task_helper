@@ -37,6 +37,25 @@ webhook the server receives.
 - **Suppress** (`action: "suppress"`) — drop the event entirely. This is never silent: the dispatch
   engine writes an audit line (`subSource: tool-dispatch`) so a suppression can always be traced.
 
+## What happens after a match
+
+The webhook handler enqueues the matched event and that is where the Rules tab's job ends. What
+happens next depends on the queue:
+
+- **`priority`** is consumed **autonomously** by the agent runner in watch mode (it wakes on
+  `.runner-trigger`, typically within ~100 ms) and every item is marked `cleared` the moment it is
+  handled — success, skip, or failure alike. A matched `tool` rule, or a `route` to `priority`,
+  therefore almost never sits in the Queue view for you to see: it has already been actioned and
+  cleared.
+- **`misc_notifications`** is the daily-review pile. The runner never touches it, so routed events
+  stay there until you clear them.
+
+Because of that, the action a **`tool` rule takes is fully deterministic** — the runner calls the
+configured tool with the interpolated params verbatim. A **`route` rule has no tool**, so the runner
+hands the raw event to its model, which picks a tool at processing time; the eventual action cannot
+be read off the rule alone. The **Test…** preview shows matching and interpolated params, but not
+that later model decision.
+
 ## Using the tab
 
 - **+ New rule** opens a blank editor; **Edit** on a row re-opens that rule inline.

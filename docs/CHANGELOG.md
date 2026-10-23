@@ -1,5 +1,17 @@
 # Changelog
 
+## [0.4.8-2] — 2026-10-23
+
+### Tools quick actions, security notifications and guide updates
+
+- Tools tab quick actions: Trello Boards now lists every board, Lists show their IDs (for feeding into
+  Cards), and Gmail "Recent messages" shows subject, sender, date and ID. Results render in a distinct
+  scrollable box.
+- Notification centre now surfaces frontdesk security events (rejected sign-ins/sessions, failed
+  decrypts) instead of dropping them.
+- In-app guide updated for the Tools and Rules tabs, including how the priority queue is consumed
+  automatically by the agent runner.
+
 ## [0.4.8-1] — 2026-10-22
 
 ### Rules tab fixes + deterministic rule actions

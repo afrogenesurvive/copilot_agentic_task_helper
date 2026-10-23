@@ -156,6 +156,10 @@
   color: var(--color-yellow);
 }
 
+.n-src[data-source="security"] {
+  color: var(--color-red);
+}
+
 .n-level {
   font-size: 0.85em;
   text-transform: uppercase;

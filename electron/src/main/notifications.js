@@ -31,7 +31,7 @@ const path = require("path");
 const crypto = require("crypto");
 
 /** Feed sources — also the sidebar items that can carry an unread dot. */
-const SOURCES = ["queue", "logs", "chat", "dashboard", "sessions", "scripts"];
+const SOURCES = ["queue", "logs", "chat", "dashboard", "sessions", "scripts", "security"];
 const LEVELS = ["info", "warn", "error"];
 
 /** Ring cap. The panel is a recent-activity view, not an archive; the files are. */
